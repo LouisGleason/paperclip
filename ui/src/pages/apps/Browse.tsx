@@ -486,13 +486,18 @@ export function Browse({ renderAccountDetails = (connection) => connection.conne
 
     const customRows: ConnectorRowModel[] = [];
     for (const application of activeApplications) {
+      const applicationSlug = appApplicationSourceSlug(application);
       const savedAppConnections =
         connectionsByApplicationId.get(application.id) ?? [];
       const appConnections = savedAppConnections.filter(
         (connection) => !GOOGLE_CONNECTOR_SLUGS.has(appConnectionSourceSlug(connection) ?? ""),
       );
-      // Hide Google-only custom rows, but keep unrelated accounts in mixed rows.
-      if (savedAppConnections.length > 0 && appConnections.length === 0) continue;
+      // Hide source-only Google rows, but keep independently identified connectors.
+      if (
+        (!applicationSlug || applicationSlug === "link") &&
+        savedAppConnections.length > 0 &&
+        appConnections.length === 0
+      ) continue;
       const configuredConnectionSlug = appConnections
         .map(
           (connection) =>
@@ -514,7 +519,6 @@ export function Browse({ renderAccountDetails = (connection) => connection.conne
             : null,
         )
         .find((value): value is string => Boolean(value));
-      const applicationSlug = appApplicationSourceSlug(application);
       const resolvedSlug =
         applicationSlug &&
         applicationSlug !== "link" &&

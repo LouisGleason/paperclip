@@ -293,6 +293,31 @@ describe("Connectors landing page", () => {
     },
   );
 
+  it.each(["metadata", "applicationKey"])(
+    "keeps a non-Google custom connector identified by %s when only its Google accounts are hidden",
+    async (sourceField) => {
+      listGalleryMock.mockResolvedValue({ apps: [] });
+      const savedApplication = application({
+        name: "My custom connector",
+        metadata: sourceField === "metadata" ? { sourceTemplateKey: "custom-provider" } : null,
+        applicationKey: sourceField === "applicationKey" ? "custom-provider" : null,
+      });
+      listApplicationsMock.mockResolvedValue({ applications: [savedApplication] });
+      const connections = [connection({
+        name: "Hidden Google account", config: { sourceTemplateKey: "google-docs" },
+      })];
+      listConnectionsMock.mockResolvedValue({ connections });
+      const client = await renderBrowse();
+
+      expect(container.querySelector('[data-app-slug="custom-provider"]')).not.toBeNull();
+      expect(container.textContent).toContain("My custom connector");
+      expect(container.textContent).not.toContain("Hidden Google account");
+      expect(client.getQueryData(queryKeys.tools.applications("company-1"))).toEqual({ applications: [savedApplication] });
+      expect(client.getQueryData(queryKeys.tools.connections("company-1"))).toEqual({ connections });
+      expect(archiveConnectionMock).not.toHaveBeenCalled();
+    },
+  );
+
   it("hides cached memory connectors until enabled and preserves saved MCP connections", async () => {
     const providers = ["mem0", "zep", "supermemory", "cognee", "honcho"];
     listGalleryMock.mockResolvedValue({ apps: [...providers, "notion"].map(getAppStoreDefinition) });
