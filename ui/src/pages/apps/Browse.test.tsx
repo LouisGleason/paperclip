@@ -267,6 +267,32 @@ describe("Connectors landing page", () => {
     },
   );
 
+  it.each(["catalog", "custom"])(
+    "preserves non-Google accounts in a mixed-provider %s row",
+    async (rowKind) => {
+      const notion = getAppStoreDefinition("notion")!;
+      listGalleryMock.mockResolvedValue({ apps: rowKind === "catalog" ? [notion] : [] });
+      listApplicationsMock.mockResolvedValue({ applications: [application(rowKind === "custom"
+        ? { name: "My tools", applicationKey: null, metadata: null }
+        : {})] });
+      const connections = [connection({
+        id: "google-account", name: "Hidden Google account",
+        config: { sourceTemplateKey: "google-docs" },
+      }), connection({
+        id: "notion-account", name: "Visible Notion account",
+        config: { sourceTemplateKey: "notion" },
+      })];
+      listConnectionsMock.mockResolvedValue({ connections });
+      const client = await renderBrowse();
+
+      expect(container.textContent).toContain("Visible Notion account");
+      expect(container.textContent).not.toContain("Hidden Google account");
+      expect(container.textContent).toContain(rowKind === "catalog" ? "Notion" : "My tools");
+      expect(client.getQueryData(queryKeys.tools.connections("company-1"))).toEqual({ connections });
+      expect(archiveConnectionMock).not.toHaveBeenCalled();
+    },
+  );
+
   it("hides cached memory connectors until enabled and preserves saved MCP connections", async () => {
     const providers = ["mem0", "zep", "supermemory", "cognee", "honcho"];
     listGalleryMock.mockResolvedValue({ apps: [...providers, "notion"].map(getAppStoreDefinition) });
