@@ -536,7 +536,7 @@ export class AcpxRuntimeHost {
       }
       command = await acquireAbortableAdmissionResource({
         signal: options.signal,
-        acquire: () => installation.openCommand(),
+        acquire: () => installation.openCommand({ signal: options.signal }),
         resource: "command",
         releaseLate: (lateCommand) => lateCommand.close(),
         reportFailure: (failure) =>
@@ -544,7 +544,7 @@ export class AcpxRuntimeHost {
       });
       const commandOwner = createAcpxCommandLeaseOwner(
         command,
-        () => installation.openCommand(),
+        signal => installation.openCommand({ signal }),
       );
       command = commandOwner.command;
       toolBridge = options.semanticTools

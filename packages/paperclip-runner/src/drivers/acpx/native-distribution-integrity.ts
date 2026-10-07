@@ -81,7 +81,8 @@ export async function readNativeAcpxDistributionEntries(input: NativeAcpxDistrib
  * Freeze only manifest-admitted bytes. Native trees deliberately have a separate
  * bound; the tighter JavaScript/npm snapshot limits remain unchanged.
  */
-export async function createNativeAcpxDistributionSnapshot(input: NativeAcpxDistributionInput, entries: NativeAcpxDistributionEntry[]): Promise<NativeAcpxDistributionSnapshot> {
+export async function createNativeAcpxDistributionSnapshot(input: NativeAcpxDistributionInput, entries: NativeAcpxDistributionEntry[], signal?: AbortSignal): Promise<NativeAcpxDistributionSnapshot> {
+  signal?.throwIfAborted();
   // Callers cannot substitute entries between manifest validation and copying.
   entries = parseNativeAcpxDistributionEntries({ entries }, input.expectedClosureSha256);
   if (process.platform !== "linux" && process.platform !== "darwin") throw new Error("Native ACPX snapshots require Linux or macOS");
@@ -100,6 +101,7 @@ export async function createNativeAcpxDistributionSnapshot(input: NativeAcpxDist
   };
   let commandDirectory: FileHandle | undefined;
   try {
+    signal?.throwIfAborted();
     if (!same(rootBefore, await heldRoot.stat({ bigint: true }))) throw new Error("Native ACPX distribution root changed before snapshot");
     await mkdir(packageRoot, { mode: 0o700 });
     if (input.isolatedCacheEnvironmentName) await mkdir(cacheRoot, { mode: 0o700 });
@@ -125,15 +127,18 @@ export async function createNativeAcpxDistributionSnapshot(input: NativeAcpxDist
     }
     const directoryBatch = async (paths: string[], operation: (path: string) => Promise<unknown>): Promise<void> => {
       for (let start = 0; start < paths.length; start += NATIVE_DIRECTORY_CONCURRENCY) {
+        signal?.throwIfAborted();
         const settled = await Promise.allSettled(paths.slice(start, start + NATIVE_DIRECTORY_CONCURRENCY).map(operation));
         const failed = settled.find(result => result.status === "rejected");
         if (failed?.status === "rejected") throw failed.reason;
+        signal?.throwIfAborted();
       }
     };
     for (const depth of [...parentLevels.keys()].sort((a, b) => a - b)) {
       await directoryBatch([...parentLevels.get(depth)!].sort(), path => mkdir(path, { mode: 0o700 }));
     }
     const copyEntry = async (entry: NativeAcpxDistributionEntry): Promise<void> => {
+      signal?.throwIfAborted();
       const path = join(source, ...entry.path.split("/"));
       if (await realpath(path) !== path) throw new Error("Native ACPX closure contains a symbolic link");
       // Bind metadata to the descriptor we will read, without a redundant
@@ -146,6 +151,7 @@ export async function createNativeAcpxDistributionSnapshot(input: NativeAcpxDist
         const bytes = Buffer.alloc(entry.size);
         let offset = 0;
         while (offset < bytes.length) {
+          signal?.throwIfAborted();
           const read = await file.read(bytes, offset, bytes.length - offset, offset);
           if (read.bytesRead === 0) throw new Error("Native ACPX closure file ended during snapshot");
           offset += read.bytesRead;
@@ -153,6 +159,7 @@ export async function createNativeAcpxDistributionSnapshot(input: NativeAcpxDist
         if (!same(before, await file.stat({ bigint: true })) || !same(before, await lstat(path, { bigint: true })) || await realpath(path) !== path) throw new Error("Native ACPX closure file changed while read");
         if (sha256(bytes) !== entry.sha256) throw new Error(`Native ACPX closure file digest mismatch: ${entry.path}`);
         const target = join(packageRoot, ...entry.path.split("/"));
+        signal?.throwIfAborted();
         await writeFile(target, bytes, { mode: entry.executable ? 0o500 : 0o400, flag: "wx" });
       } finally { await file.close(); }
     };
@@ -168,9 +175,14 @@ export async function createNativeAcpxDistributionSnapshot(input: NativeAcpxDist
     // copy on each admission (including long-lived large-file reads).
     let capacityAvailable: (() => void) | undefined;
     for (const entry of entries) {
+      // An aborted acquisition must still drain its admitted reads before
+      // deleting the partial tree. Stop scheduling copies at the same bound
+      // used for any observed copy failure.
+      if (signal?.aborted && !failed) { failed = true; failure = signal.reason; }
       while (!failed && (active.size >= NATIVE_COPY_CONCURRENCY
         || (active.size > 0 && activeBytes + entry.size > NATIVE_COPY_BUFFER_BYTES))) {
         await new Promise<void>(resolve => { capacityAvailable = resolve; });
+        if (signal?.aborted && !failed) { failed = true; failure = signal.reason; }
       }
       if (failed) break;
       activeBytes += entry.size;
@@ -187,6 +199,7 @@ export async function createNativeAcpxDistributionSnapshot(input: NativeAcpxDist
     }
     await Promise.all(active);
     if (failed) throw failure;
+    signal?.throwIfAborted();
     // Completion order must not change the module guard or manifest.
     for (const entry of entries) digests[join(packageRoot, ...entry.path.split("/"))] = entry.sha256;
     if (!same(rootBefore, await heldRoot.stat({ bigint: true })) || !same(rootBefore, await lstat(source, { bigint: true }))) throw new Error("Native ACPX distribution root changed during snapshot");

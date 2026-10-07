@@ -276,7 +276,15 @@ impl AcpxSidecarTransport {
         };
         keys.extend(pi_keys.iter().map(String::as_str));
         keys.extend_from_slice(credential_keys);
-        let mut transport = Self::start_with_environment_keys(config, &keys)?;
+        // Pi owns a native distribution copy, including a pending refresh at
+        // suspension. Allow its bounded cleanup to settle before group KILL;
+        // the ordinary two-second grace can cut off deletion mid-tree.
+        config.validate()?;
+        let mut launch_config = config.clone();
+        if agent == "pi" {
+            launch_config.shutdown_grace = Duration::from_secs(30);
+        }
+        let mut transport = Self::start_with_environment_keys(&launch_config, &keys)?;
         transport.session_open_timeout = session_open_timeout(agent, config.request_timeout);
         Ok(transport)
     }

@@ -552,6 +552,36 @@ describe("native ACPX execution closure", () => {
     await new Promise<void>(resolve => setImmediate(resolve));
     await expect(stat(removals[0]!)).rejects.toMatchObject({ code: "ENOENT" });
   });
+  it("aborts a pending native copy, drains admitted reads and removes its partial snapshot", async () => {
+    const { declaration, entries } = await manyFileFixture(Array.from({ length: 40 }, (_, index) => 91 + index));
+    const prototype = await filePrototype(join(declaration.distributionRoot, "runtime"));
+    const originalRead = prototype.read;
+    const entered = gate(); const hold = gate(); const controller = new AbortController();
+    const readSizes: number[] = []; const removalStart = vi.mocked(rm).mock.calls.length;
+    vi.spyOn(prototype, "read").mockImplementation(async function (this: FileHandle, ...args: any[]): Promise<any> {
+      readSizes.push(args[0].length); entered.release(); await hold.promise;
+      return originalRead.apply(this, args as never);
+    });
+    const creating = createNativeAcpxDistributionSnapshot(declaration, entries, controller.signal);
+    let settled = false; let unexpected: Awaited<typeof creating> | undefined;
+    void creating.then(value => { settled = true; unexpected = value; }, () => { settled = true; });
+    try {
+      await entered.promise;
+      controller.abort(new Error("owned command refresh cancelled"));
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(settled).toBe(false);
+      expect(vi.mocked(rm).mock.calls).toHaveLength(removalStart);
+      hold.release();
+      await expect(creating).rejects.toThrow("owned command refresh cancelled");
+      expect(readSizes).not.toContain(123);
+      const removals = vi.mocked(rm).mock.calls.slice(removalStart).map(([path]) => String(path)).filter(path => /paperclip-acpx-native-/.test(path));
+      expect(removals).toHaveLength(1);
+      await expect(stat(removals[0]!)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      hold.release(); await creating.catch(() => undefined);
+      if (unexpected) { await unexpected.commandDirectory.close(); await unexpected.snapshot.close(); }
+    }
+  });
   it("rejects a source mutation while another file is being copied", async () => {
     const { declaration, entries } = await manyFileFixture([101, 102]);
     const prototype = await filePrototype(join(declaration.distributionRoot, "runtime"));

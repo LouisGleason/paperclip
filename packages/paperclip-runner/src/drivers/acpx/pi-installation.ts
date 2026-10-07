@@ -91,12 +91,13 @@ export async function verifyPiInstallation(profile: AcpxReleaseProfile): Promise
     commandDigest: profile.commandDigest,
     agentServerPackageJsonPath: join(runtimeRoot, "node_modules/pi-acp/package.json"),
     agentRuntimePackageJsonPath: join(runtimeRoot, "node_modules/@earendil-works/pi-coding-agent/package.json"),
-    async openCommand() {
+    async openCommand(options?: { signal?: AbortSignal }) {
+      options?.signal?.throwIfAborted();
       await assertDirectories();
       // The native primitive reads every admitted file through held descriptors
       // into a new immutable snapshot. The bootstrap derives its own launch
       // environment from that snapshot, never these mutable installation paths.
-      return native.openCommand();
+      return native.openCommand(options);
     },
   });
 }

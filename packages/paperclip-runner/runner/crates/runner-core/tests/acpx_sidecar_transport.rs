@@ -134,6 +134,55 @@ fn an_empty_event_poll_does_not_poison_the_transport() {
     transport.shutdown().expect("fake sidecar should stop");
 }
 
+#[cfg(unix)]
+#[test]
+fn pi_shutdown_allows_owned_snapshot_cleanup_after_the_ordinary_two_second_grace() {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let marker =
+        std::env::temp_dir().join(format!("pi-sidecar-cleanup-{}-{nonce}", std::process::id()));
+    let ready = marker.with_extension("ready");
+    std::fs::write(&marker, b"owned snapshot cleanup pending").unwrap();
+    // TERM is delivered to the same owned process group as in suspension.
+    // Cleanup deliberately takes longer than the ordinary two-second grace.
+    let script =
+        "trap 'sleep 3; rm -- \"$1\"; exit 0' TERM; echo ready > \"$2\"; while :; do sleep 1; done";
+    let config = AcpxSidecarTransportConfig {
+        command: PathBuf::from("/bin/sh"),
+        args: vec![
+            "-c".into(),
+            script.into(),
+            "pi-cleanup-fixture".into(),
+            marker.to_string_lossy().into_owned(),
+            ready.to_string_lossy().into_owned(),
+        ],
+        verified_launch: None,
+        request_timeout: Duration::from_secs(30),
+        shutdown_grace: Duration::from_secs(2),
+    };
+    let mut transport = AcpxSidecarTransport::start_for_agent(&config, "pi").unwrap();
+    let startup = Instant::now();
+    while !ready.exists() && startup.elapsed() < Duration::from_secs(2) {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(
+        ready.exists(),
+        "fixture did not install its TERM cleanup handler"
+    );
+    let started = Instant::now();
+    transport.shutdown().unwrap();
+    let removed = !marker.exists();
+    let _ = std::fs::remove_file(&marker);
+    let _ = std::fs::remove_file(&ready);
+    assert!(
+        removed,
+        "Pi sidecar was killed before owned snapshot cleanup completed"
+    );
+    assert!(started.elapsed() < Duration::from_secs(10));
+}
+
 #[test]
 fn rejects_an_unbounded_event_poll_without_poisoning_the_transport() {
     let mut transport = transport("silent", Duration::from_secs(1));

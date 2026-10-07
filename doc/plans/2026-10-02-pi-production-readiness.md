@@ -40,13 +40,43 @@ old code and passes with the correction; live-child and cleanup-failure regressi
 also pass. No paid cases resume before rebuilding and admitting this repair.
 The three passes on the previous Runner source do not qualify changed host bytes.
 
+Source `b061f31242a29374910b5c02b595e90d21e7fae9` then passed normal Linux
+workspace/public builds, all installation hooks, graph audits, Pi setup and real
+server/UI startup. All 20 archives are hash-verified and retained. Its hosted image
+build, anonymous OCI admission and actual credential-free Daytona guest probe
+passed; probe deletion was confirmed. Current-head CI passed 54 applicable checks,
+with two expected skips and zero new Greptile comments or open review threads.
+
+The first Stop run on that source passed its unchanged canonical Product grader,
+including process cleanup. Independent inspection nevertheless found two native
+snapshot directories: one complete 547 MB distribution and one partial 20 MB
+copy. The original canonical pass, failed independent cleanup observation, trace,
+manifest and every remaining file hash are retained. Paid cases halted; this run
+does not qualify the release. Only those two exact, quiescent owned directories
+were reclaimed after rechecking their retained identities and bytes.
+
+Free regressions reproduce both remaining boundaries: native acquisition ignored
+cancellation, and the Rust process-group supervisor killed Pi cleanup after only
+two seconds. The new repair propagates a command-owner cancellation signal into
+Pi snapshot acquisition, stops admitting copies on cancellation and drains all
+admitted reads before deleting the partial tree. Pi gets a finite 30-second
+sidecar shutdown grace; process-group KILL and inherited lifetime-fence proofs
+remain authoritative. Normal cleanup still waits for exact-child exit.
+The repair passes 271 focused TypeScript tests, one existing skip, all 16 Rust
+transport tests and Runner typecheck. A credential-free Linux probe against the actual installed 15,671-entry, 540 MB
+Pi closure takes 4.22 seconds to copy and 1.38 seconds to delete. Cancellation
+during an admitted read drains and deletes the partial copy in 0.28 seconds; no
+snapshots remain. This free repair-engine proof does not qualify packaged Runner
+bytes. The source must be rebuilt and admitted before another paid attempt. All
+33 release cases remain required.
+
 | Release gate | Current evidence |
 | --- | --- |
 | Offline cancellation proof | Unit and actual subprocess regressions fail on profile-17 bytes and pass on the profile-18 wrapper. All 49 Pi ACP protocol tests pass. Historical profile-17 decoding remains available; exact launch requires profile 18. |
 | Snapshot retirement proof | New actual-subprocess tests prove deletion completes before retirement, live-child bytes remain available, failed deletion is reported and retryable, and a surviving child returns bounded failure with retained bytes. All 150 focused tests pass, six existing skips; Runner TypeScript typecheck passes. The earlier parallel credential-home collision and passing 52-test isolated recheck remain retained. |
 | Existing free checks | The cancellation source passes 2,480 Product unit tests; the final source rerun has one unrelated file-gate timeout, whose seven-test isolated recheck passes. Exact-source Rust checks pass 689 tests, two ignored. Latest Linux CI on `9cd363d` passes all 54 applicable checks. Fresh cleanup-source CI is required. |
 | Normal Linux build and public installation | Source `6a3930934` passes the normal build/install/hook/graph/setup/server/UI chain. Fresh artifacts containing the snapshot-retirement repair must pass the same admission. |
-| Final Product acceptance | Fresh repair-source coverage is 0/26. Retain source `6a3930934`'s three passes and original disk-exhaustion failure as historical evidence. Keep every accepted assertion and zero automatic retries. |
+| Final Product acceptance | Fresh repair-source coverage is 0/26. Retain source `6a3930934`'s three passes and disk-exhaustion failure, and `b061f3124`'s canonical Stop pass with failed independent native-snapshot cleanup, as historical evidence. Keep every accepted assertion and zero automatic retries. |
 | Final Runner acceptance | Fresh repair-source coverage is 0/7. All seven definitions and scoring rules stay frozen. Only their shipping-source metadata changes when the next artifact set is frozen. |
 | Cloud image | [Hosted Linux build](https://github.com/paperclipai/paperclip/actions/runs/37662254178) passes for source `6a3930934`, immutable image `sha256:c05914a36034c3a9a1fee2e385ca67c28ee4f98fd058c004b9a9a68c76bbf976`. Anonymous OCI and actual credential-free Daytona guest admission pass; owned probe deletion is confirmed. A fresh repair-source image and guest admission are required. No local Docker is used. |
 | PR CI and review | `9cd363d` passes 54 checks with no failures; Greptile is 5/5 with no open threads. Fresh cleanup-source CI and review are required. No merge, release or rollout is authorized. |
@@ -59,8 +89,8 @@ remain strict. Task creation binds the explicit public creation-response issue I
 
 The dedicated OpenRouter key retains its $5 lifetime cap inside the approved $100
 total token ceiling, with no reset, BYOK, account-key fallback or unchanged paid
-retry. The last retained key snapshot records $0.478199225 lifetime usage and
-$4.521800775 remaining. Billing snapshots are provisional. Reclaim only inspected,
+retry. The pre-Stop key snapshot records $0.491592211 lifetime usage and
+$4.508407789 remaining. Billing snapshots are provisional. Reclaim only inspected,
 quiescent resources from the owned qualification host after retaining their evidence;
 require disk headroom and zero leaked native snapshots before subsequent paid cases.
 
