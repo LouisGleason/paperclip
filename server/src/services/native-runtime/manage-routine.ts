@@ -3,6 +3,7 @@ import { z } from "zod";
 import { routines, routineTriggers, type Db } from "@paperclipai/db";
 import { createRoutineSchema, updateRoutineSchema, createRoutineTriggerSchema, updateRoutineTriggerSchema } from "@paperclipai/shared";
 import { routineService } from "../routines.js";
+import { documentAnnotationService } from "../document-annotations.js";
 import { persistActivity } from "../activity-log.js";
 import { forbidden, notFound } from "../../errors.js";
 
@@ -74,6 +75,22 @@ export async function manageRoutine(db: Db, binding: Binding, input: z.infer<typ
     if (routine && routine.latestRevisionId !== existing.latestRevisionId) {
       await log("routine.revision_created", "routine", routine.id, { revisionId: routine.latestRevisionId,
         revisionNumber: routine.latestRevisionNumber, changeSummary: "Updated routine", triggerCount: null });
+      if (input.description !== undefined) {
+        const doc = await service.getDescriptionDocument(routine.id);
+        if (doc) {
+          const remapped = await documentAnnotationService(db).remapOpenThreadsForRoutineDocument({
+            routineId: routine.id, key: doc.key, documentId: doc.id,
+            nextRevisionId: doc.latestRevisionId, nextRevisionNumber: doc.latestRevisionNumber, nextBody: doc.body,
+          });
+          for (const remap of remapped) {
+            await log("routine.document_annotation_remapped", "routine", routine.id, {
+              key: doc.key, documentKey: doc.key, documentId: doc.id, threadId: remap.thread.id,
+              revisionNumber: doc.latestRevisionNumber, anchorState: remap.thread.anchorState,
+              anchorConfidence: remap.thread.anchorConfidence, snapshotId: remap.snapshot.id,
+            });
+          }
+        }
+      }
     }
     if (input.schedule) {
       const [trigger] = await db.select().from(routineTriggers).where(and(
