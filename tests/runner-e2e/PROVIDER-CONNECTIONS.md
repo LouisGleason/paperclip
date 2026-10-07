@@ -147,7 +147,7 @@ Every checkpoint must be verified:
 1. Expected target revision and deployment mode.
 2. Fresh connection saved with the selected method/provider/route.
 3. Connection visible after navigating away and reloading Apps.
-4. Agent created through the wizard with the selected harness/model/binding and requested execution environment.
+4. Agent created through the ordinary harness picker with the selected harness/model/binding and requested execution environment. Native profiles omit runner overrides and prove automatic resolution; legacy profiles select Legacy runner in Advanced. No fixture patches execution after creation.
 5. Real Configure-page environment probe passes.
 6. Real task run succeeds with that exact managed connection's attribution and requested environment in its durable run context.
 7. Agent decodes random input bytes supplied in the task, computes their sum/count/hash, and delivers

@@ -8,7 +8,7 @@ import { captureFirstTaskAttachments } from "./first-task-attachments.js";
 import { waitForFirstTaskReply } from "./first-task-replies.js";
 import { observeCompletionUpdate } from "./completion-update-flow.js";
 import {
-  firstTaskNativeRuntimePatch,
+  assertFirstTaskRuntime,
   provisionFirstTaskFixtures,
 } from "./first-task-fixtures.js";
 import { execFileSync } from "node:child_process";
@@ -80,6 +80,11 @@ export async function setupFirstTaskFixtures(input: {
   await expect(
     page.getByRole("heading", { name: "Connect a model" }),
   ).toBeVisible();
+  if (execution.profile.generation === "legacy") {
+    await page.locator("summary").filter({ hasText: /^Advanced$/ }).click();
+    await page.getByRole("button", { name: "Runner", exact: true }).click();
+    await page.getByRole("listbox", { name: "Runner", exact: true }).getByRole("option", { name: "Legacy runner", exact: true }).click();
+  }
   await page
     .getByRole("radio", {
       name:
@@ -108,46 +113,7 @@ export async function setupFirstTaskFixtures(input: {
   ).toBeVisible({ timeout: 120_000 });
   const agents = await api.get<Row[]>(`/api/companies/${company.id}/agents`);
   expect(agents).toHaveLength(1);
-  const wizardAdapter =
-    execution.profile.credential === "OPENAI_API_KEY"
-      ? "codex_local"
-      : "claude_local";
-  expect(agents[0].adapterType).toBe(wizardAdapter);
-  fixtures.onboardingRuntime = {
-    mode: "production-wizard",
-    originalAdapterType: wizardAdapter,
-    testedAdapterType: wizardAdapter,
-    originalModel: agents[0].adapterConfig?.model ?? null,
-  };
-  if (execution.profile.generation === "native") {
-    const runtimePatch = firstTaskNativeRuntimePatch(
-      execution,
-      fixtures,
-      agents[0],
-    );
-    const migrated = await api.patch<Row>(
-      `/api/agents/${agents[0].id}`,
-      runtimePatch,
-    );
-    expect(migrated.adapterType).toBe("paperclip_runner");
-    expect(migrated.adapterConfig?.provider).toBe(execution.profile.provider);
-    expect(migrated.adapterConfig?.instructionsFilePath).toBe(
-      agents[0].adapterConfig?.instructionsFilePath,
-    );
-    expect(migrated.adapterConfig?.paperclipSkillSync?.desiredSkills).toEqual(
-      (
-        runtimePatch.adapterConfig.paperclipSkillSync as {
-          desiredSkills?: unknown[];
-        }
-      )?.desiredSkills,
-    );
-    fixtures.onboardingRuntime = {
-      mode: "post-onboarding-runtime-switch",
-      originalAdapterType: wizardAdapter,
-      testedAdapterType: migrated.adapterType,
-      originalModel: agents[0].adapterConfig?.model ?? null,
-    };
-  }
+  fixtures.onboardingRuntime = assertFirstTaskRuntime(execution, agents[0]);
   fixtures.agent = {
     id: agents[0].id,
     companyId: company.id,

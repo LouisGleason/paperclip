@@ -1063,17 +1063,13 @@ model. Configured and provider-observed model identities are reported separately
 
 There are thirteen cases on `legacy-codex`, `legacy-claude`, `runner-codex`, and
 `runner-acpx-claude`, local only (52 cells). Native profiles complete the same
-production wizard using their legacy provider, then change only the agent's
-runtime configuration via the public API before its first task. The wizard does
-not currently offer native Runner. Persona, managed instructions, skills, seeded
-question, and task invocation are preserved. Explicit model choices are retained;
-an unset model resolves through the production runtime-switch defaults. The
-production switch removes the legacy Paperclip operational skill because Runner
-supplies its control-plane contract through its protocol; other assigned skills,
-including `/first-task`, are retained. Native runtime permissions come from the
-existing qualified profile. Evidence labels
-this setup `post-onboarding-runtime-switch`; it does not claim a native wizard
-path exists. Legacy setup is labeled `production-wizard`.
+production wizard without specifying a runner. The server must save the native
+runner and correct underlying harness at creation; the fixture never switches
+execution afterward. Legacy profiles choose **Legacy runner** in Advanced before
+connecting. Both paths retain the production persona, model, permissions,
+managed instructions, skills, seeded question, and task invocation. Evidence
+labels both paths `production-wizard` and records `runnerChoice` as `auto` or
+`legacy`. A wrong or unknown persisted harness fails instead of being repaired.
 
 | First response / control | Complete journey |
 | --- | --- |

@@ -26,6 +26,7 @@ export interface ConnectionEvidence {
   companyId?: string;
   artifactSha256?: string;
   model?: string;
+  selection?: { harness: string; runnerChoice: "auto" | "legacy"; adapterType: string };
   inputTransport?: "prompt_base64";
   setupChecks?: Array<{ code: string; level: "info" | "warn" | "error" }>;
   creationFailure?: { status: number; code: "ai_connection_api_key_rejected" | "ai_connection_verification_failed" | "connection_request_rejected" };

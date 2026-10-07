@@ -10,12 +10,12 @@ One owner carries implementation, verification and relevant review fixes through
 
 - Worktree: `/Users/dotta/.codex/worktrees/e492/paperclip`
 - Branch: `codex/default-agent-runner`
-- Base: `799e4d556` (master)
+- Base: `b31558064093564fb937cf046596d1d497f5be27` (master, refreshed 2026-10-07)
 - PR: https://github.com/paperclipai/paperclip/pull/15422
 - Preview: http://127.0.0.1:3104/RUN/agents
 - Evidence task: http://127.0.0.1:3104/RUN/issues/RUN-2
 - Test-drive: the production source includes security fix `204740b27`; `/api/health` exposes the running checkout commit. The final handoff records the tested PR head.
-- Next action: confirm CI and Greptile on the dropdown correction, then hand off the updated PR. The missing credentials and managed target still block the remaining provider acceptance matrix.
+- Next action: validate the extended existing Product E2E fixtures, freeze the qualification candidate, and run the bounded local/staging checklist. Merge and production deployment require separate authorization.
 
 ## Implemented
 
@@ -78,3 +78,29 @@ Screenshots are uploaded as attachment-backed artifact work products on RUN-2, n
 - [Actionable Cursor setup failure and runner override](http://127.0.0.1:3104/api/attachments/e7aa5c95-fed6-4472-bf57-3350d3e7bbf6/content) — work product `e71aeb0b-41d8-4da6-b154-221b158cc485`.
 
 - [Native Grok follow-up after restart](http://127.0.0.1:3104/api/attachments/96941d27-7881-4f37-8eea-c772412b2f06/content) — work product `6af9e9f8-117d-4821-9de3-aebc564d4823`.
+
+## Final qualification campaign (2026-10-07)
+
+The accepted finish line is one organized local and staging run-through, with no timed soak and a $250 incremental provider/disposable-environment ceiling. Reuse existing evals, fixture registry, selectors, independent oracles, cleanup and reports. Extend only gaps; preserve explicit-runner controls. Subscription logins are attended by Dotta. Actual production composition, fresh cloud warm/cold signup and promotion remain gated on a separately authorized merge.
+
+- Rebased all ten feature commits onto current master without conflicts. Candidate is not frozen until fixture updates and targeted checks pass.
+- Found the existing owner-only QA credential file with all five providers and Daytona. Values stay outside source/evidence. This supersedes the earlier missing-key inventory; validity and qualified target readiness still need live verification.
+- Existing `provider-connections` already supplies a random-byte attachment oracle, tool/run attribution, real task/follow-up, cleanup and attached staging support. Extend its ordinary harness picker and shared-dropdown interactions; native cells select auto, supported legacy cells explicitly select legacy.
+- Existing `first-task` supplies 52 Codex/Claude onboarding behavior cells. Replace its post-wizard execution patch with validation of the wizard's saved default; retain all legacy cells via the UI override and preserve production persona/model/permissions/instructions/skills.
+
+| Acceptance requirement | Existing coverage / qualification action | Current status |
+| --- | --- | --- |
+| Native Codex/Claude/Grok/OpenCode task and follow-up | `provider-connections`, local and attached managed staging cells | Pending live run |
+| Cursor ordinary creation/task/follow-up | Existing extended Cursor harness oracle plus attended ordinary UI creation | Pending live run |
+| First agent, Codex/Claude | Existing `first-task`, automatic-default and explicit-legacy paths | Fixture extension in progress |
+| Existing agents and unrelated edits | Existing native session/revision tests, agent config stories, disposable test-drive agents | Earlier Grok proof only; final candidate pending |
+| API/CLI, built-ins, hiring/approvals, plugins, imports | Existing creation integration, hire inheritance, built-in/plugin/onboarding/portability suites | Final candidate checks pending |
+| Failure/no fallback | Existing selection/readiness/credential/model tests and Cursor failure UI proof | Final candidate checks pending |
+| Restart and managed sleep/wake | Existing instruction-persistence/warm-continuity/recovery evals | Final candidate live run pending |
+| Dropdowns and legacy UI | Existing production stories and keyboard/model/setup regressions | Final candidate visual pass pending |
+| Packaged installs, Docker, Linux service | Existing release-smoke, canary-onboarding and service-onboard checks | Final candidate artifact run pending |
+| Isolated staging preview | Existing immutable preview + single-stack deployment path | Candidate and QA target preparation pending |
+| Actual cloud distribution, warm/cold signup | Existing verified-master private composition/provisioning path | Requires separately authorized master merge |
+| Production campaign and rollback | Existing canary-first immutable fleet campaign; disposable native/legacy compatibility probe | Prepare only; no production deployment authorized |
+
+Paid spend so far in this qualification campaign: $0 (no provider or disposable-environment calls yet). Required live cells cannot be marked passed from mocks or CI. Capture failures and bounded retries separately; missing credentials/targets block the corresponding gate.

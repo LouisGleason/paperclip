@@ -7,7 +7,7 @@ import { createIssueThreadInteractionSchema } from "../../packages/shared/src/va
 import { renderInteractionCard } from "./interaction-report.js";
 import { main as judgeCommand } from "./first-task-judge.js";
 import {
-  firstTaskNativeRuntimePatch,
+  assertFirstTaskRuntime,
   provisionFirstTaskFixtures,
 } from "./first-task-fixtures.js";
 import { describe, expect, it, vi } from "vitest";
@@ -733,76 +733,32 @@ Accept the card above and I write it. This task stays in review until then.`;
     expect(postSensitive).toHaveBeenCalledTimes(1);
   });
 
-  it.each(["runner-codex", "runner-acpx-claude"])(
-    "switches only the runtime for %s, preserving onboarding assets and the default model",
+  it.each(["runner-codex", "runner-acpx-claude", "legacy-codex", "legacy-claude"])(
+    "grades the wizard's persisted selection for %s without rewriting its configuration",
     (id) => {
-      const execution = runnerMatrix.find(
-        (e) => e.suite.id === "first-task" && e.profile.id === id,
-      )!;
-      const secret = {
-        type: "secret_ref" as const,
-        secretId: "saved-key",
-        version: "latest" as const,
-      };
-      const fixtures = {
-        company: { id: "company", name: "Garden" },
-        environment: { id: "local", driver: "local" },
-        agent: { id: "agent", companyId: "company", name: "Lead" },
-        secretRefs: { [execution.profile.credential]: secret },
-        teardown: async () => {},
-      };
-      const original = {
+      const execution = runnerMatrix.find(e => e.suite.id === "first-task" && e.profile.id === id)!;
+      const native = execution.profile.generation === "native";
+      const codex = execution.profile.credential === "OPENAI_API_KEY";
+      const agent = {
+        adapterType: native ? "paperclip_runner" : codex ? "codex_local" : "claude_local",
         adapterConfig: {
+          ...(native ? codex ? { provider: "codex" } : { provider: "acpx", acpxAgent: "claude" } : {}),
           instructionsFilePath: "/managed/AGENTS.md",
           paperclipSkillSync: { desiredSkills: ["first-task"] },
-          model: null,
+          model: "chosen-by-user",
         },
-        permissions: { canCreateAgents: true },
       };
-      const patch = firstTaskNativeRuntimePatch(execution, fixtures, original);
-      expect(Object.keys(patch).sort()).toEqual([
-        "adapterConfig",
-        "adapterType",
-      ]);
-      expect(patch.adapterType).toBe("paperclip_runner");
-      expect(patch.adapterConfig).toMatchObject({
-        instructionsFilePath: "/managed/AGENTS.md",
-        paperclipSkillSync: original.adapterConfig.paperclipSkillSync,
-        provider: execution.profile.provider,
+      const before = structuredClone(agent);
+      expect(assertFirstTaskRuntime(execution, agent)).toEqual({
+        mode: "production-wizard", runnerChoice: native ? "auto" : "legacy",
+        originalAdapterType: agent.adapterType, testedAdapterType: agent.adapterType,
+        originalModel: "chosen-by-user",
       });
-      expect(patch.adapterConfig).not.toHaveProperty("model");
-      const withOperational = firstTaskNativeRuntimePatch(execution, fixtures, {
-        adapterConfig: {
-          paperclipSkillSync: {
-            desiredSkills: [
-              "paperclipai/paperclip/paperclip",
-              "paperclipai/paperclip/first-task",
-            ],
-          },
-        },
-      });
-      expect(
-        (
-          withOperational.adapterConfig.paperclipSkillSync as {
-            desiredSkills: string[];
-          }
-        ).desiredSkills,
-      ).toEqual(["paperclipai/paperclip/first-task"]);
-      expect(patch).not.toHaveProperty("instructionsBundle");
-      expect(
-        (patch.adapterConfig.env as Record<string, unknown>)[
-          execution.profile.credential
-        ],
-      ).toEqual(secret);
-      if (id === "runner-codex")
-        expect(
-          (patch.adapterConfig.env as Record<string, unknown>).CODEX_API_KEY,
-        ).toEqual(secret);
-      expect(
-        firstTaskNativeRuntimePatch(execution, fixtures, {
-          adapterConfig: { model: "chosen-by-user" },
-        }).adapterConfig.model,
-      ).toBe("chosen-by-user");
+      expect(agent).toEqual(before);
+      expect(() => assertFirstTaskRuntime(execution, { ...agent, adapterType: native ? "codex_local" : "paperclip_runner" })).toThrow("unexpected harness or runner");
+      expect(() => assertFirstTaskRuntime(execution, { adapterType: "paperclip_runner", adapterConfig: { provider: "unknown" } })).toThrow("unexpected harness or runner");
+      if (native) expect(() => assertFirstTaskRuntime(execution, { ...agent, adapterConfig: codex ? { provider: "acpx", acpxAgent: "claude" } : { provider: "codex" } })).toThrow("unexpected harness or runner");
+      expect(assertFirstTaskRuntime(execution, { ...agent, adapterConfig: { ...agent.adapterConfig, model: undefined } }).originalModel).toBeNull();
     },
   );
 

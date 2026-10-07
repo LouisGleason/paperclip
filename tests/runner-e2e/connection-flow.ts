@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { expect, type Page } from "@playwright/test";
 import { aiRoutingModel } from "../../packages/shared/src/ai-provider-routing.js";
+import { agentHarnessType } from "../../packages/shared/src/agent-runner.js";
 import { getConnectableAppDefinition } from "../../packages/shared/src/app-definitions.js";
 import { connectionCell, type ConnectionHarness, type ConnectionMode } from "./connection-cases.js";
 import { ConnectionBlock, ConnectionFailure, type ConnectionConfig, type resolveConnectionSettings } from "./connection-config.js";
@@ -136,7 +137,19 @@ async function selectSavedConnection(page: Page, connection: Row, harness: Conne
   }
 }
 
-async function createConnectionThroughUi(input: ConnectionFlowInput, agentURL: string) {
+async function openAgentPicker(input: ConnectionFlowInput) {
+  const { page, api, company } = input;
+  const { harness } = connectionCell(input.execution);
+  await page.goto(`${api.origin}/${company.issuePrefix}/agents`, { waitUntil: "domcontentloaded" });
+  await page.getByRole("button", { name: "New Agent", exact: true }).click();
+  await page.getByRole("textbox", { name: "Agent name", exact: true }).fill(`Connection QA ${input.nonce}`);
+  await page.getByRole("button", { name: "Choose harness", exact: true }).click();
+  await page.locator("label").filter({ has: page.locator(`input[name="new-agent-adapter"][value=${JSON.stringify(harness.adapter)}]`) }).click();
+  await expect(page.getByRole("radio", { name: /Paperclip Runner/ })).toHaveCount(0);
+  await page.getByRole("button", { name: "Configure agent", exact: true }).click();
+}
+
+async function createConnectionThroughUi(input: ConnectionFlowInput) {
   const { page, api, company, evidence } = input;
   const { harness, mode, entry } = connectionCell(input.execution);
   const priorConnections = (await api.get(`/api/companies/${company.id}/ai-connections`)).connections as Row[];
@@ -162,7 +175,7 @@ async function createConnectionThroughUi(input: ConnectionFlowInput, agentURL: s
       if (await switcher.isVisible()) await switcher.click();
     }
   } else {
-    await page.goto(agentURL, { waitUntil: "domcontentloaded" });
+    await openAgentPicker(input);
     const tiles = page.getByRole("radiogroup", { name: "Connection type", exact: true });
     if (["claude", "codex", "grok"].includes(harness.id)) {
       const choice = tiles.getByRole("radio", { name: advanced ? /Advanced/ : mode === "subscription" ? /Subscription/ : /API key/ });
@@ -209,7 +222,7 @@ async function createConnectionThroughUi(input: ConnectionFlowInput, agentURL: s
   await expect(page.getByText(connection.name, { exact: true }).first()).toBeVisible();
   evidence.checkpoints.connection_reloaded = true;
   await input.checkpoint("connection_reloaded");
-  await page.goto(agentURL, { waitUntil: "domcontentloaded" });
+  await openAgentPicker(input);
   await input.checkpoint("select_saved_connection");
   await selectSavedConnection(page, connection, harness, mode);
   await input.checkpoint("configure_agent");
@@ -217,14 +230,16 @@ async function createConnectionThroughUi(input: ConnectionFlowInput, agentURL: s
 }
 
 async function selectModel(page: Page, model: string) {
-  const select = page.getByRole("combobox", { name: "Model", exact: true });
+  const select = page.getByRole("button", { name: "Model", exact: true });
   await select.waitFor({ state: "visible" });
   await expect(select).not.toHaveAttribute("aria-busy", "true", { timeout: 60_000 });
-  const values = await select.locator("option").evaluateAll(options => options.map(option => (option as HTMLOptionElement).value));
+  await select.click();
+  const list = page.getByRole("listbox", { name: "Model", exact: true });
+  const values = await list.getByRole("option").evaluateAll(options => options.map(option => option.getAttribute("data-value")));
   const matched = values.find(value => value === model || value === `openrouter/${model}`);
-  if (matched) await select.selectOption(matched);
+  if (matched) await list.locator(`[data-value=${JSON.stringify(matched)}]`).click();
   else {
-    await select.selectOption({ label: "Enter custom model…" });
+    await list.getByRole("option", { name: "Enter custom model…", exact: true }).click();
     await page.getByLabel("Model ID", { exact: true }).fill(model);
   }
 }
@@ -233,17 +248,28 @@ export async function runConnectionFlow(input: ConnectionFlowInput) {
   const { page, api, execution, evidence, settings, company, environment, config } = input;
   const { harness, mode } = connectionCell(execution);
   const agentName = `Connection QA ${input.nonce}`;
-  const agentURL = `${api.origin}/${company.issuePrefix}/agents/new?${new URLSearchParams({ name: agentName, adapterType: execution.profile.adapterType, runnerProvider: harness.id })}`;
-  const connection = await createConnectionThroughUi(input, agentURL);
+  const connection = await createConnectionThroughUi(input);
   await expect(page.getByRole("heading", { name: "Configure your agent", exact: true })).toBeVisible({ timeout: 120_000 });
-  const environmentSelect = page.getByRole("combobox", { name: "Environment", exact: true });
-  const selectedEnv = await environmentSelect.inputValue();
+  const environmentSelect = page.getByRole("button", { name: "Environment", exact: true });
+  const instance = await api.get<Row>("/api/instance/settings");
+  let selectedEnv = instance.defaultEnvironmentId ?? (environment.driver === "local" ? environment.id : null);
+  if (await environmentSelect.isEnabled()) {
+    await environmentSelect.click();
+    const list = page.getByRole("listbox", { name: "Environment", exact: true });
+    selectedEnv = await list.locator('[aria-selected="true"]').getAttribute("data-value") || selectedEnv;
+    await environmentSelect.press("Escape");
+  }
   if (selectedEnv !== environment.id) {
     if (!(await environmentSelect.isEnabled())) throw new ConnectionBlock("blocked_target", "requested_execution_environment_unavailable");
-    await environmentSelect.selectOption(environment.id);
+    await environmentSelect.click();
+    await page.getByRole("listbox", { name: "Environment", exact: true }).locator(`[data-value=${JSON.stringify(environment.id)}]`).click();
     if (["claude", "codex", "grok"].includes(harness.id)) await selectSavedConnection(page, connection, harness, mode);
   }
-  if (await environmentSelect.inputValue() !== environment.id) throw new ConnectionBlock("blocked_target", "requested_execution_environment_unavailable");
+  if (execution.profile.generation === "legacy" && harness.native) {
+    await page.locator("summary").filter({ hasText: /^Advanced$/ }).click();
+    await page.getByRole("button", { name: "Runner", exact: true }).click();
+    await page.getByRole("listbox", { name: "Runner", exact: true }).getByRole("option", { name: /^Legacy runner/ }).click();
+  }
   await input.checkpoint("select_model");
   await selectModel(page, settings.model);
   await input.checkpoint("setup_probe");
@@ -276,7 +302,8 @@ export async function runConnectionFlow(input: ConnectionFlowInput) {
   const expectedModel = connection.routing
     ? aiRoutingModel(connection.routing, harness.adapter, settings.model)
     : settings.model;
-  if (agent.adapterType !== execution.profile.adapterType || agent.adapterConfig?.model !== expectedModel) throw new ConnectionFailure("agent_harness_or_model_mismatch");
+  if (agent.adapterType !== execution.profile.adapterType || agentHarnessType(agent.adapterType, agent.adapterConfig ?? {}) !== harness.adapter || agent.adapterConfig?.model !== expectedModel) throw new ConnectionFailure("agent_harness_or_model_mismatch");
+  evidence.selection = { harness: harness.adapter, runnerChoice: execution.profile.generation === "native" || !harness.native ? "auto" : "legacy", adapterType: agent.adapterType };
   const binding = agent.runtimeConfig?.aiConnection;
   if (!binding || binding.method !== connection.method || (binding.mode !== "responsible_user" && binding.connectionId !== connection.id)) throw new ConnectionFailure("agent_binding_mismatch");
   // Fixtures may constrain cost/scheduling, but cannot repair or replace the tested credentials/config.
