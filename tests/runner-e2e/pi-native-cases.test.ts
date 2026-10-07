@@ -13,7 +13,8 @@ describe("Pi native Product qualification", () => {
     const args = JSON.parse(encoded);
     expect(Object.keys(args)).toEqual(["path", "content"]);
     expect(args.path).toBe("<AGENT_HOME>/memory/pi-native.txt");
-    expect(encoded).toContain('\\n"}');
+    expect(encoded).toContain('\\u000a"}');
+    expect(encoded).not.toContain('\\\\u000a');
     const content = args.content;
     expect(content).toBe(`${nonce}\n`);
     expect(Buffer.byteLength(content)).toBe(33);

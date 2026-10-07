@@ -12,7 +12,9 @@ the accepted OpenRouter model and low thinking are fixture inputs. The new
 Runner snapshot-retirement repair requires fresh normal Linux packages, a cloud
 image and all 33 accepted live cases. Provider wrapper, closure, profile and
 model-selection declarations are unchanged by this host-lifecycle repair.
-Mac qualification remains deferred. The following repair stages are historical;
+Normal ARM and Intel Mac install admission remains required by the active goal;
+historical Mac evidence does not qualify the current shipping source.
+The following repair stages are historical;
 the release-gate table below and exact shutdown-source section record current
 admission. Do not repeat completed builds or count passes on older artifacts.
 
@@ -77,6 +79,8 @@ bytes. The source must be rebuilt and admitted before another paid attempt. All
 | Offline cancellation proof | Profile 18 passes all 49 Pi ACP protocol checks. Historical profile 17 remains decodable; exact launch requires profile 18. |
 | Snapshot retirement proof | Shipping source `06a3d9739` passes 271 focused TypeScript tests, one existing skip, 16 Rust transport tests and Runner typecheck. Actual installed native copy, cancellation and deletion probes pass. Three live cases and both memory failures have independent zero-snapshot cleanup. |
 | Normal Linux build and public installation | Source `06a3d9739` passes normal workspace/public builds, npm installation and lifecycle hooks, full graph audits, Pi setup and real server/UI admission. All 20 archives and exact installed daemon bytes are retained and verified. |
+| Normal ARM Mac installation | Current shipping-source normal install, lifecycle, Pi setup and packaged admission proof remains required. Historical passes are not transferred. |
+| Normal Intel Mac installation | Current shipping-source normal install, lifecycle, Pi setup and native Intel admission proof remains required. Historical x64 execution under Rosetta is emulation evidence. |
 | Final Product acceptance | Current shipping artifacts have 3/26 passes: local Stop, steering and native questions. The local memory case fails the strict final-newline check on original harness `06a3d9739` and clarified harness `56d1e03ac`. Both canonical failures remain unchanged. The other 22 Product cells are unexecuted. No automatic retries. |
 | Final Runner acceptance | Current shipping coverage is 0/7. All seven cases, model, low thinking, 120-second limits and scoring rules are pinned to definition revision `d38ebc67`. |
 | Cloud image | [Hosted Linux build](https://github.com/paperclipai/paperclip/actions/runs/37676853634) passes for source `06a3d9739`. Immutable image `sha256:5e62c8e294cd9d663316ba09b0aae1d7358a8938fe37d17936ef394cf1723ab2` passes anonymous OCI verification and actual credential-free Daytona guest admission; probe deletion is confirmed. No local Docker is used. |
@@ -162,6 +166,41 @@ compile caches were retired. The root-owned image cache was left untouched.
 The actual memory attempt began with 2,050,457,600 bytes free. The original
 preflight rejection and both cache-reclamation diagnostics remain retained;
 none is reclassified as a live qualification attempt.
+
+## Frozen-model memory encoding correction — 2026-10-07
+
+The active goal keeps `openrouter/deepseek/deepseek-v4-flash-0731` and native
+low thinking. The proposed replacement qualification model is not applied.
+Shipping packages and the admitted image remain frozen at `06a3d9739`; no
+production input or runtime profile changes.
+
+The existing real Pi RPC warm-recovery test passes against the exact installed
+profile-18 wrapper. Its fragmented JSON write preserves the final LF on disk,
+a fresh wrapper restores the session and agent home, and both owned Pi children
+close. External sockets are denied before connect; responses come from an
+owned synthetic loopback fixture. This is diagnostic proof, not live coverage.
+
+Pi native definition 17 changes the authoritative write JSON's LF encoding from
+`\n` to `\u000a`. Both decode to the same 33 UTF-8 bytes; the final byte remains
+10. The installed native write/read probe preserves that Unicode-escaped content
+and an unchanged 32-byte negative control exactly. The original model failures
+remain retained. No grader, permission, deadline, case ID or production behavior
+changes. The new suite fingerprint must be recorded; prior native definition-16
+passes remain their original measurements. Unchanged controls retain their
+original fingerprints and installed identities.
+
+Run the free harness checks against an exact new harness revision, then permit
+one explicitly selected changed memory attempt under the same $5 key lifetime
+cap and $100 campaign ceiling. Keep zero automatic retries, no BYOK or fallback,
+and the same 2 GB disk floor. Stop and retain canonical and independent cleanup
+evidence on any failure. An encoding change does not itself establish reliability
+or production readiness.
+
+Documentation head `3fee270de` passes all 54 applicable CI checks with two skips
+after one failed-job rerun of two simultaneous runner shutdowns. Original logs
+remain retained. Its Greptile review is 5/5 with no unresolved threads; this new
+harness change requires fresh current-head CI and review. All remaining Product,
+Runner and platform installation gates remain required. Do not merge or release.
 
 ## Final fixture reconciliation — 2026-10-07
 

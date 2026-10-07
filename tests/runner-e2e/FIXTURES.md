@@ -31,6 +31,17 @@ profile, model qualification, environment, task, or ranking-snapshot change
 must change that fingerprint automatically so the dashboard can annotate the
 boundary instead of silently joining unlike totals.
 
+Pi native definition 17 keeps the memory outcome at exactly the nonce plus one
+final LF. Its authoritative native-write JSON spells that byte as `\u000a`
+instead of `\n`; both decode to identical content. The installed Pi tools
+preserve the 33-byte Unicode-escaped payload and the 32-byte negative control
+exactly. The strict managed-file and fresh-task byte comparisons, single native
+write/read, cross-root denial, model, low thinking, permissions and deadlines are
+unchanged. Retain both previous missing-LF failures and their original catalog
+fingerprints. This encoding correction permits one recorded changed memory
+attempt, with zero automatic retries. Free byte preservation is diagnostic
+evidence, not a live qualification pass.
+
 The explicit [stock-harness suite](STOCK-HARNESS.md) wraps existing profiles with
 `productionDefaultHireProfile`: omit only `instructionsBundle` so the public
 hire route loads the shipped default, while preserving runtime, permissions,
