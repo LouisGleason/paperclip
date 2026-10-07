@@ -1214,7 +1214,10 @@ describe("accept-while-running overlap evidence", () => {
 
 
 describe("native provider session continuity", () => {
-  const row = (id: string) => ({ id, nativeIssueId: "parent", nativeSessionId: "native", usageJson: { sessionReused: true }, runnerProfileJson: { sessionCheckpoint: { providerSessionId: "provider" }, nativeExecutionInput: { binding: { executionWorkspaceId: "workspace" } } } });
+  const row = (id: string) => ({ id, companyId: "fixture-company", agentId: "fixture-agent", nativeIssueId: "parent", nativeSessionId: "native", usageJson: { sessionReused: true }, runnerProfileJson: { sessionCheckpoint: { providerSessionId: "provider" }, nativeExecutionInput: {
+    binding: { runId: id, companyId: "fixture-company", agentId: "fixture-agent", issueId: "parent", executionWorkspaceId: "workspace" },
+    workspace: { cwd: "/fixture/workspace", repoUrl: null as string | null, repoRef: null as string | null, branchName: null as string | null },
+  } } });
   it("accepts stable parent identity, deduplicates checkpoints, and excludes children", () => {
     expect(gradeNativeSessionContinuity([row("one"), row("one"), row("two"), { ...row("child"), nativeIssueId: "child", nativeSessionId: "different" }], "parent").passed).toBe(true);
   });
@@ -1222,6 +1225,47 @@ describe("native provider session continuity", () => {
     const next = row("two"); next.runnerProfileJson.sessionCheckpoint.providerSessionId = "fresh";
     expect(gradeNativeSessionContinuity([row("one"), next], "parent").passed).toBe(false);
     expect(gradeNativeSessionContinuity([row("one")], "parent").passed).toBe(false);
+  });
+  const transient = (id: string) => {
+    const run = row(id);
+    run.runnerProfileJson.nativeExecutionInput.binding.executionWorkspaceId = id;
+    return run;
+  };
+  it("normalizes only recorded per-run workspace placeholders to the stable native scope", () => {
+    const check = gradeNativeSessionContinuity([transient("first"), transient("followup")], "parent");
+    expect(check.passed).toBe(true);
+    expect(check.detail).not.toContain("/fixture/workspace");
+  });
+  it.each(["cwd", "repoUrl", "repoRef", "branchName"] as const)("rejects changed transient workspace %s", key => {
+    const next = transient("followup");
+    next.runnerProfileJson.nativeExecutionInput.workspace[key] = "different";
+    expect(gradeNativeSessionContinuity([transient("first"), next], "parent").passed).toBe(false);
+  });
+  it.each([
+    (next: ReturnType<typeof row>) => { next.runnerProfileJson.nativeExecutionInput.binding.runId = "wrong"; },
+    (next: ReturnType<typeof row>) => { next.runnerProfileJson.nativeExecutionInput.binding.issueId = "other-issue"; },
+    (next: ReturnType<typeof row>) => { next.runnerProfileJson.nativeExecutionInput.binding.companyId = "other-company"; },
+    (next: ReturnType<typeof row>) => { next.runnerProfileJson.nativeExecutionInput.binding.agentId = "other-agent"; },
+    (next: ReturnType<typeof row>) => { next.companyId = ""; },
+    (next: ReturnType<typeof row>) => { next.agentId = ""; },
+    (next: ReturnType<typeof row>) => { next.runnerProfileJson.nativeExecutionInput.workspace.cwd = ""; },
+    (next: ReturnType<typeof row>) => { delete (next.runnerProfileJson.nativeExecutionInput.workspace as Record<string, unknown>).repoRef; },
+    (next: ReturnType<typeof row>) => { next.runnerProfileJson.nativeExecutionInput.binding.executionWorkspaceId = ""; },
+  ])("rejects missing or mismatched placeholder evidence %#", mutate => {
+    const next = transient("followup"); mutate(next);
+    expect(gradeNativeSessionContinuity([transient("first"), next], "parent").passed).toBe(false);
+  });
+  it("keeps real workspace IDs, owners and native/provider sessions strict", () => {
+    for (const mutate of [
+      (next: ReturnType<typeof row>) => { next.runnerProfileJson.nativeExecutionInput.binding.executionWorkspaceId = "different-real-workspace"; },
+      (next: ReturnType<typeof row>) => { next.nativeSessionId = "fresh-native"; },
+      (next: ReturnType<typeof row>) => { next.agentId = next.runnerProfileJson.nativeExecutionInput.binding.agentId = "other-agent"; },
+      (next: ReturnType<typeof row>) => { next.companyId = next.runnerProfileJson.nativeExecutionInput.binding.companyId = "other-company"; },
+    ]) {
+      const next = row("two"); mutate(next);
+      expect(gradeNativeSessionContinuity([row("one"), next], "parent").passed).toBe(false);
+    }
+    expect(gradeNativeSessionContinuity([row("one"), transient("two")], "parent").passed).toBe(false);
   });
 });
 

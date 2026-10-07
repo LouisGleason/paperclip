@@ -23,6 +23,16 @@ on:
         required: false
         default: release-smoke
         type: string
+      qualification_source_sha:
+        description: Optional exact source SHA for provider-free source-install qualification; requires image digest
+        required: false
+        default: ""
+        type: string
+      qualification_image_digest:
+        description: Optional public ghcr.io/paperclipai/paperclip@sha256 digest paired with qualification source
+        required: false
+        default: ""
+        type: string
   workflow_call:
     inputs:
       paperclip_version:
@@ -36,6 +46,17 @@ on:
         required: false
         default: release-smoke
         type: string
+      qualification_source_sha:
+        required: false
+        default: ""
+        type: string
+      qualification_image_digest:
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
 
 jobs:
   # The Docker smoke below can never exercise the background-service leg of
@@ -45,12 +66,16 @@ jobs:
   # on the runner VM's systemd and require the installed service to end up
   # serving.
   smoke_service:
+    # Source qualification does not publish a CLI or substitute a dist-tag.
+    if: inputs.qualification_source_sha == '' && inputs.qualification_image_digest == ''
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v7
@@ -109,8 +134,23 @@ jobs:
       SMOKE_CONTAINER_NAME: release-smoke-onboard
 
     steps:
+      - name: Validate paired immutable qualification inputs
+        id: qualification_inputs
+        env:
+          SOURCE_SHA: ${{ inputs.qualification_source_sha }}
+          IMAGE_DIGEST: ${{ inputs.qualification_image_digest }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$SOURCE_SHA" && -z "$IMAGE_DIGEST" ]]; then exit 0; fi
+          [[ "$SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$IMAGE_DIGEST" =~ ^ghcr\.io/paperclipai/paperclip@sha256:[a-f0-9]{64}$ ]]
+
       - name: Checkout repository
         uses: actions/checkout@v7
+        id: qualification_checkout
+        with:
+          ref: ${{ inputs.qualification_source_sha || github.sha }}
+          persist-credentials: false
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
@@ -132,6 +172,7 @@ jobs:
         run: google-chrome --version
 
       - name: Launch Docker smoke harness
+        if: inputs.qualification_source_sha == '' && inputs.qualification_image_digest == ''
         run: |
           HOST_PORT="${{ inputs.host_port }}" \
           DATA_DIR="$RUNNER_TEMP/release-smoke-data" \
@@ -154,6 +195,7 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Run release smoke Playwright suite
+        if: inputs.qualification_source_sha == '' && inputs.qualification_image_digest == ''
         env:
           PAPERCLIP_RELEASE_SMOKE_BASE_URL: ${{ env.SMOKE_BASE_URL }}
           PAPERCLIP_RELEASE_SMOKE_EMAIL: ${{ env.SMOKE_ADMIN_EMAIL }}
@@ -161,8 +203,45 @@ jobs:
           PAPERCLIP_PLAYWRIGHT_CHANNEL: "chrome"
         run: pnpm run test:release-smoke
 
+      - name: Qualify exact-source installed browser entry
+        if: inputs.qualification_source_sha != ''
+        env:
+          SOURCE_SHA: ${{ inputs.qualification_source_sha }}
+          PAPERCLIP_PUBLIC_INSTALL_BROWSER_SMOKE: "1"
+          PAPERCLIP_PLAYWRIGHT_CHANNEL: "chrome"
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/source-qualification"
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          sha256sum pnpm-lock.yaml > "$RUNNER_TEMP/source-qualification/build-lock.sha256"
+          pnpm build > "$RUNNER_TEMP/source-qualification/build.log" 2>&1
+          node scripts/verify-grok-npm-install.mjs > "$RUNNER_TEMP/source-qualification/public-install.log" 2>&1
+
+      - name: Qualify immutable image default startup and UI bytes
+        if: ${{ !cancelled() && inputs.qualification_source_sha != '' && steps.qualification_inputs.outcome == 'success' && steps.qualification_checkout.outcome == 'success' }}
+        env:
+          SOURCE_SHA: ${{ inputs.qualification_source_sha }}
+          IMAGE_DIGEST: ${{ inputs.qualification_image_digest }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/source-qualification"
+          node tests/release-smoke/installed-cli-probe.mjs --standard-image "$SOURCE_SHA" "$IMAGE_DIGEST" \
+            > "$RUNNER_TEMP/source-qualification/image.json" \
+            2> "$RUNNER_TEMP/source-qualification/image.log"
+
+      - name: Upload provider-free qualification evidence
+        if: always() && inputs.qualification_source_sha != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.artifact_name }}-qualification
+          path: |
+            ${{ runner.temp }}/source-qualification/
+            tests/release-smoke/playwright-report/
+            tests/release-smoke/test-results/
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Capture Docker logs
-        if: always()
+        if: always() && inputs.qualification_source_sha == '' && inputs.qualification_image_digest == ''
         run: |
           log_file="${{ runner.temp }}/docker-onboard-smoke.log"
           # A live container has the fuller story, so prefer it. When the
@@ -180,7 +259,7 @@ jobs:
           echo "Captured $(wc -l <"$log_file") log lines to $log_file"
 
       - name: Upload diagnostics
-        if: always()
+        if: always() && inputs.qualification_source_sha == '' && inputs.qualification_image_digest == ''
         uses: actions/upload-artifact@v7
         with:
           name: ${{ inputs.artifact_name }}
@@ -196,5 +275,5 @@ jobs:
           retention-days: 14
 
       - name: Stop Docker smoke container
-        if: always()
+        if: always() && inputs.qualification_source_sha == '' && inputs.qualification_image_digest == ''
         run: docker rm -f "$SMOKE_CONTAINER_NAME" >/dev/null 2>&1 || true

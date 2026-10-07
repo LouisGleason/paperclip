@@ -15,6 +15,44 @@ function readWorkflow(name) {
   return readFileSync(path.join(repoRoot, ".github/workflows", name), "utf8");
 }
 
+test("provider-free release qualification validates paired immutable inputs before checkout", () => {
+  const workflow = readWorkflow("release-smoke.yml");
+  const validation = workflow.match(/name: Validate paired immutable qualification inputs[\s\S]*?run: \|\n([\s\S]*?)(?=\n      - name:)/)?.[1];
+  assert.ok(validation);
+  const source = "a".repeat(40), image = `ghcr.io/paperclipai/paperclip@sha256:${"b".repeat(64)}`;
+  for (const [SOURCE_SHA, IMAGE_DIGEST, expected] of [
+    ["", "", 0], [source, image, 0], [source, "", 1], ["", image, 1], ["master", image, 1],
+    [source, "ghcr.io/paperclipai/paperclip:latest", 1], [source, image.replace("paperclipai", "other"), 1],
+  ]) {
+    const result = spawnSync("bash", ["-c", validation], { env: { ...process.env, SOURCE_SHA, IMAGE_DIGEST }, encoding: "utf8" });
+    assert.equal(result.status, expected, `${SOURCE_SHA}/${IMAGE_DIGEST}: ${result.stderr}`);
+  }
+  const smoke = workflow.split("\n  smoke:\n")[1];
+  assert.ok(smoke.indexOf("Validate paired immutable qualification inputs") < smoke.indexOf("Checkout repository"));
+  assert.match(smoke, /ref: \$\{\{ inputs\.qualification_source_sha \|\| github\.sha \}\}/);
+  assert.match(workflow, /permissions:\n  contents: read/);
+  assert.doesNotMatch(workflow, /secrets\./);
+});
+
+test("provider-free qualification reuses the installed browser oracle and preserves published smoke", () => {
+  const workflow = readWorkflow("release-smoke.yml");
+  assert.match(workflow, /smoke_service:[\s\S]*?if: inputs\.qualification_source_sha == '' && inputs\.qualification_image_digest == ''/);
+  assert.match(workflow, /name: Launch Docker smoke harness\n\s+if: inputs\.qualification_source_sha == ''/);
+  assert.match(workflow, /name: Run release smoke Playwright suite\n\s+if: inputs\.qualification_source_sha == ''/);
+  assert.match(workflow, /PAPERCLIP_PUBLIC_INSTALL_BROWSER_SMOKE: "1"/);
+  assert.match(workflow, /test "\$\(git rev-parse HEAD\)" = "\$SOURCE_SHA"/);
+  assert.match(workflow, /node scripts\/verify-grok-npm-install\.mjs/);
+  assert.match(workflow, /installed-cli-probe\.mjs --standard-image "\$SOURCE_SHA" "\$IMAGE_DIGEST"/);
+  const imageStep = workflow.match(/name: Qualify immutable image default startup and UI bytes[\s\S]*?(?=\n      - name:)/)?.[0];
+  assert.ok(imageStep);
+  assert.match(imageStep, /!cancelled\(\)/);
+  const evidenceDirectoryIndex = imageStep.indexOf('mkdir -p "$RUNNER_TEMP/source-qualification"');
+  assert.ok(evidenceDirectoryIndex >= 0 && evidenceDirectoryIndex < imageStep.indexOf('node tests/release-smoke/installed-cli-probe.mjs'),
+    "Image evidence directory must be created independently before output redirection");
+  assert.match(workflow, /name: Upload provider-free qualification evidence\n\s+if: always\(\) && inputs\.qualification_source_sha != ''/);
+  assert.match(workflow, /timeout-minutes: 45/);
+});
+
 test("chaos verification isolates callers that verify the same source commit", () => {
   const chaosWorkflow = readWorkflow("runner-chaos-evals.yml");
   const group = chaosWorkflow.match(/^  group: (.+)$/m)?.[1];

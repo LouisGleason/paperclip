@@ -766,12 +766,21 @@ artifact.
 
 ### Billing interpretation
 
-Each result contains raw sanitized `usage`, normalized `billing`, and
-`runtimeUsage`:
+Results retain sanitized `usage`, normalized `billing`, and `runtimeUsage`.
+Connection journeys may intentionally omit raw usage; reporting preserves their
+validated billing projection, including incomplete setup-probe coverage. When
+usage is available, the report recomputes its measured summary:
 
 - LLM token and dollar values come from the persisted heartbeat-run usage. A
   multi-turn case aggregates every selected run and records how many runs
   supplied tokens and provider-reported cost.
+- Ready accounting receipts with a valid decimal `costUsdExact`, an estimated
+  cost status, and versioned `rate_card` provenance contribute a separate
+  `estimatedLlmCostUsd` subtotal and estimated-run coverage. They remain labeled
+  estimates and count once in observed-and-estimated totals; `reportedCostUsd`
+  remains provider-reported spend only. Fixture forecasts, malformed amounts,
+  explicit unpriced receipts, and incomplete/not-ready receipts never qualify
+  observed pricing. Missing coverage remains incomplete, never priced as zero.
 - Local execution records agent run time but is `not_metered` because there is
   no external environment provider charge to attribute.
 - Daytona records every public-API lease window and its pinned 4 vCPU, 4 GiB

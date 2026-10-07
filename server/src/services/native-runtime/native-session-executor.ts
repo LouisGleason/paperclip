@@ -12107,8 +12107,8 @@ async function createRunnerdBackendWithinSessionClaim(
       }
 
       // Codex launch credentials are intentionally excluded from failover
-      // backups. Re-materialize only those launch-time files into a fresh or
-      // replacement sandbox after the durable history has been restored.
+      // backups. Re-materialize this invocation's launch files after the
+      // durable history has been restored.
       if (directory.name !== "codex-home") continue;
       const localDirectory = resolve(root, directory.name);
       for (const name of ["auth.json", "config.toml"] as const) {
@@ -12121,6 +12121,46 @@ async function createRunnerdBackendWithinSessionClaim(
           targetPath: posix.join(targetPath, name),
           mode: 0o600,
         });
+      }
+
+      // The transport materializes the current assigned skills on the
+      // controller. Codex discovers (and receives explicit skill inputs from)
+      // its remote home, rather than the separately staged context bundles.
+      // Publish a fresh snapshot so resume replaces revised/revoked skills
+      // instead of merging stale assignments from retained provider history.
+      const localSkills = resolve(localDirectory, "skills");
+      if (!existsSync(localSkills)) {
+        throw new Error("runner_remote_runtime_context_skills_missing");
+      }
+      const remoteSkills = posix.join(targetPath, "skills");
+      const nonce = randomUUID();
+      const stagingSkills = posix.join(targetPath, `.paperclip-skills-staging-${nonce}`);
+      const previousSkills = posix.join(targetPath, `.paperclip-skills-previous-${nonce}`);
+      await stageRemoteRunnerDirectory({
+        target: remoteTarget,
+        runner: remoteCommandRunner,
+        sourcePath: localSkills,
+        targetPath: stagingSkills,
+        // Assigned trees retain their sealed modes from the materializer;
+        // the parent stays writable for Codex's generated .system skills.
+        mode: 0o700,
+      });
+      const published = await remoteCommandRunner.execute({
+        command: "sh",
+        args: ["-c", [
+          'set -eu; skills="$1"; staged="$2"; previous="$3";',
+          '[ -d "$staged" ] && [ ! -L "$staged" ];',
+          '[ ! -e "$previous" ] && [ ! -L "$previous" ];',
+          'if [ -L "$skills" ] || { [ -e "$skills" ] && [ ! -d "$skills" ]; }; then exit 1; fi;',
+          'if [ -d "$skills" ]; then mv "$skills" "$previous"; fi;',
+          'if ! mv "$staged" "$skills"; then if [ -d "$previous" ]; then mv "$previous" "$skills"; fi; exit 1; fi;',
+          'if [ -d "$previous" ]; then find "$previous" -type d -exec chmod u+w {} +; rm -rf "$previous"; fi;',
+        ].join("\n"), "paperclip-runner-publish-skills", remoteSkills, stagingSkills, previousSkills],
+        bypassSession: true,
+        timeoutMs: 10_000,
+      });
+      if (published.exitCode !== 0 || published.timedOut) {
+        throw new Error("runner_remote_runtime_context_skills_staging_failed");
       }
     }
   };
@@ -12325,7 +12365,8 @@ async function createRunnerdBackendWithinSessionClaim(
         if (!stageLaunchAssets) return;
         // Resume can prepare/rotate durable state before the transport creates
         // this invocation's isolated Codex auth/config. The later launch must
-        // still stage those fresh files even when history was already restored.
+        // still stage those fresh files and assigned skills even when history
+        // was already restored.
         // Launch material is never recovered from a failover backup.
         await materializeRemoteHarnessLaunchState();
         if (

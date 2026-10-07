@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { GROK_PUBLIC_INSTALL_IMAGE, GROK_PUBLIC_INSTALL_LIFECYCLE, grokConsumerDockerArgs } from '../grok-public-install-sandbox.mjs';
-import { inspectInstalledUi, installedProbePaths } from '../../tests/release-smoke/installed-cli-probe.mjs';
+import { assertStandardImageIdentity, inspectInstalledUi, installedProbePaths, standardImageDockerArgs, standardImageRequest } from '../../tests/release-smoke/installed-cli-probe.mjs';
 
 const paths = { assets: '/private/staging/assets', consumer: '/private/staging/consumer', cache: '/private/staging/cache', uid: 1001, gid: 1001 };
 const values = (args, flag) => args.flatMap((value, index) => value === flag ? [args[index + 1]] : []);
@@ -91,6 +91,35 @@ test('portable installed probe preserves Linux defaults and requires explicit ow
   assert.throws(() => installedProbePaths({ ...privatePaths, command: 'external' }), /Unknown installed probe/);
 });
 
+test('standard image qualification rejects mutable references and mismatched serving provenance', () => {
+  const sourceRevision = 'a'.repeat(40), image = `ghcr.io/paperclipai/paperclip@sha256:${'b'.repeat(64)}`;
+  const request = standardImageRequest(sourceRevision, image);
+  const metadata = { Os: 'linux', Architecture: 'amd64', RepoDigests: [image], Config: { Labels: { 'org.opencontainers.image.revision': sourceRevision } } };
+  assertStandardImageIdentity(request, metadata);
+  for (const [source, target] of [['master', image], [sourceRevision, 'ghcr.io/paperclipai/paperclip:latest'], [sourceRevision, image.replace('paperclipai', 'other')], [sourceRevision, '']]) {
+    assert.throws(() => standardImageRequest(source, target));
+  }
+  assert.throws(() => assertStandardImageIdentity(request, { ...metadata, RepoDigests: [] }), /requested digest/);
+  assert.throws(() => assertStandardImageIdentity(request, { ...metadata, Config: { Labels: { 'org.opencontainers.image.revision': 'c'.repeat(40) } } }), /requested source/);
+});
+
+test('standard image starts its shipped command with no network, host data, or elevated privileges', () => {
+  const image = `ghcr.io/paperclipai/paperclip@sha256:${'b'.repeat(64)}`;
+  const args = standardImageDockerArgs({ sourceRevision: 'a'.repeat(40), image,
+    owner: 'paperclip-public-install-image-test', probePath: '/qa/installed-cli-probe.mjs', authSecret: 'c'.repeat(64) });
+  assert.deepEqual(values(args, '--network'), ['none']);
+  assert.deepEqual(values(args, '--user'), ['1000:1000']);
+  assert.deepEqual(values(args, '--mount'), ['type=bind,src=/qa/installed-cli-probe.mjs,dst=/qa/installed-cli-probe.mjs,readonly']);
+  assert.ok(args.includes('--read-only'));
+  assert.deepEqual(values(args, '--cap-drop'), ['ALL']);
+  assert.deepEqual(values(args, '--security-opt'), ['no-new-privileges']);
+  assert.deepEqual(values(args, '--entrypoint'), []);
+  assert.deepEqual(values(args, '--publish'), []);
+  assert.equal(args.at(-1), image, 'No appended command may replace the shipped CMD');
+  assert.ok(values(args, '--tmpfs').includes('/paperclip:rw,nosuid,nodev,size=1024m,mode=700,uid=1000,gid=1000'));
+  assert.throws(() => standardImageDockerArgs({ sourceRevision: 'a'.repeat(40), image, owner: 'other-container', probePath: '/qa/installed-cli-probe.mjs', authSecret: 'c'.repeat(64) }));
+});
+
 test('installed UI readiness checks a real HTTP response, exact serving commit, and installed asset bytes', async () => {
   const root = await mkdtemp(join(tmpdir(), 'paperclip-install-ui-test-'));
   const sourceRevision = 'a'.repeat(40), script = 'export const installed = true;';
@@ -114,10 +143,16 @@ test('installed UI readiness checks a real HTTP response, exact serving commit, 
     assert.equal(receipt.servingCommit, sourceRevision);
     assert.equal(receipt.installedUiAssetsPassed, true);
     assert.equal(receipt.assets[0].bytes, Buffer.byteLength(script));
+    await mkdir(join(root, 'monorepo-ui/assets'), { recursive: true });
+    await writeFile(join(root, 'monorepo-ui/assets/installed.js'), script);
+    const imageOptions = { ...options, uiDirectory: join(root, 'monorepo-ui') };
+    assert.deepEqual((await inspectInstalledUi(imageOptions)).assets, receipt.assets);
+    await assert.rejects(inspectInstalledUi({ ...options, uiDirectory: '../ui/dist' }), /Invalid installed UI directory/);
     commit = 'b'.repeat(40);
     await assert.rejects(inspectInstalledUi(options), /serving commit/);
     commit = sourceRevision; servedScript = 'export const substituted = true;';
     await assert.rejects(inspectInstalledUi(options), /must be the installed file/);
+    await assert.rejects(inspectInstalledUi(imageOptions), /must be the installed file/);
     startingResponses = Infinity;
     await assert.rejects(inspectInstalledUi(options), /Installed CLI server did not become ready/);
   } finally {
