@@ -3182,9 +3182,9 @@ mod tests {
     }
 
     #[test]
-    fn pi_profile_matches_published_identity_and_rejects_profile15() {
+    fn pi_profile_matches_published_identity_and_rejects_prior_profiles() {
         let published: Value = serde_json::from_str(include_str!(
-            "../../../../test-fixtures/pi-acp/profile-v16-identity.json"
+            "../../../../test-fixtures/pi-acp/profile-v17-identity.json"
         ))
         .unwrap();
         let mut value = descriptor("codex");
@@ -3200,10 +3200,15 @@ mod tests {
         let current: AcpxProviderDescriptor = serde_json::from_value(value.clone()).unwrap();
         current.validate(&context()).unwrap();
 
-        value["commandDigest"] =
-            json!("sha256:790f8b954be995ef63aef0ebdb0e06215e4c0d1416d40d605b33966a3d6ba053");
-        let prior: AcpxProviderDescriptor = serde_json::from_value(value).unwrap();
-        assert!(prior.validate(&context()).is_err());
+        for prior in [
+            include_str!("../../../../test-fixtures/pi-acp/profile-v15-identity.json"),
+            include_str!("../../../../test-fixtures/pi-acp/profile-v16-identity.json"),
+        ] {
+            let prior: Value = serde_json::from_str(prior).unwrap();
+            value["commandDigest"] = prior["commandDigest"].clone();
+            let rejected: AcpxProviderDescriptor = serde_json::from_value(value.clone()).unwrap();
+            assert!(rejected.validate(&context()).is_err());
+        }
     }
 
     #[test]
