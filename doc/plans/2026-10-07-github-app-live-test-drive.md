@@ -80,7 +80,7 @@ states and sanitized runtime logs in the temporary evidence directory. Record
 source revision, settings revision, time, and model costs alongside results.
 Close disposable issues/PRs and remove their test branch after qualification;
 retain the bot and test-drive data for the user's inspection unless asked to remove
-them. Stop the tunnel and test runtime at the end, leaving restart commands.
+them. Stop the public tunnel and relay at the end. Retain the private test runtime for inspection, with restart commands.
 
 ## Progress and remaining qualification
 
@@ -249,3 +249,7 @@ All corresponding Paperclip tasks finished. All ten recorded sandbox leases have
 Final source checks after the response fix: repository typecheck, build, token gates and diff whitespace check pass. The earlier full-suite run remains a failed result, not a green claim: 29 failed files / six failed tests, with PostgreSQL bootstrap failures and adapter/timeouts. It was not rerun after the final response fix; the changed workflow's 38 integration and 20 publication tests were rerun and passed. The PR remains draft pending current-head CI/review and full-suite failure resolution.
 
 Qualification limits: personal-account setup, delayed organization approval and production Cloud deployment were not tested live. Creation required recovery of the same App after the obsolete validator discarded its one-time manifest credentials; durable sealed credential receipt before validation remains an unresolved recovery improvement. The wizard's connected summary still lacks a repository list, and local task/run labels in GitHub comments lack public links. These do not change the verified event, access, check or publication outcomes.
+
+### Cleanup completed
+
+Closed disposable issues 1, 2 and 4 and PR 3 without merging. Deleted only the test branch. Retained the App, original connection, bot, vault and test-drive data. The public relay/tunnel was stopped. The private test drive remains available on port 3110 for inspection. Fixes and qualification record were pushed to draft PR #15416; current-head CI/review remain outstanding.
