@@ -315,7 +315,8 @@ describeEmbeddedPostgres("plugin-managed agents", () => {
     const created = await services.agents.managedReconcile({ companyId, agentKey: "wiki-maintainer" });
 
     expect(created.status).toBe("created");
-    expect(created.agent?.adapterType).toBe("codex_local");
+    expect(created.agent?.adapterType).toBe("paperclip_runner");
+    expect(created.agent?.adapterConfig).toMatchObject({ provider: "codex" });
   });
 
   it("materializes declared managed agent instructions with local folder paths", async () => {

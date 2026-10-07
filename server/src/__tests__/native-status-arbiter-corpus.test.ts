@@ -1757,8 +1757,8 @@ describe("P6-31 Section 18.13 executable status-authority corpus", () => {
       } else if (consumer === "heartbeat-runtime-selection") {
         if (
           execution.observed.activeMode !== "native"
-          || execution.observed.freshMode !== "rejected"
-          || execution.observed.freshReason !== "paperclip_runner_rollout_disabled"
+          || execution.observed.freshMode !== "native"
+          || execution.observed.freshReason !== "eligible_opt_in"
           || execution.observed.profileMode !== "native"
         ) continue;
       }
