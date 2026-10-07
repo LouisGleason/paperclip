@@ -1373,6 +1373,8 @@ settling their usage and terminal evidence before detaching. Recovery verifies
 the trigger against the retained event ledger and settles that same turn, even
 if the user has already answered the interaction. It replays retained accounting
 through the ordinary control-plane observers without starting another model turn.
+When a later heartbeat run reuses the provider session, it clears that prior
+run's wait marker along with its terminal, result and pending-request authority.
 A timeout, missing accounting, or an unproven provider terminal remains a failure;
 the saved wait does not certify successful provider execution.
 

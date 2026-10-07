@@ -77,6 +77,11 @@ describe("native final-response feedback", () => {
       completionClaim: { ...report.completionClaim, criteria: [{ criterionId: "objective", status: "not_satisfied", evidenceRefs: [`approval:${actionRequestId}`] }] },
     };
     await expect(nativeCompletionFeedback(db, value.runId, criterionOnly)).rejects.toThrow("already resolved");
+    // A provider can mark the approval criterion unknown while citing the exact
+    // declined interaction; that still is not a new review target.
+    await expect(nativeCompletionFeedback(db, value.runId, {
+      ...criterionOnly, completionClaim: { ...criterionOnly.completionClaim, criteria: [{ criterionId: "objective", status: "unknown", evidenceRefs: [`interaction:${interactionId}`] }] },
+    })).rejects.toThrow("already resolved");
     // Satisfied historical evidence does not bind the independent review target.
     if (disposition !== "yielded") await expect(nativeCompletionFeedback(db, value.runId, {
       ...criterionOnly, completionClaim: { ...criterionOnly.completionClaim, criteria: [{ criterionId: "past-action", status: "satisfied", evidenceRefs: [`approval:${actionRequestId}`] }] },
