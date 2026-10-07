@@ -12,8 +12,8 @@ the accepted OpenRouter model and low thinking are fixture inputs. The new
 Runner snapshot-retirement repair requires fresh normal Linux packages, a cloud
 image and all 33 accepted live cases. Provider wrapper, closure, profile and
 model-selection declarations are unchanged by this host-lifecycle repair.
-Normal ARM and Intel Mac install admission remains required by the active goal;
-historical Mac evidence does not qualify the current shipping source.
+Current-source normal Linux, native ARM Mac and native Intel Mac admission pass.
+Historical Mac evidence does not qualify the current shipping source.
 The following repair stages are historical;
 the release-gate table below and exact shutdown-source section record current
 admission. Do not repeat completed builds or count passes on older artifacts.
@@ -77,14 +77,14 @@ bytes. The source must be rebuilt and admitted before another paid attempt. All
 | Release gate | Current evidence |
 | --- | --- |
 | Offline cancellation proof | Profile 18 passes all 49 Pi ACP protocol checks. Historical profile 17 remains decodable; exact launch requires profile 18. |
-| Snapshot retirement proof | Shipping source `06a3d9739` passes 271 focused TypeScript tests, one existing skip, 16 Rust transport tests and Runner typecheck. Actual installed native copy, cancellation and deletion probes pass. Three live cases and both memory failures have independent zero-snapshot cleanup. |
+| Snapshot retirement proof | Shipping source `06a3d9739` passes 271 focused TypeScript tests, one existing skip, 16 Rust transport tests and Runner typecheck. Actual installed native copy, cancellation and deletion probes pass. All six actual live attempts have independent zero-snapshot cleanup. Installed real Pi RPC recovery and pending cancellation also pass with exact-child retirement. |
 | Normal Linux build and public installation | Source `06a3d9739` passes normal workspace/public builds, npm installation and lifecycle hooks, full graph audits, Pi setup and real server/UI admission. All 20 archives and exact installed daemon bytes are retained and verified. |
-| Normal ARM Mac installation | Current shipping-source normal install, lifecycle, Pi setup and packaged admission proof remains required. Historical passes are not transferred. |
-| Normal Intel Mac installation | Current shipping-source normal install, lifecycle, Pi setup and native Intel admission proof remains required. Historical x64 execution under Rosetta is emulation evidence. |
-| Final Product acceptance | Current shipping artifacts have 3/26 passes: local Stop, steering and native questions. The local memory case fails the strict final-newline check on original harness `06a3d9739` and clarified harness `56d1e03ac`. Both canonical failures remain unchanged. The other 22 Product cells are unexecuted. No automatic retries. |
+| Normal ARM Mac installation | [Native hosted ARM check](https://github.com/paperclipai/paperclip/actions/runs/37694650556) passes on shipping `06a3d9739`: normal workspace/public builds, npm lifecycle, graph audits, Pi setup and packaged admission. All 18 archives and logs are retained and hash-verified; no provider prompts. |
+| Normal Intel Mac installation | [Native Intel continuation](https://github.com/paperclipai/paperclip/actions/runs/37700732418) passes normal npm lifecycle, Pi setup, signed native daemon, graph audits and closed admission in 24,770 ms using the exact 18 retained archives. The original cancelled attempt remains retained; no Rosetta or provider prompts. |
+| Final Product acceptance | Current definition-17 catalog has 2/26 passing unchanged controls, one failed memory cell and 23 unexecuted cells. Native questions passed definition 16 and remain historical. All three memory failures remain unchanged; the Unicode-encoding attempt still observes 32 bytes instead of 33 and reaches the unchanged 120-second deadline. No automatic retries. |
 | Final Runner acceptance | Current shipping coverage is 0/7. All seven cases, model, low thinking, 120-second limits and scoring rules are pinned to definition revision `d38ebc67`. |
 | Cloud image | [Hosted Linux build](https://github.com/paperclipai/paperclip/actions/runs/37676853634) passes for source `06a3d9739`. Immutable image `sha256:5e62c8e294cd9d663316ba09b0aae1d7358a8938fe37d17936ef394cf1723ab2` passes anonymous OCI verification and actual credential-free Daytona guest admission; probe deletion is confirmed. No local Docker is used. |
-| PR CI and review | Shipping source `06a3d9739` and fixture head `56d1e03ac` each pass 54 applicable checks with two expected skips. Evals head `d38ebc67` passes discovery and Greptile with no open threads. This update reconciles the stale table flagged by review; fresh documentation-head CI/review remain required. No merge, release or rollout is authorized. |
+| PR CI and review | Fixture head `5ccb4a346` passes 54 applicable checks with two skips; Greptile is 5/5 with zero unresolved threads. Evals `d38ebc67` passes discovery and review. Prerequisite #14921 retains the valid premature-admission finding; #14922–14924 have no unresolved threads. Verify latest documentation-head CI separately. No merge, release or rollout is authorized. |
 
 The earlier cancellation defect and all failed attempts remain retained. Pi omits
 service-failure metadata only for its authoritative cancelled terminal, preserving
@@ -201,6 +201,83 @@ after one failed-job rerun of two simultaneous runner shutdowns. Original logs
 remain retained. Its Greptile review is 5/5 with no unresolved threads; this new
 harness change requires fresh current-head CI and review. All remaining Product,
 Runner and platform installation gates remain required. Do not merge or release.
+
+## Current qualification disposition — 2026-10-07
+
+**Not production ready.** Shipping packages and image remain frozen at
+`06a3d9739f402baa7f8be7aaa29dda6db7354bfb`. Product harness
+`5ccb4a346298351af5247cc8095e6cf8e2e0a539` uses Pi-native definition 17,
+`e60021e6959cb2ed9b50b3d5b734b6ad5a78bafc7aca1ea1fca456fb3191f318`;
+its catalog is `3827956ef849a665969254dda075e51f02d014c62f9f4de3e290ef05c5191800`.
+All 201 focused fixture tests, harness typecheck, catalog capture and seven
+Runner definition validations pass without provider calls. The initial free
+fixture check's stale definition hash is retained; the corrected pin passes.
+
+The one selected changed memory attempt failed. It made eight native writes,
+one read and three shell calls, still observed 32 bytes without the required LF,
+and reached the unchanged 120-second native deadline. Preserve its canonical
+`transient_infrastructure` classification separately from the tool timeline,
+which supports repeated model behavior rather than a stopped transport.
+The actual raw write arguments were not retained and their supplied bytes are
+not asserted. All 18 canonical evidence files, totaling 49,717,073 bytes, and
+their original hashes are retained. Original independent inspection confirms
+launcher exit, zero temporary roots and credential-input removal within its
+recorded coverage. Its process scan omitted executables in Pi snapshot roots.
+A supplemental scan at 22:53:48 UTC covers those paths too and finds no owned
+runtime processes or temporary roots; launcher 7869 and observed sidecar 8466
+are absent. This proves current quiescence and does not retroactively broaden
+the original receipt. No subsequent paid case or automatic retry ran.
+
+The owned Daytona host is now stopped normally after a fresh broad process/root
+scan and renewed local verification of all six canonical attempts: 120 files,
+127,249,447 bytes, plus all 20 Linux package archives. Original evidence remains
+retained. Its configured 30-minute automatic deletion is unchanged; no idle
+qualification host is kept running while the memory failure is unresolved.
+
+The actual installed Pi wrapper also passes the existing synthetic RPC recovery
+and pending-cancellation scenarios. Two diagnostic variants split every JSON
+character into separate provider SSE argument events, for both `\n` and
+`\u000a`; both preserve the required 33-byte value on disk. The read-feedback
+variant also verifies the exact LF-bearing text in the subsequent provider
+request. Network connections outside the owned loopback fixture are denied
+before connect, owned children close and shipping sources remain unchanged.
+These checks identify no supported production correction and do not count as
+live qualification passes. Keep the accepted DeepSeek model and native low
+thinking. Do not substitute a passing surrogate or weaken exact-byte grading.
+
+Native hosted ARM installation on the same shipping source passes normal npm
+lifecycle, Pi setup, full graph hashes, native signed daemon identity and closed
+public admission in 22,245 ms. Its daemon is
+`sha256:89a972407fd78bf5c9ac6faa5046afd4d15cb9da17e2595ea96946738702f0af`.
+All 18 archives and step logs are retained and independently hash-verified.
+Build lock and platform-specific graph/archive identities remain attached to
+that platform receipt; they are not substituted for the Linux member's bytes.
+The original [native Intel job](https://github.com/paperclipai/paperclip/actions/runs/37694650556)
+was cancelled by the agent based on a stale live log. Its retained receipt proves
+the workspace/public builds, all 18 archives, normal npm installation and native
+signature check had passed; cancellation interrupted Pi setup. Preserve the
+original receipt and all hash-verified archives. The
+[continuation](https://github.com/paperclipai/paperclip/actions/runs/37700732418)
+binds that original receipt and artifact, uses the same package bytes on native
+Intel hardware and emits synchronous progress. It passes normal npm lifecycle,
+Pi setup, signature verification, complete installed-graph audits and closed
+admission in 24,770 ms. The native Intel daemon is
+`sha256:1918f0e8524abaa8ae454db7c1431e2f5437a587a4e0fe61b55c67047f8aaaa6`;
+all 18 original archive hashes and both runs' completed step logs are verified.
+Keep the final consumer graph identity with this platform receipt. Both runs
+repeat maintainer authorization and immutable source checks on a separate
+temporary orchestration branch. No shipping source, local Docker, provider
+credentials or prompts are involved. All three normal platform installation
+gates are now satisfied for shipping `06a3d9739`.
+
+Current coverage is 2/26 Product passes, one failed cell and 23 unexecuted cells,
+plus Runner 0/7. The definition-16 native-question pass remains historical.
+Prerequisite #14921 still has one valid production-admission finding; the other
+three prerequisite PRs have no unresolved threads. The post-attempt key snapshot
+is $0.561888353 usage with $4.438111647 remaining under the unchanged $5 lifetime
+cap inside the approved $100 campaign ceiling. Settlement is provisional.
+Keep paid execution halted until a concrete correction addresses the observed
+memory failure. Keep the full remaining scope and do not merge, release or deploy.
 
 ## Final fixture reconciliation — 2026-10-07
 
@@ -2159,20 +2236,28 @@ Keep rollout held until every release gate is proven.
 
 ## Remaining work in order
 
-1. Finish free admission of the corrected frozen Linux Product controller and
-   package-bound Runner setup. Packages, image and normal offline platform
-   admission are complete. Preserve old memory passes and restart/finish-task
-   failures. Find a concrete correction for the finish-task terminal timeout
-   before another paid attempt of that failed case. Do not relax graders or use
-   a passing surrogate.
-2. Run the corrected exact restart case once, then complete all 26 Product and
-   seven Runner cases on one new frozen source-bound profile-15 set. Require the
-   exact LF and fresh-task memory proof again on that set. Verify the Intel
-   package path and distinguish Rosetta from physical Intel hardware evidence.
-   Keep original failures, zero automatic retries and the approved spending caps.
-3. Finish latest-head CI, full workspace verification, current review and the
-   prerequisite admission finding. Keep rollout held until every gate passes.
-   No merge or release is authorized.
+1. Identify a concrete correction for the failed exact-LF memory behavior under
+   the accepted frozen DeepSeek model and low thinking. Installed native-tool,
+   fragmented RPC and exact read-feedback diagnostics preserve supplied LF;
+   no supported production correction is identified. Keep all three canonical
+   failures, their classifications and independent cleanup. A documentation
+   change or an unchanged paid retry does not address this failure.
+2. Complete all 26 Product and seven Runner cases against the frozen profile-18
+   package/image set after the observed failure has a concrete correction.
+   Include the exact pending-controller restart, provider-death, warm-turn and
+   Runner finish-task terminal/cleanup cases. Current coverage is 2 Product
+   passes, one failed cell, 23 unexecuted Product cells and Runner 0/7. The older
+   native-question pass has definition 16 and is not transferred to definition
+   17. Preserve strict graders, model, low thinking, spending caps and zero
+   automatic retries. Rebuild and readmit the full set if shipping inputs change.
+   Normal Linux, native ARM and native Intel installation already pass for
+   shipping `06a3d9739`; retain each platform's own package, daemon, graph and
+   build-lock identities.
+3. Close the valid prerequisite #14921 premature-admission finding with
+   source-specific qualification; #14922–14924 currently have no unresolved
+   threads. Finish latest-head typecheck, tests, build, CI and review. Follow the
+   rollout/rollback procedure only after all gates pass and separate release
+   authorization is given. No merge, release or rollout is authorized here.
 
 ## Historical execution sequence
 
@@ -2248,8 +2333,9 @@ and receipts throughout that operation.
    current company configuration and the exact retained package set. Run
    `paperclipai db:backup --json` against the intended instance. Retain the
    reported backup path and size. Record the backup file SHA256 before updating.
-   Drain active Linux native runs before crossing between ctime-based and
-   kernel-birth receipts. Never rewrite an active identity to force adoption.
+   Drain active native runs on every platform before updating. On Linux, also
+   drain before crossing between ctime-based and kernel-birth receipts. Never
+   rewrite an active identity to force adoption.
 2. Use the exact qualified published version. For a managed npm installation,
    preview and apply the pinned update below. The operator must supply
    `PI_RELEASE_VERSION` after publication. Keep the default pre-update backup.
@@ -2276,8 +2362,10 @@ and receipts throughout that operation.
    ```
 
 4. After all release gates pass, begin with one operator-owned Linux Pi company using profile 18,
-   `openrouter/deepseek/deepseek-v4-flash-0731` and explicit low thinking.
-   Check normal startup, one question and answer, Stop, three warm turns,
+   the accepted qualification model `openrouter/deepseek/deepseek-v4-flash-0731`
+   and explicit low thinking. This canary input is not a production model
+   allowlist: later companies may select any model acknowledged by their native
+   provider or explicit custom-provider configuration. Check normal startup, one question and answer, Stop, three warm turns,
    terminal task state and usage visibility before expanding. Preserve the
    existing company permissions and budget hard stop. Record the installed
    package, runtime, companion and image identities with each canary run.
@@ -2293,8 +2381,9 @@ stop new Pi dispatch and retire active work through the control-plane Stop path.
 For a managed installation, verify that the preview names the recorded prior
 payload before applying rollback:
 
-Complete the owned Stop path before rolling Linux runs back across the process
-birth format change. Preserve their terminal and cleanup evidence.
+Complete the owned Stop path before rolling native Runner payloads back on any
+platform. On Linux, also drain before crossing the process-birth format change.
+Preserve terminal and cleanup evidence.
 
 ```sh
 paperclipai update --rollback --dry-run --json
