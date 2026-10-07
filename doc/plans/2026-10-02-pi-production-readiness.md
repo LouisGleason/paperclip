@@ -32,6 +32,8 @@ returned immediately once its launch was consumed, leaving asynchronous snapshot
 deletion unfinished when the Runner exited.
 
 Command retirement now waits for exact-child exit and complete snapshot deletion.
+A surviving child produces a bounded failure after 10 seconds while its bytes
+remain retained; it cannot hold the complete cleanup outcome indefinitely.
 Deletion failures remain visible and owned for a bounded cleanup retry. It never
 removes a live child's native bytes. A delayed-deletion regression fails on the
 old code and passes with the correction; live-child and cleanup-failure regressions
@@ -41,7 +43,7 @@ The three passes on the previous Runner source do not qualify changed host bytes
 | Release gate | Current evidence |
 | --- | --- |
 | Offline cancellation proof | Unit and actual subprocess regressions fail on profile-17 bytes and pass on the profile-18 wrapper. All 49 Pi ACP protocol tests pass. Historical profile-17 decoding remains available; exact launch requires profile 18. |
-| Snapshot retirement proof | New actual-subprocess tests prove deletion completes before retirement, live-child bytes remain available, and failed deletion is reported and retryable. Focused execution records 148 passes, six skips and one credential-home collision; all 52 runtime-host tests pass in isolation. Runner TypeScript typecheck passes. |
+| Snapshot retirement proof | New actual-subprocess tests prove deletion completes before retirement, live-child bytes remain available, failed deletion is reported and retryable, and a surviving child returns bounded failure with retained bytes. All 150 focused tests pass, six existing skips; Runner TypeScript typecheck passes. The earlier parallel credential-home collision and passing 52-test isolated recheck remain retained. |
 | Existing free checks | The cancellation source passes 2,480 Product unit tests; the final source rerun has one unrelated file-gate timeout, whose seven-test isolated recheck passes. Exact-source Rust checks pass 689 tests, two ignored. Latest Linux CI on `9cd363d` passes all 54 applicable checks. Fresh cleanup-source CI is required. |
 | Normal Linux build and public installation | Source `6a3930934` passes the normal build/install/hook/graph/setup/server/UI chain. Fresh artifacts containing the snapshot-retirement repair must pass the same admission. |
 | Final Product acceptance | Fresh repair-source coverage is 0/26. Retain source `6a3930934`'s three passes and original disk-exhaustion failure as historical evidence. Keep every accepted assertion and zero automatic retries. |

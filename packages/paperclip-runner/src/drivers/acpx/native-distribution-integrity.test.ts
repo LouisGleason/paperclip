@@ -284,6 +284,36 @@ describe("native ACPX execution closure", () => {
     await lease.close();
     await expect(stat(snapshotRoot)).rejects.toMatchObject({ code: "ENOENT" });
   });
+  it("bounds retirement of a surviving native child and retains bytes for cleanup retry", async () => {
+    const declaration = await fixture({ script: '#!/bin/sh\nprintf ready\nexec sleep 1000\n' });
+    const creatingStart = vi.mocked(mkdir).mock.calls.length;
+    const lease = await (await verifyNativeAcpxInstallation(declaration)).openCommand();
+    const snapshotRoot = dirname(String(vi.mocked(mkdir).mock.calls[creatingStart]![0]));
+    const child = lease.spawn();
+    const exited = once(child, "close");
+    child.stderr!.resume();
+    let closing: Promise<void> | undefined;
+    try {
+      await once(child.stdout!, "data");
+      vi.useFakeTimers();
+      closing = lease.close();
+      const disposition = Promise.race([
+        closing.then(() => "closed", () => "failed"),
+        new Promise<string>(resolve => setTimeout(() => resolve("unbounded"), 11_000)),
+      ]);
+      await vi.advanceTimersByTimeAsync(11_000);
+      expect(await disposition).toBe("failed");
+      await expect(closing).rejects.toThrow("native snapshot retirement deadline");
+      expect((await stat(snapshotRoot)).isDirectory()).toBe(true);
+    } finally {
+      vi.useRealTimers();
+      child.kill("SIGTERM");
+      await exited;
+      await closing?.catch(() => undefined);
+      await lease.close();
+    }
+    await expect(stat(snapshotRoot)).rejects.toMatchObject({ code: "ENOENT" });
+  });
   it("gives packaged executables a fresh private extraction cache each launch", async () => {
     const declaration = { ...await fixture(), isolatedCacheEnvironmentName: "COPILOT_PKG_CACHE_HOME" as const };
     const install = await verifyNativeAcpxInstallation(declaration);

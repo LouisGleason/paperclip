@@ -43,6 +43,9 @@ const DEPENDENCY_ANCESTOR_FD_START = 5;
 const MAX_DEPENDENCY_ANCESTORS = 64;
 const PROVIDER_WATCHDOG_HANDSHAKE_TIMEOUT_MS = 2_000;
 const PROVIDER_GUARDIAN_HANDSHAKE_TIMEOUT_MS = 5_000;
+// Cover bounded runtime close and TERM/KILL verification without allowing a
+// surviving provider to hold the entire cleanup result indefinitely.
+const NATIVE_SNAPSHOT_EXIT_TIMEOUT_MS = 10_000;
 const VERIFIED_PROVIDER_RUNTIME_TARGET_ENV =
   "PAPERCLIP_ACPX_VERIFIED_PROVIDER_RUNTIME_TARGET";
 
@@ -1402,7 +1405,21 @@ function commandLease(
     // A spawned provider may still read the snapshot. Runtime shutdown runs in
     // parallel and retires that child; do not remove its bytes or report command
     // retirement until observed exit and complete snapshot deletion.
-    await childExit;
+    if (childExit !== null) {
+      let exitTimer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          childExit,
+          new Promise<never>((_, reject) => {
+            exitTimer = setTimeout(() => reject(new Error(
+              "ACPX provider survived native snapshot retirement deadline",
+            )), NATIVE_SNAPSHOT_EXIT_TIMEOUT_MS);
+          }),
+        ]);
+      } finally {
+        if (exitTimer !== undefined) clearTimeout(exitTimer);
+      }
+    }
     const cleanup = cleanSnapshot();
     try {
       await cleanup;
