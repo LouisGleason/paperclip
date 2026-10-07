@@ -58,7 +58,7 @@ type ConnectPhase =
 import { secretsApi } from "../api/secrets";
 import { Label } from "./ui/label";
 import { Input } from "./ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
+import { SelectPopover, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { useLocation, useNavigate, useParams } from "@/lib/router";
 import { useDialog } from "../context/DialogContext";
 import { useCompany } from "../context/CompanyContext";
@@ -2897,9 +2897,9 @@ function OnboardingWizardInner({
                       {paperclipRunnerProfileForHarness(adapterType) && <details className="space-y-3">
                         <summary className="cursor-pointer text-sm text-muted-foreground">Advanced</summary>
                         <label className="flex flex-col gap-2 text-sm">Runner
-                          <select className="rounded-md border border-border bg-background px-3 py-2" value={runnerChoice === "legacy" ? "legacy" : "paperclip"} onChange={event => { setRunnerChoice(event.target.value as AgentRunnerChoice); setAdapterEnvResult(null); setAdapterEnvError(null); }}>
-                            <option value="paperclip">Paperclip Runner (default)</option><option value="legacy">Legacy runner</option>
-                          </select>
+                          <SelectPopover aria-label="Runner" value={runnerChoice === "legacy" ? "legacy" : "paperclip"}
+                            onValueChange={value => { setRunnerChoice(value as AgentRunnerChoice); setAdapterEnvResult(null); setAdapterEnvError(null); }}
+                            options={[{ value: "paperclip", label: "Paperclip Runner (default)" }, { value: "legacy", label: "Legacy runner" }]} />
                         </label>
                       </details>}
 

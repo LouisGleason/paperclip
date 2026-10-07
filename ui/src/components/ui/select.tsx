@@ -19,6 +19,7 @@ export interface SelectPopoverOption {
   label: React.ReactNode;
   disabled?: boolean;
   suffix?: React.ReactNode;
+  group?: string;
 }
 
 /** The harness picker surface, shared by simple and searchable configuration pickers. */
@@ -29,10 +30,12 @@ export function SelectPopover({
   placeholder = "Select…",
   displayValue,
   "aria-label": ariaLabel,
+  "aria-busy": ariaBusy,
   disabled,
   className,
   open: controlledOpen,
   onOpenChange,
+  onCloseAutoFocus,
   children,
 }: {
   value: string;
@@ -41,10 +44,12 @@ export function SelectPopover({
   placeholder?: string;
   displayValue?: React.ReactNode;
   "aria-label": string;
+  "aria-busy"?: boolean;
   disabled?: boolean;
   className?: string;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  onCloseAutoFocus?: React.ComponentProps<typeof PopoverContent>["onCloseAutoFocus"];
   children?: React.ReactNode;
 }) {
   const [localOpen, setLocalOpen] = React.useState(false);
@@ -60,6 +65,7 @@ export function SelectPopover({
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <button type="button" aria-label={ariaLabel} aria-haspopup="listbox"
+          aria-busy={ariaBusy}
           disabled={disabled} data-size="default"
           onKeyDown={event => {
             if (event.key === "ArrowDown" || event.key === "ArrowUp") {
@@ -73,6 +79,7 @@ export function SelectPopover({
         </button>
       </PopoverTrigger>
       <PopoverContent ref={contentRef} align="start"
+        onCloseAutoFocus={onCloseAutoFocus}
         className="w-(--radix-popover-trigger-width) max-h-(--radix-popover-content-available-height) overflow-y-auto p-1"
         onOpenAutoFocus={event => {
           if (contentRef.current?.querySelector("input:not(:disabled)")) return;
@@ -93,11 +100,13 @@ export function SelectPopover({
           items[next]?.focus();
         }}>
         {children ?? <div role="listbox" aria-label={ariaLabel}>
-          {options.map(option => <SelectPopoverItem key={option.value} data-value={option.value} selected={option.value === value}
+          {options.map((option, index) => <React.Fragment key={option.value}>
+            {option.group && option.group !== options[index - 1]?.group && <div className="px-2 py-1 text-xs text-muted-foreground">{option.group}</div>}
+            <SelectPopoverItem data-value={option.value} selected={option.value === value}
             disabled={option.disabled} onClick={() => { onValueChange?.(option.value); setOpen(false); }}>
             <span className="min-w-0 truncate">{option.label}</span>
             {option.suffix}
-          </SelectPopoverItem>)}
+          </SelectPopoverItem></React.Fragment>)}
         </div>}
       </PopoverContent>
     </Popover>

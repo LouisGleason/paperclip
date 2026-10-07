@@ -14,6 +14,7 @@ import { getAdapterDisplay } from "@/adapters/adapter-display-registry";
 import { cn } from "@/lib/utils";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { SelectPopover } from "../ui/select";
 import {
   Dialog,
   DialogContent,
@@ -215,11 +216,16 @@ export function AgentBasicsDialog({
                 {managedAvailable && <details className="space-y-3">
                   <summary className="cursor-pointer text-sm text-muted-foreground">Advanced</summary>
                   <label className="flex flex-col gap-2 text-sm">Managed harness
-                    <select className="rounded-md border border-border bg-background px-3 py-2" value={managedHarness ? adapterType : ""} onChange={event => setAdapterType(event.target.value)}>
-                      <option value="">Choose a managed harness…</option>
-                      <option value="claude_managed">Claude Managed</option>
-                      <option value="aws_agentcore">AWS AgentCore</option>
-                    </select>
+                    <SelectPopover
+                      aria-label="Managed harness"
+                      value={managedHarness ? adapterType : ""}
+                      onValueChange={setAdapterType}
+                      options={[
+                        { value: "", label: "Choose a managed harness…" },
+                        { value: "claude_managed", label: "Claude Managed" },
+                        { value: "aws_agentcore", label: "AWS AgentCore" },
+                      ]}
+                    />
                   </label>
                   <p className="text-xs text-muted-foreground">Requires a qualified organization profile.</p>
                 </details>}

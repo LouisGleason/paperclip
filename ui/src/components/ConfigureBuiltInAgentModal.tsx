@@ -1,3 +1,4 @@
+import { SelectPopover } from "@/components/ui/select";
 import { agentHarnessType, agentRunner, paperclipRunnerProfileForHarness, type AgentRunnerChoice } from "@paperclipai/shared";
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -182,9 +183,11 @@ export function ConfigureBuiltInAgentModal({
 
           {paperclipRunnerProfileForHarness(adapterType) && <details className="space-y-3">
             <summary className="cursor-pointer text-sm text-muted-foreground">Advanced</summary>
-            <Field label="Runner"><select className="w-full rounded-md border border-border bg-background px-3 py-2" value={runner === "legacy" ? "legacy" : "paperclip"} onChange={event => setRunner(event.target.value as AgentRunnerChoice)}>
-              <option value="paperclip">Paperclip Runner (default)</option><option value="legacy">Legacy runner</option>
-            </select></Field>
+            <Field label="Runner">
+              <SelectPopover aria-label="Runner" value={runner === "legacy" ? "legacy" : "paperclip"}
+                onValueChange={value => setRunner(value as AgentRunnerChoice)}
+                options={[{ value: "paperclip", label: "Paperclip Runner (default)" }, { value: "legacy", label: "Legacy runner" }]} />
+            </Field>
           </details>}
           {modelRequired && (
             // ModelDropdown supplies its own "Model" Field label + hint.

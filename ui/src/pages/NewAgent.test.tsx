@@ -143,6 +143,16 @@ async function render(adapter = "pi_local", runnerProvider = "codex") {
   );
   await settle();
 }
+async function openEnvironment() {
+  await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="Environment"]')!.click());
+  await settle();
+  return document.querySelector<HTMLElement>('[role="listbox"][aria-label="Environment"]')!;
+}
+async function chooseEnvironment(value: string) {
+  const menu = await openEnvironment();
+  await act(async () => menu.querySelector<HTMLButtonElement>(`[data-value="${value}"]`)!.click());
+  await settle();
+}
 async function connect(provider: string) {
   await click(provider + "Subscription");
   await click("Connect");
@@ -222,7 +232,7 @@ describe("New agent setup", () => {
     api.getAdapterAuthSignal.mockResolvedValue({ status: "missing" });
     await render(adapterType);
     expect(container.textContent).toContain("does not support browser sign-in");
-    expect(container.querySelector('select[aria-label="Environment"]')).toBeNull();
+    expect(container.querySelector('button[aria-label="Environment"]')).toBeNull();
     await click("2Configure");
     expect(container.querySelector('button[type="submit"]')).toBeNull();
     expect([...container.querySelectorAll("button")].find(button => button.textContent?.trim() === "Run test")?.disabled).toBe(true);
@@ -230,13 +240,8 @@ describe("New agent setup", () => {
     expect(api.testEnvironment).not.toHaveBeenCalled();
     expect(api.hire).not.toHaveBeenCalled();
     await click("2Configure");
-    const select = container.querySelector('select[aria-label="Environment"]') as HTMLSelectElement;
-    await act(async () => {
-      select.value = "login-env";
-      select.dispatchEvent(new Event("change", { bubbles: true }));
-    });
-    await settle();
-    expect(container.querySelector('select[aria-label="Environment"]')).toBeNull();
+    await chooseEnvironment("login-env");
+    expect(container.querySelector('button[aria-label="Environment"]')).toBeNull();
     await click("Complete subscription login");
     await click("Finish setup");
     expect(api.hire.mock.calls[0][1]).toMatchObject({ defaultEnvironmentId: "login-env", runtimeConfig: { aiConnection: { method: "subscription" } } });
@@ -265,16 +270,14 @@ describe("New agent setup", () => {
       secret: { companyId: "company-1", status: "active" },
     }]);
     await render("paperclip_runner", "grok");
-    expect(container.querySelector('select[aria-label="Environment"]')).toBeNull();
+    expect(container.querySelector('button[aria-label="Environment"]')).toBeNull();
     await click("GrokAPI key");
     await click("Use saved API key");
-    const select = container.querySelector('select[aria-label="Environment"]') as HTMLSelectElement;
-    expect(select.disabled).toBe(false);
-    expect([...select.options].some((option) => option.value === "local-1")).toBe(!managedOnly);
-    await act(async () => {
-      select.value = "grok-sandbox";
-      select.dispatchEvent(new Event("change", { bubbles: true }));
-    });
+    const trigger = container.querySelector<HTMLButtonElement>('button[aria-label="Environment"]')!;
+    expect(trigger.disabled).toBe(false);
+    const menu = await openEnvironment();
+    expect(Boolean(menu.querySelector('[data-value="local-1"]'))).toBe(!managedOnly);
+    await act(async () => menu.querySelector<HTMLButtonElement>('[data-value="grok-sandbox"]')!.click());
     await settle();
     if (container.querySelector('[role="radiogroup"][aria-label="Connection type"]')) {
       await click("GrokAPI key");

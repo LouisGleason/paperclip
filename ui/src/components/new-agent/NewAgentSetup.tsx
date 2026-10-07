@@ -55,7 +55,7 @@ import { Field } from "../agent-config-primitives";
 import { SecretPicker } from "../environment-variables-editor/SecretPicker";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
-import { NativeSelect, nativeSelectClassName } from "../ui/select";
+import { SelectPopover } from "../ui/select";
 import {
   OnboardingCard,
   OnboardingHeading,
@@ -69,7 +69,6 @@ import {
 } from "./AgentProviderConnection";
 import { adapterCuratesModelOrder } from "../../lib/model-utils";
 
-const controlClass = nativeSelectClassName;
 const blocking = (result: AdapterEnvironmentTestResult) =>
   result.status === "fail" ||
   result.checks.some((check) => check.code === ADAPTER_AUTH_MISSING_CHECK_CODE);
@@ -850,10 +849,12 @@ function Setup({
                       {profile && <details className="space-y-3">
                         <summary className="cursor-pointer text-sm text-muted-foreground">Advanced</summary>
                         <Field label="Runner">
-                          <NativeSelect value={isRunner ? "paperclip" : "legacy"} onChange={event => { setRunner(event.target.value as AgentRunnerChoice); resetTest(); }}>
-                            <option value="paperclip">Paperclip Runner{registryRunner !== "legacy" ? " (default)" : ""}</option>
-                            <option value="legacy">Legacy runner{registryRunner === "legacy" ? " (default)" : ""}</option>
-                          </NativeSelect>
+                          <SelectPopover aria-label="Runner" value={isRunner ? "paperclip" : "legacy"}
+                            onValueChange={value => { setRunner(value as AgentRunnerChoice); resetTest(); }}
+                            options={[
+                              { value: "paperclip", label: `Paperclip Runner${registryRunner !== "legacy" ? " (default)" : ""}` },
+                              { value: "legacy", label: `Legacy runner${registryRunner === "legacy" ? " (default)" : ""}` },
+                            ]} />
                         </Field>
                       </details>}
                       {managedHarness && <section className="space-y-3">
@@ -878,7 +879,7 @@ function Setup({
                           <div className="grid items-start gap-5 sm:grid-cols-2">
                             {showModel && !usingKimiApi && (
                               <ModelDropdown
-                                presentation="native"
+                                presentation="select"
                                 models={connectionModels?.models ?? models.data ?? []}
                                 loadingModels={connectionModels?.isLoading ?? models.isLoading}
                                 onRefreshModels={connectionModels?.refreshModels}
@@ -916,21 +917,9 @@ function Setup({
                             )}
                             {efforts.length > 0 && (
                               <Field label="Thinking effort">
-                                <NativeSelect
-                                  aria-label="Thinking effort"
-                                  value={effort}
-                                  onChange={(event) => {
-                                    setEffort(event.target.value);
-                                    resetTest();
-                                  }}
-                                >
-                                  <option value="">Auto</option>
-                                  {efforts.map((value) => (
-                                    <option key={value} value={value}>
-                                      {value}
-                                    </option>
-                                  ))}
-                                </NativeSelect>
+                                <SelectPopover aria-label="Thinking effort" value={effort}
+                                  onValueChange={value => { setEffort(value); resetTest(); }}
+                                  options={[{ value: "", label: "Auto" }, ...efforts.map(value => ({ value, label: value }))]} />
                               </Field>
                             )}
                           </div>
@@ -944,35 +933,13 @@ function Setup({
                           <div className="grid gap-5 sm:grid-cols-2">
                             {chooseProvider && (
                               <Field label="API key provider">
-                                <select
-                                  aria-label="API key provider"
-                                  className={controlClass}
-                                  value={provider}
-                                  onChange={(event) => {
-                                    setProvider(event.target.value);
-                                    setModel("");
-                                    setApiKey("");
-                                    setProviderBinding(null);
-                                    resetTest();
+                                <SelectPopover aria-label="API key provider" value={provider}
+                                  onValueChange={value => {
+                                    setProvider(value); setModel(""); setApiKey(""); setProviderBinding(null); resetTest();
                                   }}
-                                >
-                                  {Object.keys(providerKeys).map((key) => (
-                                    <option key={key} value={key}>
-                                      {key === "openrouter"
-                                        ? "OpenRouter"
-                                        : key === "openai"
-                                          ? "OpenAI"
-                                          : key === "anthropic"
-                                            ? "Anthropic"
-                                            : ({
-                                                google: "Google",
-                                                xai: "xAI",
-                                                groq: "Groq",
-                                                opencode: "OpenCode",
-                                              }[key] ?? key)}
-                                    </option>
-                                  ))}
-                                </select>
+                                  options={Object.keys(providerKeys).map(key => ({ value: key,
+                                    label: ({ openrouter: "OpenRouter", openai: "OpenAI", anthropic: "Anthropic", google: "Google", xai: "xAI", groq: "Groq", opencode: "OpenCode" }[key] ?? key),
+                                  }))} />
                               </Field>
                             )}
                             <div
@@ -1082,21 +1049,9 @@ function Setup({
                               />
                             </Field>
                             <Field label="Kimi API protocol">
-                              <select
-                                aria-label="Kimi API protocol"
-                                className={controlClass}
-                                value={kimiProtocol}
-                                onChange={(event) => {
-                                  setKimiProtocol(event.target.value);
-                                  resetTest();
-                                }}
-                              >
-                                {["kimi", "anthropic", "openai"].map(
-                                  (value) => (
-                                    <option key={value}>{value}</option>
-                                  ),
-                                )}
-                              </select>
+                              <SelectPopover aria-label="Kimi API protocol" value={kimiProtocol}
+                                onValueChange={value => { setKimiProtocol(value); resetTest(); }}
+                                options={["kimi", "anthropic", "openai"].map(value => ({ value, label: value }))} />
                             </Field>
                             <Field
                               label="Kimi API base URL"
@@ -1146,29 +1101,16 @@ function Setup({
                       ) && (
                         <section className="space-y-5">
                           <h3 className="text-sm font-semibold">Environment</h3>
-                          <select
-                            aria-label="Environment"
-                            className={controlClass}
-                            value={environmentOverride}
-                            disabled={forced.forced}
-                            onChange={(event) => {
-                              setEnvironmentOverride(event.target.value);
-                              setConnection(null);
-                              resetTest();
+                          <SelectPopover aria-label="Environment" value={environmentOverride} disabled={forced.forced}
+                            onValueChange={value => {
+                              setEnvironmentOverride(value); setConnection(null); resetTest();
                               if (connectionAdapter) setScreen("connect");
                             }}
-                          >
-                            <option value="">
-                              Default: {environmentLabel}
-                            </option>
-                            {(envs.data ?? [])
-                              .filter((env) => env.status === "active" && (!managedOnly || env.driver !== "local"))
-                              .map((env) => (
-                                <option key={env.id} value={env.id}>
-                                  {environmentDisplayLabel(env)}
-                                </option>
-                              ))}
-                          </select>
+                            options={[
+                              { value: "", label: `Default: ${environmentLabel}` },
+                              ...(envs.data ?? []).filter(env => env.status === "active" && (!managedOnly || env.driver !== "local"))
+                                .map(env => ({ value: env.id, label: environmentDisplayLabel(env) })),
+                            ]} />
                         </section>
                       )}
                     </fieldset>

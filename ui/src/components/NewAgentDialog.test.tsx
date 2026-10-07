@@ -102,8 +102,11 @@ it("offers harnesses without a runner tile or second provider picker", async () 
   await name();
   expect(document.querySelector('input[value="codex_local"]')).not.toBeNull();
   expect(document.querySelector('input[value="paperclip_runner"]')).toBeNull();
-  expect(document.querySelector("details:not([open]) select")).not.toBeNull();
-  expect(document.querySelector("select option[value=codex]")).toBeNull();
+  expect(document.querySelector('details:not([open]) button[aria-label="Managed harness"]')).not.toBeNull();
+  await act(async () => document.querySelector<HTMLButtonElement>('button[aria-label="Managed harness"]')!.click());
+  expect(document.querySelector('[role="option"][data-value="claude_managed"]')).not.toBeNull();
+  expect(document.querySelector('[role="option"][data-value="aws_agentcore"]')).not.toBeNull();
+  expect(document.querySelector('[role="option"][data-value="codex"]')).toBeNull();
 });
 
 it.each([false, undefined])(
