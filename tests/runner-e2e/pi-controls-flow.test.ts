@@ -10,9 +10,9 @@ import { readPiSteeringSettlement } from "./pi-controls-evidence.js";
 
 vi.mock("./pi-bootstrap-permission.js", async importOriginal => ({ ...await importOriginal<typeof import("./pi-bootstrap-permission.js")>(), approvePiBootstrapRead: async () => undefined }));
 
-const harness = vi.hoisted(() => ({ target: "", prompt: "", message: "", mutation: false, incomplete: false }));
+const harness = vi.hoisted(() => ({ target: "", prompt: "", message: "", foreignCreatedTask: false, mutation: false, incomplete: false }));
 vi.mock("./user-actions.js", () => ({
-  createTaskThroughUi: async (input: { prompt: string }) => { harness.prompt = input.prompt; },
+  createTaskThroughUi: async (input: { prompt: string; requireExplicitTitle?: boolean }) => { expect(input.requireExplicitTitle).toBe(true); harness.prompt = input.prompt; return { submittedAtMs: Date.now(), issueId: harness.foreignCreatedTask ? "foreign-created-task" : "issue" }; },
   submitTaskReply: async (page: { submitReply(body: string): void }, body: string) => { page.submitReply(body); return Date.now(); },
 }));
 vi.mock("./copilot-local-fixtures.js", async importOriginal => {
@@ -28,8 +28,8 @@ vi.mock("@playwright/test", () => ({ expect: (actual: any, message?: string) => 
   toHaveCount: async (value: number) => { if (typeof actual.count === "function") expect(actual.count()).toBe(value); },
 }) }));
 
-async function exercise(taskId: string, remote: boolean, failure?: "mutation" | "incomplete" | "missing-ack" | "missing-comment" | "foreign-comment" | "foreign-queued-body" | "steer-rejected" | "duplicate-permission" | "annotation-drift" | "root-rotation") {
-  harness.target = ""; harness.prompt = ""; harness.message = ""; harness.mutation = failure === "mutation"; harness.incomplete = failure === "incomplete";
+async function exercise(taskId: string, remote: boolean, failure?: "mutation" | "incomplete" | "missing-ack" | "missing-comment" | "foreign-comment" | "foreign-queued-body" | "steer-rejected" | "duplicate-permission" | "annotation-drift" | "root-rotation" | "foreign-created-task") {
+  harness.foreignCreatedTask = failure === "foreign-created-task"; harness.target = ""; harness.prompt = ""; harness.message = ""; harness.mutation = failure === "mutation"; harness.incomplete = failure === "incomplete";
   const task = piControlTasks.find(t => t.id === taskId)!, stopCase = taskId === "pending-permission-stop";
   const workspacePath = await mkdtemp(join(tmpdir(), "pi-controls-fixture-"));
   const saved = new Map<string, any>(), localCleanup: Array<() => Promise<any>> = [], remoteCleanup: Array<() => Promise<any>> = [];
@@ -39,7 +39,7 @@ async function exercise(taskId: string, remote: boolean, failure?: "mutation" | 
   const publicComments: any[][] = [];
   const sync = () => {
     const target = remote ? "pi-control-fixture.txt" : harness.target;
-    f.scope.target = target; f.tool.target = target; f.issue.title = task.buildTitle("fixture");
+    f.scope.target = target; f.tool.target = target; f.issue.title = "Provider-generated task name"; f.issue.companyId = "company"; f.issue.assigneeAgentId = "agent";
   };
   const queue = () => ({ queueId: "queue", targetRunId: "run", revision: "revision", protocol: "paperclip_runner_v1", steeringDisposition: "available", entries: harness.message ? [{ comment: { id: "comment", body: harness.message + (failure === "foreign-queued-body" ? " altered" : "") } }] : [] });
   const api = {
@@ -147,7 +147,8 @@ async function exercise(taskId: string, remote: boolean, failure?: "mutation" | 
       execution: { task, suite: { id: "pi-controls" }, environment: { id: remote ? "daytona" : "local" }, profile: { qualificationCandidate: "pi" } }, workspacePath, nonce: "fixture", deadlineAt: Date.now() + 1000,
       observe: () => {}, capture: async () => {}, evidence: async (name: string, value: unknown) => saved.set(name, structuredClone(value)), remoteBootstrap,
       registerCleanupAssertion: (fn: () => Promise<any>) => localCleanup.push(fn), registerBeforeEnvironmentTeardownAssertion: (fn: () => Promise<any>) => remoteCleanup.push(fn) } as any);
-    if (failure === "duplicate-permission") { await expect(call).rejects.toThrow(); expect(stops).toBe(0); expect(browserDeclines).toBe(0); expect(browserSteers).toBe(0); }
+    if (failure === "foreign-created-task") { await expect(call).rejects.toThrow("Unexpected read /api/issues/foreign-created-task"); expect(stops).toBe(0); expect(browserDeclines).toBe(0); expect(browserSteers).toBe(0); }
+    else if (failure === "duplicate-permission") { await expect(call).rejects.toThrow(); expect(stops).toBe(0); expect(browserDeclines).toBe(0); expect(browserSteers).toBe(0); }
     else if (failure === "missing-ack") { await expect(call).rejects.toThrow("acknowledgement"); expect(browserDeclines).toBe(0); }
     else if (failure === "steer-rejected") { await expect(call).rejects.toThrow("steering rejected: HTTP 409"); expect(browserDeclines).toBe(0); }
     else if (failure === "foreign-queued-body") { await expect(call).rejects.toThrow("browser comment queued"); expect(browserSteers).toBe(0); expect(browserDeclines).toBe(0); }
@@ -197,3 +198,5 @@ it("refuses control when two actionable permission cards remain beside resolved 
 it.each(["pending-permission-stop", "same-turn-steering"])("%s retains exact remote birth identity when public timestamp annotations change", task => exercise(task, true, "annotation-drift"));
 it("rejects actual remote process birth rotation despite unchanged public annotations", () => exercise("pending-permission-stop", true, "root-rotation"));
 it("still rejects local process authority timestamp changes", () => exercise("pending-permission-stop", false, "annotation-drift"));
+
+it("refuses a task absent from the browser creation response instead of selecting a title match", () => exercise("pending-permission-stop", false, "foreign-created-task"));

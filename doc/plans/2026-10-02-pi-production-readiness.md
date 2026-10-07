@@ -27,10 +27,10 @@ also decode automatically, with separate exact launch admission. Pi's native
 | Normal public installation | CLI/server and separate Daytona plugin npm installs and normal hooks pass; lockfiles stay unchanged. |
 | Installed package integrity and Pi admission | Full archive graph and managed-asset verification, normal Pi runtime setup, credential-free public admission and actual server/UI startup pass. Installed daemon SHA-256 is `905949ca03c1859974ce9868aea6262a5338f98dace66bd029a57e11272996be`. |
 | Free runtime checks | Full release Rust: 689 pass, two ignored. Runner TypeScript typecheck passes; provider/configuration/compatibility checks: 58 pass, one skip. Actual server native-input boundary: 68 pass. |
-| Final Product acceptance | 0/26. The first installed file-edit attempt failed the shared artifact-title check; cleanup passed. Keep its original failure and token usage. |
+| Final Product acceptance | 1/26. Corrected definition-4 file-edit passes on the frozen installation and harness `92cf55a7a87903b6bd8603f4d7cac6cc510418c0`, with independent process/scratch/credential-input cleanup and retained canonical evidence. Preserve the failed definition-3 attempt. The next Stop attempt failed because its title-based lookup missed the composer-generated title before Stop could run; its original timeout and cleanup failure stay retained. Definitions 9/16 now bind explicit creation-response IDs, with 176 free checks passing. Resume only on the corrected harness, with no automatic retries. |
 | Final Runner acceptance | 0/7. Definitions `a29b289cb3a80731c6f8195159d263e5336b4d4a` validate seven cases and pass 139 free tests; final live runs remain pending. |
-| Final Daytona image | Requires the prepared Linux workflow-host correction and explicit approval before applying it; 13 Daytona cells remain pending. |
-| Current PR-head CI and review | Required after the fixture-only correction. Test-only follow-ups fix future-version and Cursor rejection fixtures. |
+| Final Daytona image | The user-approved hosted Linux workflow is applied. The first cloud build exposed two ignored release-declaration inputs; the exact build-context correction and 20 focused checks pass. [Corrected cloud build](https://github.com/paperclipai/paperclip/actions/runs/37653872385) passed. Anonymous OCI admission verifies Linux amd64 and source `f4bb181daeaa201c2528f774182cb5a25edfc4c6`; immutable image digest is `sha256:622efa468df3218a77c1302189f20a629fd45a8c816dca3f00e1ec6eed4b3a64`. Guest admission and 13 Daytona cells remain pending. |
+| Current PR-head CI and review | Harness head `92cf55a7a87903b6bd8603f4d7cac6cc510418c0` passes CI and review. Cloud build head has 52 passing checks and one Rust-host shutdown during compilation. No Rust test failed; GitHub returned HTTP 500 for the failed-job rerun. Current fixture changes require fresh checks; no unresolved review threads were observed. |
 
 The first final-source file-edit run edited and independently validated the file,
 registered its real download and completed the task. Its Pi prompt requested
@@ -38,6 +38,11 @@ artifact title `Verified text`, while the unchanged shared registration check
 requires the exact filename as title. Extended definition 4 corrects that prompt
 instruction and adds a cross-fixture regression check. Native edit, exact bytes,
 command/result, registration, run attribution and cleanup grading stay unchanged.
+Pi controls definition 9 and native definition 16 also preserve task identity from
+the public creation response and use explicit titles for strict native operations.
+The original Stop title-lookup failure remains failed; it never reached Stop.
+No Stop, permission, native-byte, process-retirement or cleanup assertion is relaxed.
+
 The failed definition-3 attempt does not become a pass. Its recorded usage is
 39,343 input, 77,312 cached input and 1,359 output tokens; provider cost is unpriced
 and key snapshots may settle later. No unchanged paid retry is permitted.
@@ -2129,15 +2134,15 @@ and receipts throughout that operation.
    paperclipai runtime import-remote "$PI_RELEASE_COMPANION" --sha256 "$PI_RELEASE_COMPANION_SHA256"
    ```
 
-4. Begin with one operator-owned Pi company using qualified profile 15,
+4. After all release gates pass, begin with one operator-owned Linux Pi company using profile 17,
    `openrouter/deepseek/deepseek-v4-flash-0731` and explicit low thinking.
    Check normal startup, one question and answer, Stop, three warm turns,
    terminal task state and usage visibility before expanding. Preserve the
    existing company permissions and budget hard stop. Record the installed
    package, runtime, companion and image identities with each canary run.
    Verify an exact memory write with its final LF and read it in a fresh task.
-   The present 32-byte memory failure blocks this rollout; a historical LF pass
-   does not satisfy the current-artifact canary or qualification gate.
+   Current-artifact exact-byte memory acceptance must pass before expansion;
+   historical memory results do not satisfy this canary or qualification gate.
    Verify controller recovery while a native question is pending: answer the
    original question once, retain the original run and producer identities, and
    prove complete terminal evidence and cleanup. Stop expansion if either fails.

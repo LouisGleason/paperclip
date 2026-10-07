@@ -7,7 +7,7 @@ import { runPiNativeFlow } from "./pi-native-flow.js";
 vi.mock("./pi-bootstrap-permission.js", async importOriginal => ({ ...await importOriginal<typeof import("./pi-bootstrap-permission.js")>(), approvePiBootstrapRead: async () => undefined }));
 
 const proof = vi.hoisted(() => ({ mutation: false, incomplete: false, live: false, target: "pi-human-denied.txt", prompt: "" }));
-vi.mock("./user-actions.js", () => ({ createTaskThroughUi: vi.fn(async (input: { prompt: string }) => { proof.prompt = input.prompt; }) }));
+vi.mock("./user-actions.js", () => ({ createTaskThroughUi: vi.fn(async (input: { prompt: string; requireExplicitTitle?: boolean }) => { expect(input.requireExplicitTitle).toBe(true); proof.prompt = input.prompt; return { submittedAtMs: Date.now(), issueId: "issue" }; }) }));
 vi.mock("./copilot-local-fixtures.js", async importOriginal => {
   const actual = await importOriginal<typeof import("./copilot-local-fixtures.js")>();
   return { ...actual,
@@ -26,7 +26,7 @@ async function exercise(mutation: boolean, remote = false, adapter = "acpx-runti
   const workspacePath = await mkdtemp(join(tmpdir(), "pi-human-fixture-"));
   let declined = false, browserPosts = 0; const saved = new Map<string, any>(); const cleanup: Array<() => Promise<any>> = [];
   const task = piNativeTasks.find(row => row.id === "human-permission-denial")!;
-  const issue = () => ({ id: "issue", identifier: "PI-1", title: task.buildTitle("fixture"), status: declined ? "done" : "in_progress" });
+  const issue = () => ({ id: "issue", identifier: "PI-1", title: "Provider-generated task name", companyId: "company", assigneeAgentId: "agent", status: declined ? "done" : "in_progress" });
   const run = () => ({ id: "run", status: declined ? "succeeded" : "running", runtimeMode: "native", processPid: 123, processGroupId: 123, processStartedAt: "2026-09-29T00:00:00Z" });
   const request = { requestId: "request", turnId: "turn", type: "permission", status: "pending", details: { toolCallId: "pi-tool-1" }, origin: { adapter, provider: "pi", method: "session/request_permission" }, choices: [{ key: "decline", label: "Decline" }] };
   const events = () => [wrap("runtime_request.created", 1, { request }), ...(declined ? [wrap("runtime_request.resolved", 2, { requestId: "request", turnId: "turn", action: "decline" }), wrap("tool.execution.completed", 3, { schema: "paperclip.tool.execution.v1", transport: "builtin", operation: "edit", executionId: "pi-tool-1", name: "write", target: proof.target, status: "failed", output: "Pi operation was denied or cancelled" })] : [])];

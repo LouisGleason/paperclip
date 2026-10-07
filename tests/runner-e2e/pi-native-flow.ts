@@ -86,9 +86,10 @@ export async function runPiNativeFlow(input: {
   async function create(title: string, prompt: string | ((fixture: RemoteNativeFixture) => string), options: { targets?: string[]; crossRoot?: { initialText: string } } = {}) {
     const previous = new Set(runs.map(run => run.id));
     const actualPrompt = remote ? input.remoteBootstrap!.prompt(`${nonce}-${++remoteSequence}`) : typeof prompt === "string" ? prompt : (() => { throw new Error("Local prompt cannot depend on remote fixture"); })();
-    await createTaskThroughUi({ page, issuePrefix: fixtures.company.issuePrefix!, agentName: fixtures.agent.name, title, prompt: actualPrompt, workMode: "standard", projectName: project.name });
-    const found = await pollUntil({ label: title, deadlineAt: input.deadlineAt, load: async () => (await api.get<Row[]>(`/api/companies/${fixtures.company.id}/issues?limit=100`)).find(row => row.title === title), accept: Boolean });
-    if (!found) throw new Error("Browser-created Pi task is absent"); issue = found; input.observe(issue, runs);
+    const createdTask = await createTaskThroughUi({ page, issuePrefix: fixtures.company.issuePrefix!, agentName: fixtures.agent.name, title, prompt: actualPrompt, workMode: "standard", projectName: project.name, requireExplicitTitle: true });
+    issue = await api.get<Row>(`/api/issues/${createdTask.issueId}`);
+    check("created-task-identity", issue.id === createdTask.issueId && issue.companyId === fixtures.company.id && issue.assigneeAgentId === fixtures.agent.id, "Creation response binds the exact company-scoped assigned task before native action");
+    input.observe(issue, runs);
     await page.goto(`/${fixtures.company.issuePrefix}/issues/${issue.identifier ?? issue.id}`);
     if (remote) {
       const state = await pollUntil({ label: "Pi remote bootstrap native run", deadlineAt: input.deadlineAt, load, reject: rejectFailure, accept: value => value.runs.filter(run => !previous.has(run.id)).length === 1 });
