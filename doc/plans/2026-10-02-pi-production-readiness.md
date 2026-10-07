@@ -5,14 +5,16 @@ set of release gates. Pi remains a candidate until every required gate passes.
 Keep behavioral qualification on the accepted fixtures. Do not expand it to
 widgets, images, Cursor or Copilot qualification. The existing draft stack must be reviewed in dependency order.
 
-## Production qualification state — 2026-10-07
+## Historical repairs before the current shipping freeze — 2026-10-07
 
 Pi 1.0.0 uses immutable profile 18. Production models remain caller-selected;
 the accepted OpenRouter model and low thinking are fixture inputs. The new
 Runner snapshot-retirement repair requires fresh normal Linux packages, a cloud
 image and all 33 accepted live cases. Provider wrapper, closure, profile and
 model-selection declarations are unchanged by this host-lifecycle repair.
-Mac qualification remains deferred.
+Mac qualification remains deferred. The following repair stages are historical;
+the release-gate table below and exact shutdown-source section record current
+admission. Do not repeat completed builds or count passes on older artifacts.
 
 Source `6a393093411caa9c5f6f543340e63805311678e8` completed normal native Linux
 workspace/public builds, normal public npm installation and lifecycle hooks,
@@ -72,14 +74,13 @@ bytes. The source must be rebuilt and admitted before another paid attempt. All
 
 | Release gate | Current evidence |
 | --- | --- |
-| Offline cancellation proof | Unit and actual subprocess regressions fail on profile-17 bytes and pass on the profile-18 wrapper. All 49 Pi ACP protocol tests pass. Historical profile-17 decoding remains available; exact launch requires profile 18. |
-| Snapshot retirement proof | New actual-subprocess tests prove deletion completes before retirement, live-child bytes remain available, failed deletion is reported and retryable, and a surviving child returns bounded failure with retained bytes. All 150 focused tests pass, six existing skips; Runner TypeScript typecheck passes. The earlier parallel credential-home collision and passing 52-test isolated recheck remain retained. |
-| Existing free checks | The cancellation source passes 2,480 Product unit tests; the final source rerun has one unrelated file-gate timeout, whose seven-test isolated recheck passes. Exact-source Rust checks pass 689 tests, two ignored. Latest Linux CI on `9cd363d` passes all 54 applicable checks. Fresh cleanup-source CI is required. |
-| Normal Linux build and public installation | Source `6a3930934` passes the normal build/install/hook/graph/setup/server/UI chain. Fresh artifacts containing the snapshot-retirement repair must pass the same admission. |
-| Final Product acceptance | Fresh repair-source coverage is 0/26. Retain source `6a3930934`'s three passes and disk-exhaustion failure, and `b061f3124`'s canonical Stop pass with failed independent native-snapshot cleanup, as historical evidence. Keep every accepted assertion and zero automatic retries. |
-| Final Runner acceptance | Fresh repair-source coverage is 0/7. All seven definitions and scoring rules stay frozen. Only their shipping-source metadata changes when the next artifact set is frozen. |
-| Cloud image | [Hosted Linux build](https://github.com/paperclipai/paperclip/actions/runs/37662254178) passes for source `6a3930934`, immutable image `sha256:c05914a36034c3a9a1fee2e385ca67c28ee4f98fd058c004b9a9a68c76bbf976`. Anonymous OCI and actual credential-free Daytona guest admission pass; owned probe deletion is confirmed. A fresh repair-source image and guest admission are required. No local Docker is used. |
-| PR CI and review | `9cd363d` passes 54 checks with no failures; Greptile is 5/5 with no open threads. Fresh cleanup-source CI and review are required. No merge, release or rollout is authorized. |
+| Offline cancellation proof | Profile 18 passes all 49 Pi ACP protocol checks. Historical profile 17 remains decodable; exact launch requires profile 18. |
+| Snapshot retirement proof | Shipping source `06a3d9739` passes 271 focused TypeScript tests, one existing skip, 16 Rust transport tests and Runner typecheck. Actual installed native copy, cancellation and deletion probes pass. Three live cases and both memory failures have independent zero-snapshot cleanup. |
+| Normal Linux build and public installation | Source `06a3d9739` passes normal workspace/public builds, npm installation and lifecycle hooks, full graph audits, Pi setup and real server/UI admission. All 20 archives and exact installed daemon bytes are retained and verified. |
+| Final Product acceptance | Current shipping artifacts have 3/26 passes: local Stop, steering and native questions. The local memory case fails the strict final-newline check on original harness `06a3d9739` and clarified harness `56d1e03ac`. Both canonical failures remain unchanged. The other 22 Product cells are unexecuted. No automatic retries. |
+| Final Runner acceptance | Current shipping coverage is 0/7. All seven cases, model, low thinking, 120-second limits and scoring rules are pinned to definition revision `d38ebc67`. |
+| Cloud image | [Hosted Linux build](https://github.com/paperclipai/paperclip/actions/runs/37676853634) passes for source `06a3d9739`. Immutable image `sha256:5e62c8e294cd9d663316ba09b0aae1d7358a8938fe37d17936ef394cf1723ab2` passes anonymous OCI verification and actual credential-free Daytona guest admission; probe deletion is confirmed. No local Docker is used. |
+| PR CI and review | Shipping source `06a3d9739` and fixture head `56d1e03ac` each pass 54 applicable checks with two expected skips. Evals head `d38ebc67` passes discovery and Greptile with no open threads. This update reconciles the stale table flagged by review; fresh documentation-head CI/review remain required. No merge, release or rollout is authorized. |
 
 The earlier cancellation defect and all failed attempts remain retained. Pi omits
 service-failure metadata only for its authoritative cancelled terminal, preserving
@@ -106,7 +107,9 @@ passes. Image `sha256:5e62c8e294cd9d663316ba09b0aae1d7358a8938fe37d17936ef394cf1
 passes anonymous Linux admission and an actual credential-free Daytona probe;
 probe deletion is confirmed. Current-source CI passes 54 checks with two skips.
 Nine simultaneous runner shutdowns are retained as infrastructure interruptions;
-a single failed-job rerun passes. Both PRs have zero unresolved review threads.
+a single failed-job rerun passes. Both PRs had zero unresolved review threads at shipping-source admission.
+Fixture head `56d1e03ac` also passes 54 checks with two skips; its new review
+finds the stale table corrected in this documentation update.
 
 Stop, same-turn steering and native questions pass on these installed bytes.
 Independent cleanup after each finds zero native snapshots, temporary roots,
@@ -133,6 +136,32 @@ reclaimed after rechecking all 20 package archives and daemon bytes. Installed
 tools and all canonical evidence remain retained. The 2 GB disk admission floor,
 finite host lifetime and independent zero-snapshot cleanup stay in force.
 No local Docker is used and no rollout, release or merge is authorized.
+
+Harness `56d1e03acdb8f951436d66f56c8f0b74a3c5c423` changes only the memory
+prompt clarification, its documentation and this plan. Cloud verification proves
+all production trees unchanged from shipping `06a3d9739`; all 26 catalog
+fingerprints remain identical. Fixture typecheck, nine focused fixture suites and
+all seven definition validations pass with zero provider calls. The three
+unaffected prior passes retain their original harness revision and exact archive
+identities; they are not relabelled.
+
+The clarified memory attempt also fails the original exact-byte grader. Its
+native complete read and public managed-file API agree on 32 bytes without the
+required final line feed; the run succeeds and produces a durable save receipt.
+The 31 MB canonical report, full trace and original failure remain retained.
+Independent inspection again finds no snapshots, temporary roots, runtime
+processes or credential inputs. The free installed-tool probe preserves both
+32-byte and 33-byte arguments exactly. No supported production-code change is
+identified. Paid qualification is held for a decision on the frozen fixture model;
+no unchanged retry or subsequent paid case ran.
+
+An earlier launch of this clarified harness was rejected by the unchanged 2 GB
+disk preflight before billing, a model call or a case claim. After verifying local
+retained copies and remote hashes, only duplicate evidence files and writable
+compile caches were retired. The root-owned image cache was left untouched.
+The actual memory attempt began with 2,050,457,600 bytes free. The original
+preflight rejection and both cache-reclamation diagnostics remain retained;
+none is reclassified as a live qualification attempt.
 
 ## Final fixture reconciliation — 2026-10-07
 
