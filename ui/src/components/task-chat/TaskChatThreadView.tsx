@@ -1,3 +1,6 @@
+import { TaskBrowserActivity } from "../task-side-panel/TaskBrowserActivity";
+import { TaskChatProjectCreatedCard } from "./TaskChatProjectCreatedCard";
+import { TaskChatSkillCreatedCard } from "./TaskChatSkillCreatedCard";
 import { useMemo, type ReactNode } from "react";
 import type { IssueAttachment } from "@paperclipai/shared";
 import { cn } from "@/lib/utils";
@@ -15,6 +18,7 @@ import { TaskChatMarker } from "./TaskChatMarker";
 import { TaskChatStatusPill } from "./TaskChatStatusPill";
 import { TaskChatToolCard } from "./TaskChatToolCard";
 import { TaskChatUsageReadout } from "./TaskChatUsageReadout";
+import { TaskChatRunnerActivityGroup } from "./TaskChatRunnerActivityGroup";
 import { TaskChatActivityPhase } from "./TaskChatActivityPhase";
 import { TaskChatThinking } from "./TaskChatThinking";
 import { TaskMessageScroller } from "./TaskMessageScroller";
@@ -70,6 +74,8 @@ interface TaskChatThreadViewProps {
   /** When false, render the list without the scroll container (e.g. previews). */
   scroll?: boolean;
   attachments?: IssueAttachment[];
+  onOpenSkill?: (skillId: string, name: string) => void;
+  onOpenBrowser?: (browserId: string) => void;
 }
 
 function renderItem(
@@ -90,8 +96,13 @@ function renderItem(
   onRetryFailedRun?: (runId: string) => Promise<void> | void,
   retryFailedRunId?: string | null,
   attachments: IssueAttachment[] = [],
+  onOpenSkill?: (skillId: string, name: string) => void,
+  onOpenBrowser?: (browserId: string) => void,
 ) {
   switch (item.kind) {
+    case "browser": return <TaskBrowserActivity browser={item.browser} label={item.label} onOpen={onOpenBrowser} />;
+    case "project_created": return <TaskChatProjectCreatedCard item={item} />;
+    case "skill_created": return <TaskChatSkillCreatedCard item={item} onOpen={onOpenSkill} />;
     case "message": {
       // Compute the actions once: the bubble renders them for a runless reply
       // (footer = actions + timestamp), while an attached turn hands them to
@@ -104,6 +115,7 @@ function renderItem(
             ...item.attachedTurn,
             agentName: item.attachedTurn.agentName ?? item.authorName,
             agentIcon: item.attachedTurn.agentIcon ?? item.agentIcon,
+            agent: item.attachedTurn.agent ?? item.agent,
           }
         : item.attachedTurn;
       const turn = attachedTurnItem ? (
@@ -129,6 +141,8 @@ function renderItem(
               undefined,
               undefined,
               attachments,
+              onOpenSkill,
+              onOpenBrowser,
             )
           }
         />
@@ -163,7 +177,7 @@ function renderItem(
         <TaskChatMarker
           item={item}
           onTryAgain={
-            item.id === retryableMarkerId
+            item.id === retryableMarkerId && item.retryable !== false
               ? item.runId && onRetryFailedRun
                 ? () => onRetryFailedRun(item.runId!)
                 : onTryAgainNoLiveExecutionPath
@@ -192,34 +206,11 @@ function renderItem(
     case "usage":
       return <TaskChatUsageReadout item={item} />;
     case "activity_phase":
-      return (
-        <TaskChatActivityPhase
-          item={item}
-          appearance={activityAppearance}
-          renderChild={(child) =>
-            child.kind === "protocol" && child.surface !== "runtime_request" ? (
-              <TaskChatProtocolActivityRow item={child} />
-            ) : (
-              renderItem(
-                child,
-                onApprovalDecision,
-                undefined,
-                undefined,
-                undefined,
-                undefined,
-                onRuntimeRequestDecision,
-                activityAppearance,
-                undefined,
-                false,
-                undefined,
-                undefined,
-                undefined,
-                attachments,
-              )
-            )
-          }
-        />
-      );
+      // Legacy adapter transcripts and native runner transcripts now share the
+      // same compact activity treatment. Keeping this decision at the common
+      // renderer boundary also gives old persisted runs the current taxonomy,
+      // alignment, one-line targets, and collapsed-by-default behavior.
+      return <TaskChatRunnerActivityGroup item={item} />;
     case "interaction":
       return renderInteraction ? renderInteraction(item) : null;
     case "plan_document":
@@ -255,6 +246,8 @@ function renderItem(
               undefined,
               undefined,
               attachments,
+              onOpenSkill,
+              onOpenBrowser,
             )
           }
         />
@@ -320,6 +313,8 @@ export function TaskChatThreadView({
   className,
   scroll = true,
   attachments = EMPTY_ATTACHMENTS,
+  onOpenSkill,
+  onOpenBrowser,
 }: TaskChatThreadViewProps) {
   const streamlined = useStreamlinedTaskChatPresentation();
   const retryableMarkerId =
@@ -355,6 +350,8 @@ export function TaskChatThreadView({
               onRetryFailedRun,
               retryFailedRunId,
               attachments,
+              onOpenSkill,
+              onOpenBrowser,
             ),
           }))
           .filter((entry) => entry.content !== null)
@@ -413,6 +410,8 @@ export function TaskChatThreadView({
                   onRetryFailedRun,
                   retryFailedRunId,
                   attachments,
+                  onOpenSkill,
+                  onOpenBrowser,
                 )}
               </div>
             ))}
@@ -422,12 +421,12 @@ export function TaskChatThreadView({
     items, streamlined, onApprovalDecision, onRuntimeRequestDecision,
     renderInteraction, renderBrief, renderMessageActions, renderQueuedAction,
     onTryAgainNoLiveExecutionPath, tryAgainNoLiveExecutionPathPending,
-    retryableMarkerId, onRetryFailedRun, retryFailedRunId, attachments,
+    retryableMarkerId, onRetryFailedRun, retryFailedRunId, attachments, onOpenSkill, onOpenBrowser,
   ]);
   const body = (
     <div
       className={cn(
-        "paperclip-mobile-thread mx-auto flex w-full max-w-(--tc-shell-max-w) flex-col px-2 py-4 md:px-4",
+        "paperclip-mobile-thread mx-auto flex w-full max-w-(--tc-shell-max-w) flex-col px-1 py-3 md:px-4 md:py-4",
         streamlined ? "md:px-0" : "gap-5",
         className,
       )}

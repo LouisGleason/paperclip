@@ -9,10 +9,12 @@ import { useChatConnectorsEnabled } from "@/hooks/useChatConnectorsEnabled";
 
 const providerNames: Record<ChatProvider, string> = {
   slack: "Slack",
-  github: "GitHub",
+  github: "GitHub Code Review Bot",
   discord: "Discord",
   "microsoft-teams": "Microsoft Teams",
   telegram: "Telegram",
+  "imessage-photon": "iMessage Photon",
+  agentmail: "AgentMail",
 };
 
 export function AgentChannelsPanel({
@@ -26,12 +28,11 @@ export function AgentChannelsPanel({
   const query = useQuery({
     queryKey: queryKeys.chatEndpoints.list(companyId),
     queryFn: () => chatEndpointsApi.list(companyId),
-    enabled,
+    enabled: Boolean(companyId),
   });
-  if (!enabled) return null;
   const endpoints = (query.data ?? []).filter(
     (endpoint) =>
-      endpoint.assignedAgentId === agentId && endpoint.status !== "archived",
+      endpoint.assignedAgentId === agentId && endpoint.status !== "archived" && (endpoint.provider === "agentmail" || enabled),
   );
   return (
     <section className="max-w-3xl space-y-5">
@@ -39,7 +40,7 @@ export function AgentChannelsPanel({
         <div>
           <h2 className="text-lg font-semibold">Channels</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            Provider identities that let people chat with this agent.
+            Chat and email identities connected to this agent.
           </p>
         </div>
         <Button asChild size="sm">
@@ -53,10 +54,9 @@ export function AgentChannelsPanel({
         <p className="text-sm text-muted-foreground">Loading channels…</p>
       ) : endpoints.length === 0 ? (
         <div className="rounded-lg border border-dashed border-border p-5">
-          <p className="text-sm font-medium">No chat channels connected</p>
+          <p className="text-sm font-medium">No channels connected</p>
           <p className="mt-1 text-sm text-muted-foreground">
-            Connect Slack, GitHub, Discord, Microsoft Teams, or Telegram from
-            Connectors.
+            {enabled ? "Connect AgentMail, Slack, GitHub Code Review Bot, Discord, Microsoft Teams, or Telegram from Connectors." : "Connect AgentMail from Connectors."}
           </p>
           <Button asChild className="mt-3" variant="outline" size="sm">
             <Link to="/apps">Open Connectors</Link>

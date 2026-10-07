@@ -77,18 +77,20 @@ fn connection_attempt_deadline(
     disconnected_since: Option<Instant>,
 ) -> Instant {
     let now = Instant::now();
-    let runtime_remaining = config
-        .max_runtime
-        .saturating_sub(now.saturating_duration_since(started));
-    let remaining = disconnected_since.zip(config.reconnect_grace).map_or(
-        runtime_remaining,
-        |(disconnected_at, grace)| {
-            runtime_remaining
-                .min(grace.saturating_sub(now.saturating_duration_since(disconnected_at)))
-        },
-    );
-    // Validation caps max_runtime at seven days, and reconnect grace can only
-    // shorten this budget, so adding it to a current Instant cannot overflow.
+    // Bound each connection/auth attempt independently of a productive
+    // session's lifetime. Zero means there is no total runtime deadline.
+    let mut remaining = Duration::from_secs(30);
+    if !config.max_runtime.is_zero() {
+        remaining = remaining.min(
+            config
+                .max_runtime
+                .saturating_sub(now.saturating_duration_since(started)),
+        );
+    }
+    if let Some((disconnected_at, grace)) = disconnected_since.zip(config.reconnect_grace) {
+        remaining =
+            remaining.min(grace.saturating_sub(now.saturating_duration_since(disconnected_at)));
+    }
     now + remaining
 }
 
@@ -248,6 +250,13 @@ pub enum TerminalDeliveryReconciliation {
 
 pub trait CommandExecutor {
     fn execute(&mut self, command: &Command) -> Result<CommandExecution, DurableRunnerError>;
+
+    /// Opt in only when semantic result delivery validates an exact durable
+    /// call receipt and cannot dispatch the underlying business operation.
+    /// Ordinary commands and providers without this proof remain indeterminate.
+    fn can_reconcile_result_delivery(&mut self) -> Result<bool, DurableRunnerError> {
+        Ok(false)
+    }
 
     /// Advances provider-side event correlation after a durable `run.attach`
     /// has moved runnerd to the next run-bound authority. The runner validates
@@ -417,7 +426,7 @@ pub fn run_durable_runner<E: CommandExecutor>(
                 ));
             }
         }
-        if started.elapsed() >= config.max_runtime {
+        if !config.max_runtime.is_zero() && started.elapsed() >= config.max_runtime {
             let _ = shutdown_preserving_cleanup(&state, &mut executor);
             record_recoverable_transport_failure(
                 &mut state,
@@ -514,7 +523,16 @@ pub fn run_durable_runner<E: CommandExecutor>(
             state.restore_v2_replay_events(&config)?;
         }
         state.last_connection_protocol_version = Some(protocol_version);
-        let connection = welcome.connection;
+        let mut connection = welcome.connection;
+        // Reconnect may follow a durably committed renewal whose reply was
+        // lost. Authentication admits an increased expiry only while our
+        // matching renewal is outstanding; identity and epoch stay exact.
+        if let Some(credential) = lease.as_mut() {
+            credential.expires_at_unix_ms = connection.expires_at_unix_ms;
+            credential.renewal_requested = false;
+        }
+        let mut next_lease_renewal =
+            lease_renewal_deadline(current_unix_ms()?, connection.expires_at_unix_ms);
         if let Some(transition) = state.warm_transition.clone() {
             if welcome.warm_transition_version != Some(1) {
                 return Err(DurableRunnerError::invalid(
@@ -739,7 +757,7 @@ pub fn run_durable_runner<E: CommandExecutor>(
             continue;
         }
         loop {
-            if started.elapsed() >= config.max_runtime {
+            if !config.max_runtime.is_zero() && started.elapsed() >= config.max_runtime {
                 break;
             }
             if let Err(error) = send_outbox(
@@ -765,6 +783,38 @@ pub fn run_durable_runner<E: CommandExecutor>(
                 return Err(DurableRunnerError::invalid(
                     "active connection lease expired; durable state is preserved",
                 ));
+            }
+            let now = current_unix_ms()?;
+            if welcome.lease_renewal_version == Some(1) && now >= next_lease_renewal {
+                // A failed write may still have reached the controller.
+                if let Some(credential) = lease.as_mut() {
+                    credential.renewal_requested = true;
+                }
+                if let Err(error) = transport.send_json(&control_envelope(
+                    &state,
+                    &connection,
+                    "lease_renew",
+                    json!({
+                        "connectionLeaseExpiresAtUnixMs": connection.expires_at_unix_ms,
+                        "connectionLeaseRevocationEpoch": connection.revocation_epoch,
+                    }),
+                )) {
+                    disconnected_since.get_or_insert_with(Instant::now);
+                    state.record_diagnostic(format!("lease renewal reconnect scheduled: {error}"));
+                    state.reconnect_count = state.reconnect_count.saturating_add(1);
+                    store.save(&state)?;
+                    break;
+                }
+                // Retry a lost reply before expiry without flooding the channel.
+                next_lease_renewal = now.saturating_add(
+                    5_000.min(
+                        connection
+                            .expires_at_unix_ms
+                            .saturating_sub(now)
+                            .saturating_div(2)
+                            .max(1),
+                    ),
+                );
             }
             // Read control before starting another fsynced provider batch.
             // Consuming the last cumulative ACK must not let a new output
@@ -799,6 +849,14 @@ pub fn run_durable_runner<E: CommandExecutor>(
                 break;
             }
             match message.get("kind").and_then(Value::as_str) {
+                Some("lease_renewed") => {
+                    let credential = lease.as_mut().ok_or_else(|| {
+                        DurableRunnerError::invalid("lease renewal requires a live credential")
+                    })?;
+                    apply_lease_renewal(&message, &mut connection, credential)?;
+                    next_lease_renewal =
+                        lease_renewal_deadline(current_unix_ms()?, connection.expires_at_unix_ms);
+                }
                 Some("ack") => {
                     let acked = message
                         .pointer("/payload/ackedSourceSeq")
@@ -983,6 +1041,47 @@ pub fn run_durable_runner<E: CommandExecutor>(
         let reconnect_deadline = connection_attempt_deadline(&config, started, disconnected_since);
         sleep_before_deadline(config.reconnect_delay, reconnect_deadline);
     }
+}
+
+fn lease_renewal_deadline(now: u64, expires_at: u64) -> u64 {
+    now.saturating_add(expires_at.saturating_sub(now) / 2)
+}
+
+fn apply_lease_renewal(
+    message: &Value,
+    connection: &mut ConnectionMetadata,
+    credential: &mut LeaseCredential,
+) -> Result<(), DurableRunnerError> {
+    let previous = message
+        .pointer("/payload/previousExpiresAtUnixMs")
+        .and_then(Value::as_u64);
+    let expiry = message
+        .pointer("/payload/connectionLeaseExpiresAtUnixMs")
+        .and_then(Value::as_u64);
+    let epoch = message
+        .pointer("/payload/connectionLeaseRevocationEpoch")
+        .and_then(Value::as_u64);
+    let Some(expiry) = expiry else {
+        return Err(DurableRunnerError::invalid(
+            "lease renewal expiry is required",
+        ));
+    };
+    if epoch != Some(connection.revocation_epoch)
+        || expiry < connection.expires_at_unix_ms
+        || previous.is_none_or(|old| old > connection.expires_at_unix_ms)
+        || (expiry > connection.expires_at_unix_ms
+            && (!credential.renewal_requested || previous != Some(connection.expires_at_unix_ms)))
+        || credential.lease_id != connection.lease_id
+        || credential.revocation_epoch != connection.revocation_epoch
+    {
+        return Err(DurableRunnerError::invalid(
+            "lease renewal changed the authenticated binding",
+        ));
+    }
+    connection.expires_at_unix_ms = expiry;
+    credential.expires_at_unix_ms = expiry;
+    credential.renewal_requested = false;
+    Ok(())
 }
 
 fn persist_lifecycle_before_shutdown<E: CommandExecutor>(
@@ -1632,6 +1731,15 @@ fn process_command<E: CommandExecutor>(
         }
     }
     match state.begin_command(command)? {
+        CommandDisposition::Replay(result)
+            if result.status == "indeterminate"
+                && command.command_type == "semantic_tool.result"
+                && executor.can_reconcile_result_delivery()? =>
+        {
+            // begin_command already checked the complete immutable command
+            // fingerprint. Only replay receipt delivery, never the operation.
+            state.resume_result_delivery(command)?;
+        }
         CommandDisposition::Replay(result) => {
             let lifecycle =
                 if result.status == "pending" || state.pending_provider_cleanup.is_some() {
@@ -1650,8 +1758,8 @@ fn process_command<E: CommandExecutor>(
         CommandDisposition::Execute => {}
     }
     // Persist the pending marker before any command effect. If the process dies
-    // in the effect window, recovery returns an indeterminate result and never
-    // executes the same logical command twice.
+    // in the effect window, recovery remains indeterminate unless the provider
+    // explicitly supports exact, idempotent semantic result delivery above.
     store.save(state)?;
     let mut execution = match executor.execute(command) {
         Ok(execution) => execution,
@@ -1902,6 +2010,144 @@ mod tests {
             }
             self.retained.acknowledge_events(count)
         }
+    }
+
+    #[test]
+    fn response_persistence_failure_with_blocked_drain_remains_indeterminate_on_replay() {
+        struct PersistenceFailedResponseExecutor {
+            delivered_responses: usize,
+            retained_reads: usize,
+        }
+        impl CommandExecutor for PersistenceFailedResponseExecutor {
+            fn execute(
+                &mut self,
+                command: &Command,
+            ) -> Result<CommandExecution, DurableRunnerError> {
+                assert_eq!(command.command_type, "request.resolve");
+                assert_eq!(command.payload["requestId"], "input-1");
+                // Model a real pipe delivery ACK followed by an uncertain
+                // provider-state write. Its staged settlement is not durable.
+                self.delivered_responses += 1;
+                Err(DurableRunnerError::invalid(
+                    "ACPX response state persistence failed after delivery",
+                ))
+            }
+
+            fn retained_events(&mut self) -> Result<Vec<PolledEvent>, DurableRunnerError> {
+                self.retained_reads += 1;
+                Err(DurableRunnerError::invalid(
+                    "ACPX persistence latch blocks retained settlement",
+                ))
+            }
+
+            fn poll_events(&mut self) -> Result<Vec<PolledEvent>, DurableRunnerError> {
+                panic!("failed response settlement must not poll or restore the provider")
+            }
+
+            fn acknowledge_events(&mut self, _: usize) -> Result<(), DurableRunnerError> {
+                panic!("an uncertain settlement must not receive a journal ACK")
+            }
+        }
+
+        let directory = std::env::temp_dir().join(format!(
+            "paperclip-response-persistence-failure-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let config = config(directory.clone());
+        let store = DurableStateStore::new(&directory).unwrap();
+        let (mut state, _) = store.load_or_create(&config).unwrap();
+        let mut executor = PersistenceFailedResponseExecutor {
+            delivered_responses: 0,
+            retained_reads: 0,
+        };
+        let mut resolve = command("request.resolve");
+        resolve.payload = json!({
+            "requestId": "input-1",
+            "resolution": {"action": "submit", "response": {"answer": "accepted"}},
+        });
+
+        let failure =
+            process_command(&mut state, &store, &config, &mut executor, &resolve).unwrap_err();
+        assert!(failure
+            .to_string()
+            .starts_with("ACPX response state persistence failed after delivery"));
+        assert!(failure
+            .to_string()
+            .contains("retained failure evidence remains uncommitted"));
+        assert!(failure
+            .to_string()
+            .contains("ACPX persistence latch blocks retained settlement"));
+        assert_eq!(executor.delivered_responses, 1);
+        assert_eq!(executor.retained_reads, 1);
+        assert_eq!(
+            state.processed_commands[&resolve.command_id].status,
+            "pending"
+        );
+        assert!(state.outbox.is_empty());
+        assert_eq!(state.highest_source_seq(), 0);
+
+        // Inspect the actual journal before recovery changes pending into
+        // indeterminate. Neither a failed/completed result nor a resolved event
+        // may replace the pre-effect marker while the provider snapshot is unsure.
+        let journal: DurableState =
+            serde_json::from_slice(&fs::read(store.path()).unwrap()).unwrap();
+        assert_eq!(
+            journal.processed_commands[&resolve.command_id].status,
+            "pending"
+        );
+        assert!(journal.outbox.is_empty());
+        assert_eq!(journal.highest_source_seq(), 0);
+
+        let pending = process_command(&mut state, &store, &config, &mut executor, &resolve)
+            .unwrap()
+            .0;
+        assert_eq!(pending.status, "pending");
+        assert_eq!(executor.delivered_responses, 1);
+        assert_eq!(executor.retained_reads, 1);
+
+        let (mut recovered, existed) = store.load_or_create(&config).unwrap();
+        assert!(existed);
+        assert_eq!(
+            recovered.processed_commands[&resolve.command_id].status,
+            "indeterminate"
+        );
+        let mut replacement = CountingExecutor { calls: 0 };
+        let replay = process_command(&mut recovered, &store, &config, &mut replacement, &resolve)
+            .unwrap()
+            .0;
+        assert_eq!(replay.status, "indeterminate");
+        assert_eq!(replay.result["code"], "execution_indeterminate");
+        assert_eq!(
+            replacement.calls, 0,
+            "recovery must never resend the response"
+        );
+        assert!(recovered.outbox.is_empty());
+        let (reloaded_again, _) = store.load_or_create(&config).unwrap();
+        assert_eq!(
+            reloaded_again.processed_commands[&resolve.command_id],
+            replay
+        );
+        assert!(reloaded_again.outbox.is_empty());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn unlimited_lifetime_keeps_attempts_bounded_after_weeks_of_work() {
+        let mut config = config(std::env::temp_dir());
+        config.max_runtime = Duration::ZERO;
+        config.validate().unwrap();
+        let started = Instant::now() - Duration::from_secs(21 * 24 * 60 * 60);
+        let before = Instant::now();
+        let deadline = connection_attempt_deadline(&config, started, None);
+        assert!(deadline >= before + Duration::from_secs(29));
+        assert!(deadline <= Instant::now() + Duration::from_secs(30));
+        config.reconnect_grace = Some(Duration::from_secs(5));
+        let deadline = connection_attempt_deadline(&config, started, Some(Instant::now()));
+        assert!(deadline <= Instant::now() + Duration::from_secs(5));
+        config.max_runtime = Duration::from_secs(7 * 24 * 60 * 60);
+        assert!(connection_attempt_deadline(&config, started, None) <= Instant::now());
+        config.max_runtime = Duration::from_secs(30 * 24 * 60 * 60);
+        config.validate().unwrap();
     }
 
     #[test]
@@ -4252,6 +4498,150 @@ mod tests {
             assert_eq!(replay_lifecycle, expected_lifecycle);
             assert_eq!(executor.calls, 1);
             fs::remove_dir_all(directory).unwrap();
+        }
+    }
+
+    #[test]
+    fn interrupted_result_delivery_reconciles_exact_receipts_without_reexecuting_operations() {
+        use crate::provider_bridge::{
+            authorized_tool_catalog_digest, AuthorizedTool, AuthorizedToolSet, ProviderToolBridge,
+            ToolResult,
+        };
+        struct ReceiptExecutor {
+            path: PathBuf,
+            deliveries: usize,
+            supported: bool,
+        }
+        impl CommandExecutor for ReceiptExecutor {
+            fn can_reconcile_result_delivery(&mut self) -> Result<bool, DurableRunnerError> {
+                Ok(self.supported)
+            }
+            fn execute(
+                &mut self,
+                command: &Command,
+            ) -> Result<CommandExecution, DurableRunnerError> {
+                assert_eq!(
+                    command.command_type, "semantic_tool.result",
+                    "must never redispatch an operation"
+                );
+                self.deliveries += 1;
+                let mut bridge: ProviderToolBridge =
+                    serde_json::from_slice(&fs::read(&self.path).unwrap()).unwrap();
+                let result: ToolResult = serde_json::from_value(command.payload.clone()).unwrap();
+                bridge
+                    .apply_result(result)
+                    .map_err(|error| DurableRunnerError::invalid(error.to_string()))?;
+                fs::write(&self.path, serde_json::to_vec(&bridge).unwrap()).unwrap();
+                Ok(CommandExecution::result(json!({"status":"delivered"})))
+            }
+        }
+        for applied in [false, true] {
+            for supported in [false, true] {
+                let directory = std::env::temp_dir().join(format!(
+                    "result-delivery-crash-{}-{applied}-{supported}",
+                    std::process::id()
+                ));
+                let _ = fs::remove_dir_all(&directory);
+                let config = config(directory.clone());
+                let store = DurableStateStore::new(&directory).unwrap();
+                let (mut state, _) = store.load_or_create(&config).unwrap();
+                let operations = vec![AuthorizedTool {
+                    operation_id: "write_document".into(),
+                    version: 1,
+                    description: "Fixture write already committed on the server".into(),
+                    input_schema: json!({"type":"object"}),
+                    response_schema: json!({"type":"object"}),
+                }];
+                let mut bridge = ProviderToolBridge::default();
+                bridge
+                    .prepare(AuthorizedToolSet {
+                        schema: "paperclip.runner.authorized-tools.v1".into(),
+                        schema_version: 1,
+                        catalog_digest: authorized_tool_catalog_digest(&operations).unwrap(),
+                        operations,
+                    })
+                    .unwrap();
+                bridge
+                    .begin_call(
+                        "call-1".into(),
+                        "write_document".into(),
+                        json!({"content":"exact original"}),
+                    )
+                    .unwrap();
+                bridge.settle_turn("provider_turn_stopped").unwrap();
+                let path = directory.join("tool-receipts.json");
+                fs::write(&path, serde_json::to_vec(&bridge).unwrap()).unwrap();
+                let mut executor = ReceiptExecutor {
+                    path: path.clone(),
+                    deliveries: 0,
+                    supported,
+                };
+                let mut delivery = command("semantic_tool.result");
+                delivery.payload = json!({"callId":"call-1", "operationId":"write_document", "isError":false,
+                    "result":{"revisionId":"one-committed-write"}});
+                assert_eq!(
+                    state.begin_command(&delivery).unwrap(),
+                    CommandDisposition::Execute
+                );
+                store.save(&state).unwrap();
+                if applied {
+                    executor.execute(&delivery).unwrap();
+                }
+                // Crash before receipt application, or after receipt application
+                // but before the command completion journal commits.
+                let (mut recovered, _) = store.load_or_create(&config).unwrap();
+                let before = executor.deliveries;
+                let (result, _) =
+                    process_command(&mut recovered, &store, &config, &mut executor, &delivery)
+                        .unwrap();
+                assert_eq!(
+                    result.status,
+                    if supported {
+                        "completed"
+                    } else {
+                        "indeterminate"
+                    }
+                );
+                assert_eq!(executor.deliveries, before + usize::from(supported));
+                let saved: ProviderToolBridge =
+                    serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+                assert_eq!(
+                    saved.pending_calls().count(),
+                    usize::from(!applied && !supported)
+                );
+                let (mut reopened, _) = store.load_or_create(&config).unwrap();
+                assert_eq!(
+                    process_command(&mut reopened, &store, &config, &mut executor, &delivery)
+                        .unwrap()
+                        .0,
+                    result
+                );
+                assert_eq!(executor.deliveries, before + usize::from(supported));
+                let mut changed = delivery.clone();
+                changed.payload["result"]["revisionId"] = json!("conflicting-write");
+                assert!(
+                    process_command(&mut reopened, &store, &config, &mut executor, &changed)
+                        .unwrap_err()
+                        .to_string()
+                        .contains("different command data")
+                );
+                assert_eq!(executor.deliveries, before + usize::from(supported));
+                let mut ordinary = command("session.open");
+                ordinary.command_id = "ordinary-effect".into();
+                ordinary.controller_seq = 2;
+                reopened.begin_command(&ordinary).unwrap();
+                store.save(&reopened).unwrap();
+                let (mut after_crash, _) = store.load_or_create(&config).unwrap();
+                assert_eq!(
+                    process_command(&mut after_crash, &store, &config, &mut executor, &ordinary)
+                        .unwrap()
+                        .0
+                        .status,
+                    "indeterminate"
+                );
+                assert_eq!(executor.deliveries, before + usize::from(supported));
+                fs::remove_dir_all(directory).unwrap();
+            }
         }
     }
 

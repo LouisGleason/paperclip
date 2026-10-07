@@ -33,7 +33,7 @@ const MAX_RECOVERY_SEMANTIC_RESULT_DEPTH = 128;
 export class HarnessDriverBackend implements NativeSessionBackend {
   readonly #driver: HarnessDriver;
 
-  constructor(driver: HarnessDriver) {
+  constructor(driver: HarnessDriver, readonly preparedTaskConstraints?: readonly string[]) {
     this.#driver = driver;
   }
 
@@ -73,7 +73,7 @@ export class HarnessDriverBackend implements NativeSessionBackend {
         .catch(() => undefined);
       throw error;
     }
-    return new HarnessNativeSession(input, session);
+    return new HarnessNativeSession(input, session, undefined, (await this.#driver.descriptor()).capabilities.steering);
   }
 
   async recoverSession(
@@ -183,6 +183,7 @@ export class HarnessDriverBackend implements NativeSessionBackend {
         { identity: snapshot.identity },
         recovered.session,
         recoveredTerminal,
+        (await this.#driver.descriptor()).capabilities.steering,
       ),
     };
   }
@@ -430,11 +431,15 @@ class HarnessNativeSession implements NativeSession {
     }
   }
 
+  readonly #steeringSupported: boolean;
+
   constructor(
     input: OpenNativeSessionInput,
     session: HarnessSession,
     terminal?: PrpTerminalState | null,
+    steeringSupported = false,
   ) {
+    this.#steeringSupported = steeringSupported;
     this.#input = structuredClone(input);
     this.#session = session;
     this.#terminal = terminal === undefined ? null : structuredClone(terminal);
@@ -445,10 +450,12 @@ class HarnessNativeSession implements NativeSession {
   }
 
   async capabilities() {
+    const negotiated = this.#session.turnControlCapabilities?.();
     return {
       resume: true,
       typedEvents: true,
-      steering: this.#session.steer !== undefined,
+      steering: (negotiated?.steering ?? this.#steeringSupported) && this.#session.steer !== undefined,
+      queuedFollowUp: negotiated?.queuedFollowUp === true && this.#session.steer !== undefined,
       interruption: this.#session.interrupt !== undefined,
       structuredResult: true,
       read: this.#session.read !== undefined,
@@ -504,10 +511,42 @@ class HarnessNativeSession implements NativeSession {
     let streamFailure: unknown = null;
     const observedPendingInputs = new Map<string, Record<string, unknown>>();
     try {
-      for await (const event of this.#session.events()) {
+      for await (const providerEvent of this.#session.events()) {
+        // Stop may win publication after the provider result already settled.
+        // Preserve that terminal proof, with the operator's cancelled disposition.
+        let event = providerEvent;
+        if (this.#explicitlyCancelled && providerEvent.eventType === "turn.completed") {
+          event = {
+            ...providerEvent,
+            eventType: "turn.cancelled",
+            payload: {
+              ...providerEvent.payload,
+              status: "cancelled",
+              providerTerminalState: "completed",
+              reason: "cancelled_after_provider_completed",
+            },
+          };
+        } else if (this.#explicitlyCancelled && providerEvent.eventType === "run.terminal"
+          && providerEvent.payload.runTerminalState === "succeeded") {
+          event = {
+            ...providerEvent,
+            payload: {
+              ...providerEvent.payload,
+              turnTerminalState: "cancelled",
+              runTerminalState: "cancelled",
+              reportedWorkDisposition: "yielded",
+            },
+          };
+        }
         const isCancellationEvent =
           event.eventType === "turn.cancelled" ||
           event.eventType === "turn.interrupted" ||
+          // Failure is an authoritative terminal fact, not accepted output.
+          // Dropping it after Stop leaves the controller waiting until timeout.
+          event.eventType === "turn.failed" ||
+          event.eventType === "runtime_request.cancelled" ||
+          event.eventType === "runtime_request.expired" ||
+          (event.eventType === "run.terminal" && ["failed", "cancelled"].includes(String(event.payload.runTerminalState))) ||
           (event.eventType === "item.completed" &&
             event.payload.kind === "interrupt_acknowledgement");
         if (this.#explicitlyCancelled && !isCancellationEvent) continue;
@@ -662,6 +701,11 @@ class HarnessNativeSession implements NativeSession {
 
   async startTurn(input: Parameters<HarnessSession["startTurn"]>[0]) {
     this.#assertProtocolIntegrity();
+    // Stop can arrive after session publication but before the first turn.
+    // The provider has no active turn to interrupt yet. Do not launch work
+    // whose events cancellation would suppress and leave the owner waiting.
+    if (this.#explicitlyCancelled) throw new Error("native_session_cancelled");
+    this.#terminal = null;
     try {
       const started = await this.#session.startTurn(input);
       this.#assertProtocolIntegrity();
@@ -673,13 +717,15 @@ class HarnessNativeSession implements NativeSession {
   }
 
   steer(input: {
+    mode?: "steer" | "follow_up";
     turnId: string;
     message: { role: "user"; text: string };
     correlationId?: string;
   }) {
     this.#assertProtocolIntegrity();
-    if (this.#session.steer === undefined)
-      throw new Error("steering is unavailable");
+    const negotiated = this.#session.turnControlCapabilities?.();
+    const supported = input.mode === "follow_up" ? negotiated?.queuedFollowUp === true : (negotiated?.steering ?? this.#steeringSupported);
+    if (!supported || this.#session.steer === undefined) throw new Error("steering or queued follow-up is unavailable");
     return this.#withProtocolIntegrity(() => this.#session.steer!(input));
   }
 
