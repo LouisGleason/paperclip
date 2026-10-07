@@ -48,7 +48,7 @@ import {
 } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { NativeSelect, selectTriggerClassName } from "@/components/ui/select";
+import { NativeSelect, SelectPopover, SelectPopoverItem } from "@/components/ui/select";
 import { AdapterMark } from "./AdapterMark";
 import { FolderOpen, Heart, ChevronDown, X, Copy, Check, ExternalLink, Loader2, TriangleAlert, Bug } from "lucide-react";
 import { asBoolean, asFiniteNumber, asObject, cn } from "../lib/utils";
@@ -1505,6 +1505,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
             </Field>
             <Field label="Reports to" hint={help.reportsTo}>
               <ReportsToPicker
+                compact={false}
                 agents={companyAgents}
                 value={eff("identity", "reportsTo", props.agent.reportsTo ?? null)}
                 onChange={(id) => mark("identity", "reportsTo", id)}
@@ -1578,25 +1579,21 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
           <div className={cn(cards ? "border border-border rounded-lg p-4 space-y-3" : "px-4 pb-3 space-y-3")}>
             <Field label="Environment override">
               <div className="space-y-2">
-                <select
-                  className={inputClass}
+                <SelectPopover
+                  aria-label="Environment override"
                   value={currentDefaultEnvironmentId}
-                  onChange={(event) => {
-                    const nextValue = event.target.value;
+                  onValueChange={(nextValue) => {
                     if (isCreate) {
                       set!({ defaultEnvironmentId: nextValue });
                       return;
                     }
                     mark("identity", "defaultEnvironmentId", nextValue || null);
                   }}
-                >
-                  <option value="">Default: {inheritedEnvironmentLabel}</option>
-                  {environmentOptions.map((environment) => (
-                    <option key={environment.id} value={environment.id}>
-                      {environmentDisplayLabel(environment)}
-                    </option>
-                  ))}
-                </select>
+                  options={[
+                    { value: "", label: `Default: ${inheritedEnvironmentLabel}` },
+                    ...environmentOptions.map(environment => ({ value: environment.id, label: environmentDisplayLabel(environment) })),
+                  ]}
+                />
               </div>
             </Field>
           </div>
@@ -1636,25 +1633,40 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
 
           <details className="space-y-3">
             <summary className="cursor-pointer text-sm text-muted-foreground">Advanced</summary>
-            {paperclipRunnerProfileForHarness(modelHarness) && <Field label="Runner"><select aria-label="Runner" className={inputClass} value={isCreate ? props.values.runner ?? (props.values.adapterType === "paperclip_runner" ? "paperclip" : "auto") : agentRunner(adapterType)} onChange={event => {
-              try {
-              const selectedRunner = event.target.value as "auto" | "paperclip" | "legacy";
-              const resolved = resolveAgentRunnerConfig({ adapterType, adapterConfig: isCreate ? getUIAdapter(adapterType).buildAdapterConfig(props.values) : { ...config, ...overlay.adapterConfig }, runner: selectedRunner });
-              setRunnerSelectionError(null);
-              if (isCreate) set!({ runner: selectedRunner, adapterType: resolved.adapterType, model: String(resolved.adapterConfig.model ?? ""), adapterSchemaValues: resolved.adapterConfig });
-              else setOverlay(prev => ({ ...prev, adapterType: resolved.adapterType, adapterConfig: resolved.adapterConfig }));
-              } catch (error) { setRunnerSelectionError(error instanceof Error ? error.message : "Could not change runner"); }
-            }}>
-              {isCreate && <option value="auto">Automatic (default)</option>}
-              <option value="paperclip">Paperclip Runner{runnerAdapters?.find(a => a.type === modelHarness)?.defaultRunner !== "legacy" ? " (default)" : ""}</option><option value="legacy">Legacy runner</option>
-            </select></Field>}
-            {showAdapterTypeField && !adapterPickerDisabledTypes.has("paperclip_runner") && <Field label="Managed harness" hint="Requires a qualified organization profile.">
-              <select className={inputClass} value={["claude_managed", "aws_agentcore"].includes(modelHarness) ? modelHarness : ""} onChange={event => { if (event.target.value) selectHarness(event.target.value); }}>
-                <option value="">Choose a managed harness…</option>
-                <option value="claude_managed">Claude Managed</option>
-                <option value="aws_agentcore">AWS AgentCore</option>
-              </select>
-            </Field>}
+            {paperclipRunnerProfileForHarness(modelHarness) && (
+              <Field label="Runner">
+                <SelectPopover aria-label="Runner"
+                  value={isCreate ? props.values.runner ?? (props.values.adapterType === "paperclip_runner" ? "paperclip" : "auto") : agentRunner(adapterType)}
+                  onValueChange={(value) => {
+                    try {
+                      const selectedRunner = value as "auto" | "paperclip" | "legacy";
+                      const resolved = resolveAgentRunnerConfig({ adapterType, adapterConfig: isCreate ? getUIAdapter(adapterType).buildAdapterConfig(props.values) : { ...config, ...overlay.adapterConfig }, runner: selectedRunner });
+                      setRunnerSelectionError(null);
+                      if (isCreate) set!({ runner: selectedRunner, adapterType: resolved.adapterType, model: String(resolved.adapterConfig.model ?? ""), adapterSchemaValues: resolved.adapterConfig });
+                      else setOverlay(prev => ({ ...prev, adapterType: resolved.adapterType, adapterConfig: resolved.adapterConfig }));
+                    } catch (error) { setRunnerSelectionError(error instanceof Error ? error.message : "Could not change runner"); }
+                  }}
+                  options={[
+                    ...(isCreate ? [{ value: "auto", label: "Automatic (default)" }] : []),
+                    { value: "paperclip", label: `Paperclip Runner${runnerAdapters?.find(a => a.type === modelHarness)?.defaultRunner !== "legacy" ? " (default)" : ""}` },
+                    { value: "legacy", label: "Legacy runner" },
+                  ]}
+                />
+              </Field>
+            )}
+            {showAdapterTypeField && !adapterPickerDisabledTypes.has("paperclip_runner") && (
+              <Field label="Managed harness" hint="Requires a qualified organization profile.">
+                <SelectPopover aria-label="Managed harness"
+                  value={["claude_managed", "aws_agentcore"].includes(modelHarness) ? modelHarness : ""}
+                  onValueChange={value => { if (value) selectHarness(value); }}
+                  options={[
+                    { value: "", label: "Choose a managed harness…" },
+                    { value: "claude_managed", label: "Claude Managed" },
+                    { value: "aws_agentcore", label: "AWS AgentCore" },
+                  ]}
+                />
+              </Field>
+            )}
           </details>
 
           {runnerSelectionError && <p role="alert" className="text-sm text-destructive">{runnerSelectionError}</p>}
@@ -3668,58 +3680,24 @@ export function AdapterTypeDropdown({
   );
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <button
-          type="button"
-          aria-label="Harness"
-          data-size="default"
-          className={cn(selectTriggerClassName, "w-full")}
-        >
-          <span className="inline-flex min-w-0 items-center gap-1.5">
-            <span aria-hidden="true" className="inline-flex shrink-0">
-              <AdapterMark type={value} className="size-4" />
-            </span>
-            <span className="truncate">{adapterLabels[value] ?? getAdapterLabel(value)}</span>
-            {selectedDisplay.experimental && <ExperimentalBadge />}
-          </span>
-          <ChevronDown className="size-4 opacity-50" />
-        </button>
-      </PopoverTrigger>
-      <PopoverContent className="w-(--radix-popover-trigger-width) p-1" align="start">
-        {adapterList.map((item) => (
-          <button
-            key={item.value}
-            type="button"
-            disabled={item.comingSoon}
-            className={cn(
-              "flex items-center justify-between w-full px-2 py-1.5 text-sm rounded",
-              item.comingSoon
-                ? "opacity-40 cursor-not-allowed"
-                : "hover:bg-accent/50",
-              item.value === value && !item.comingSoon && "bg-accent",
-            )}
-            onClick={() => {
-              if (!item.comingSoon) {
-                onChange(item.value);
-                setOpen(false);
-              }
-            }}
-          >
-            <span className="inline-flex items-center gap-1.5">
-              <span aria-hidden="true" className="inline-flex shrink-0">
-                <AdapterMark type={item.value} className="size-4" />
-              </span>
-              <span>{item.label}</span>
-              {item.experimental && <ExperimentalBadge />}
-            </span>
-            {item.comingSoon && (
-              <span className="text-(length:--text-nano) text-muted-foreground">Coming soon</span>
-            )}
-          </button>
-        ))}
-      </PopoverContent>
-    </Popover>
+    <SelectPopover aria-label="Harness" value={value} open={open} onOpenChange={setOpen}
+      onValueChange={onChange}
+      displayValue={<span className="inline-flex min-w-0 items-center gap-1.5">
+        <AdapterMark type={value} className="size-4 shrink-0" />
+        <span className="truncate">{adapterLabels[value] ?? getAdapterLabel(value)}</span>
+        {selectedDisplay.experimental && <ExperimentalBadge />}
+      </span>}
+      options={adapterList.map(item => ({
+        value: item.value,
+        disabled: item.comingSoon,
+        label: <span className="inline-flex items-center gap-1.5">
+          <AdapterMark type={item.value} className="size-4 shrink-0" />
+          <span>{item.label}</span>
+          {item.experimental && <ExperimentalBadge />}
+        </span>,
+        suffix: item.comingSoon ? <span className="text-(length:--text-nano) text-muted-foreground">Coming soon</span> : undefined,
+      }))}
+    />
   );
 }
 
@@ -3888,31 +3866,17 @@ export function ModelDropdown({
 
   return (
     <Field label="Model" hint={help.model}>
-      <Popover
-        open={open}
+      <SelectPopover aria-label="Model" value={value} open={open}
         onOpenChange={(nextOpen) => {
           onOpenChange(nextOpen);
           if (!nextOpen) setModelSearch("");
         }}
+        displayValue={selected ? selected.label : value
+          || (allowDefault ? (defaultLabel ?? "Default") : required ? "Select model (required)" : "Select model")}
       >
-        <PopoverTrigger asChild>
-          <button
-            type="button"
-            data-size="default"
-            className={cn(selectTriggerClassName, "w-full")}
-          >
-            <span className={cn("truncate", !value && "text-muted-foreground")}>
-              {selected
-                ? selected.label
-                : value
-                  || (allowDefault ? (defaultLabel ?? "Default") : required ? "Select model (required)" : "Select model")}
-            </span>
-            <ChevronDown className="size-4 opacity-50" />
-          </button>
-        </PopoverTrigger>
-        <PopoverContent className="w-(--radix-popover-trigger-width) p-1" align="start">
           <div className="relative mb-1">
             <input
+              aria-label="Search models"
               className="w-full px-2 py-1.5 pr-6 text-xs bg-transparent outline-none border-b border-border placeholder:text-muted-foreground/50"
               placeholder={creatable ? "Search models... (type to create)" : "Search models..."}
               value={modelSearch}
@@ -3933,7 +3897,7 @@ export function ModelDropdown({
             )}
           </div>
           {onDetectModel && !modelSearch.trim() && (
-            <button
+            <SelectPopoverItem
               type="button"
               className="flex items-center gap-1.5 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50 text-muted-foreground"
               onClick={() => {
@@ -3946,10 +3910,10 @@ export function ModelDropdown({
                 <path d="M3 3v5h5" />
               </svg>
               {detectingModel ? "Detecting..." : detectedModel ? (detectModelLabel?.replace(/^Detect\b/, "Re-detect") ?? "Re-detect from config") : (detectModelLabel ?? "Detect from config")}
-            </button>
+            </SelectPopoverItem>
           )}
           {onRefreshModels && !modelSearch.trim() && (
-            <button
+            <SelectPopoverItem
               type="button"
               className="flex items-center gap-1.5 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50 text-muted-foreground"
               onClick={() => {
@@ -3964,10 +3928,11 @@ export function ModelDropdown({
                 <path d="M8 16H3v5" />
               </svg>
               {refreshingModels ? "Refreshing..." : "Refresh models"}
-            </button>
+            </SelectPopoverItem>
           )}
           {value && (!models.some((m) => m.id === value) || promotedModelIds.has(value)) && (
-            <button
+            <SelectPopoverItem
+              selected
               type="button"
               className={cn(
                 "flex items-center w-full px-2 py-1.5 text-sm rounded bg-accent/50",
@@ -3982,10 +3947,10 @@ export function ModelDropdown({
               <Badge variant="outline" className="ml-auto text-(length:--text-nano) px-1.5 bg-green-500/15 text-green-400 border-green-500/20">
                 current
               </Badge>
-            </button>
+            </SelectPopoverItem>
           )}
           {detectedModel && detectedModel !== value && (
-            <button
+            <SelectPopoverItem
               type="button"
               className={cn(
                 "flex items-center w-full px-2 py-1.5 text-sm rounded hover:bg-accent/50",
@@ -4001,14 +3966,14 @@ export function ModelDropdown({
               <Badge variant="outline" className="ml-auto text-(length:--text-nano) px-1.5 bg-blue-500/15 text-blue-400 border-blue-500/20">
                 detected
               </Badge>
-            </button>
+            </SelectPopoverItem>
           )}
           {detectedModelCandidates
             ?.filter((candidate) => candidate && candidate !== detectedModel && candidate !== value)
             .map((candidate) => {
               const entry = models.find((m) => m.id === candidate);
               return (
-                <button
+                <SelectPopoverItem
                   key={`detected-${candidate}`}
                   type="button"
                   className={cn(
@@ -4025,12 +3990,13 @@ export function ModelDropdown({
                   <Badge variant="outline" className="ml-auto text-(length:--text-nano) px-1.5 bg-sky-500/15 text-sky-400 border-sky-500/20">
                     config
                   </Badge>
-                </button>
+                </SelectPopoverItem>
               );
             })}
           <div className="max-h-(--sz-240px) overflow-y-auto">
             {allowDefault && (
-              <button
+              <SelectPopoverItem
+                selected={!value}
                 type="button"
                 className={cn(
                   "flex items-center gap-2 w-full px-2 py-1.5 text-sm rounded hover:bg-accent/50",
@@ -4042,10 +4008,10 @@ export function ModelDropdown({
                 }}
               >
                 Default
-              </button>
+              </SelectPopoverItem>
             )}
             {canCreateManualModel && (
-              <button
+              <SelectPopoverItem
                 type="button"
                 className="flex items-center justify-between gap-2 w-full px-2 py-1.5 text-sm rounded hover:bg-accent/50"
                 onClick={() => {
@@ -4056,7 +4022,7 @@ export function ModelDropdown({
               >
                 <span>Use manual model</span>
                 <span className="text-xs font-mono text-muted-foreground">{manualModel}</span>
-              </button>
+              </SelectPopoverItem>
             )}
             {groupedModels.map((group) => (
               <div key={group.provider} className="mb-1 last:mb-0">
@@ -4066,7 +4032,8 @@ export function ModelDropdown({
                   </div>
                 )}
                 {group.entries.map((m) => (
-                  <button
+                  <SelectPopoverItem
+                    selected={m.id === value}
                     type="button"
                     key={m.id}
                     className={cn(
@@ -4081,7 +4048,7 @@ export function ModelDropdown({
                     <span className="block w-full text-left truncate" title={m.id}>
                       {groupByProvider ? extractModelName(m.id) : m.label}
                     </span>
-                  </button>
+                  </SelectPopoverItem>
                 ))}
               </div>
             ))}
@@ -4095,8 +4062,7 @@ export function ModelDropdown({
               </div>
             )}
           </div>
-        </PopoverContent>
-      </Popover>
+      </SelectPopover>
     </Field>
   );
 }
@@ -4114,36 +4080,12 @@ function ThinkingEffortDropdown({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const selected = options.find((option) => option.id === value) ?? options[0];
-
   return (
     <Field label="Thinking effort" hint={help.thinkingEffort}>
-      <Popover open={open} onOpenChange={onOpenChange}>
-        <PopoverTrigger asChild>
-          <button className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-sm hover:bg-accent/50 transition-colors w-full justify-between">
-            <span className={cn(!value && "text-muted-foreground")}>{selected?.label ?? "Auto"}</span>
-            <ChevronDown className="h-3 w-3 text-muted-foreground" />
-          </button>
-        </PopoverTrigger>
-        <PopoverContent className="w-(--radix-popover-trigger-width) p-1" align="start">
-          {options.map((option) => (
-            <button
-              key={option.id || "auto"}
-              className={cn(
-                "flex items-center justify-between w-full px-2 py-1.5 text-sm rounded hover:bg-accent/50",
-                option.id === value && "bg-accent",
-              )}
-              onClick={() => {
-                onChange(option.id);
-                onOpenChange(false);
-              }}
-            >
-              <span>{option.label}</span>
-              {option.id ? <span className="text-xs text-muted-foreground font-mono">{option.id}</span> : null}
-            </button>
-          ))}
-        </PopoverContent>
-      </Popover>
+      <SelectPopover aria-label="Thinking effort" value={value}
+        open={open} onOpenChange={onOpenChange} onValueChange={onChange}
+        options={options.map(option => ({ value: option.id, label: option.label, suffix: option.id ? <span className="text-xs text-muted-foreground font-mono">{option.id}</span> : undefined }))}
+      />
     </Field>
   );
 }

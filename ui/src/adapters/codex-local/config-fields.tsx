@@ -1,4 +1,4 @@
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../components/ui/select";
+import { SelectPopover } from "../../components/ui/select";
 import { AdapterMark } from "../../components/AdapterMark";
 import { configFieldsForSection } from "../config-sections";
 import type { AdapterConfigFieldsProps } from "../types";
@@ -173,14 +173,13 @@ export function CodexLocalConfigFields({
           label="Execution engine"
           hint="Default uses ACP. If ACP is unavailable, the run fails with a setup error. Choose CLI explicitly to use it."
         >
-          <select
-            className={inputClass}
+          <SelectPopover aria-label="Execution engine"
             value={engine}
-            onChange={(e) => {
+            onValueChange={(selection) => {
               const value =
-                e.target.value === "acp"
+                selection === "acp"
                   ? "acp"
-                  : e.target.value === "cli"
+                  : selection === "cli"
                     ? "cli"
                     : "auto";
               isCreate
@@ -191,25 +190,27 @@ export function CodexLocalConfigFields({
                     value === "auto" ? undefined : value,
                   );
             }}
-          >
-            <option value="auto">Default (ACP)</option>
-            <option value="cli">Codex CLI</option>
-            <option value="acp">ACP</option>
-          </select>
+           options={[
+             { value: "auto", label: "Default (ACP)" },
+             { value: "cli", label: "Codex CLI" },
+             { value: "acp", label: "ACP" },
+           ]}
+         />
         </Field>
       )}
       {runnerManaged && runnerProvider === "acpx" && runnerSchemaValue("acpxAgent", "claude") === "cursor" && (
         <Field configSection="adapter" label="Cursor mode" hint="Select Cursor's session mode. Permissions and company approval rules still apply.">
-          <select className={inputClass} aria-label="Cursor mode"
+          <SelectPopover aria-label="Cursor mode"
             value={String(runnerSchemaValue("acpxSessionMode", "agent"))}
-            onChange={(event) => updateRunnerSchemaValue("acpxSessionMode", event.target.value)}>
-            {!["agent", "plan", "ask"].includes(String(runnerSchemaValue("acpxSessionMode", "agent"))) && (
-              <option value={String(runnerSchemaValue("acpxSessionMode", "agent"))} disabled>Unsupported saved mode — select Agent, Plan, or Ask</option>
-            )}
-            <option value="agent">Agent</option>
-            <option value="plan">Plan</option>
-            <option value="ask">Ask</option>
-          </select>
+            onValueChange={value => updateRunnerSchemaValue("acpxSessionMode", value)}
+            options={[
+              ...(!["agent", "plan", "ask"].includes(String(runnerSchemaValue("acpxSessionMode", "agent")))
+                ? [{ value: String(runnerSchemaValue("acpxSessionMode", "agent")), label: "Unsupported saved mode — select Agent, Plan, or Ask", disabled: true }] : []),
+              { value: "agent", label: "Agent" },
+              { value: "plan", label: "Plan" },
+              { value: "ask", label: "Ask" },
+            ]}
+          />
         </Field>
       )}
       {runnerManaged && runnerProvider === "claude_managed" && (
@@ -351,7 +352,7 @@ export function CodexLocalConfigFields({
           label="Permission mode"
           hint={`${runnerPermissionCapability.description} The selected mode does not widen Paperclip's workspace, network, credential, or planning boundaries.`}
         >
-          <Select
+          <SelectPopover aria-label="Permission mode" className="font-sans"
             value={
               runnerPermissionModeUnsupported
                 ? "__unsupported__"
@@ -377,27 +378,11 @@ export function CodexLocalConfigFields({
                 );
               }
             }}
-          >
-            <SelectTrigger aria-label="Permission mode" className="w-full font-sans">
-              <SelectValue>
-                {runnerPermissionModeUnsupported
-                  ? "Unsupported saved mode — select a qualified mode"
-                  : runnerPermissionCapability.options.find((option) => option.value === runnerPermissionMode)?.label}
-              </SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              {runnerPermissionModeUnsupported && (
-                <SelectItem value="__unsupported__" disabled>
-                  Unsupported saved mode — select a qualified mode
-                </SelectItem>
-              )}
-              {runnerPermissionCapability.options.map((option) => (
-                <SelectItem key={option.value} value={option.value}>
-                  {option.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+            options={[
+              ...(runnerPermissionModeUnsupported ? [{ value: "__unsupported__", label: "Unsupported saved mode — select a qualified mode", disabled: true }] : []),
+              ...runnerPermissionCapability.options,
+            ]}
+          />
           {runnerPermissionModeUnsupported && runnerProvider === "codex" && (
             <p className="mt-1 text-xs text-destructive" role="alert">
               This saved Codex mode cannot start or recover a Paperclip Runner
@@ -411,19 +396,19 @@ export function CodexLocalConfigFields({
           label="Runner lifecycle"
           hint="Turn by turn suspends after each run. Warm keeps the same provider process available between governed runs."
         >
-          <select
-            className={inputClass}
+          <SelectPopover aria-label="Runner lifecycle"
             value={runnerLifecycleMode}
-            onChange={(event) => {
-              const value = event.target.value === "warm" ? "warm" : "per_turn";
+            onValueChange={(selection) => {
+              const value = selection === "warm" ? "warm" : "per_turn";
               isCreate
                 ? set!({ paperclipRunnerLifecycleMode: value })
                 : mark("adapterConfig", "lifecycleMode", value);
             }}
-          >
-            <option value="per_turn">Turn by turn</option>
-            <option value="warm">Warm session</option>
-          </select>
+           options={[
+             { value: "per_turn", label: "Turn by turn" },
+             { value: "warm", label: "Warm session" },
+           ]}
+         />
         </Field>
       )}
       {runnerManaged && runnerLifecycleMode === "warm" && (
@@ -497,8 +482,7 @@ export function CodexLocalConfigFields({
             label="ACP session mode"
             hint="Persistent keeps ACP session state between runs. One-shot starts fresh each run."
           >
-            <select
-              className={inputClass}
+            <SelectPopover aria-label="ACP session mode"
               value={
                 isCreate
                   ? (values!.codexAcpMode ?? "persistent")
@@ -508,24 +492,24 @@ export function CodexLocalConfigFields({
                       String(config.mode ?? "persistent"),
                     )
               }
-              onChange={(e) => {
+              onValueChange={(selection) => {
                 const value =
-                  e.target.value === "oneshot" ? "oneshot" : "persistent";
+                  selection === "oneshot" ? "oneshot" : "persistent";
                 isCreate
                   ? set!({ codexAcpMode: value })
                   : mark("adapterConfig", "mode", value);
               }}
-            >
-              <option value="persistent">Persistent</option>
-              <option value="oneshot">One-shot</option>
-            </select>
+             options={[
+               { value: "persistent", label: "Persistent" },
+               { value: "oneshot", label: "One-shot" },
+             ]}
+           />
           </Field>
           <Field
             label="ACP non-interactive permissions"
             hint="Fallback if the ACP agent asks for input outside an interactive session."
           >
-            <select
-              className={inputClass}
+            <SelectPopover aria-label="ACP non-interactive permissions"
               value={
                 isCreate
                   ? (values!.codexAcpNonInteractivePermissions ?? "deny")
@@ -535,16 +519,17 @@ export function CodexLocalConfigFields({
                       String(config.nonInteractivePermissions ?? "deny"),
                     )
               }
-              onChange={(e) => {
-                const value = e.target.value === "fail" ? "fail" : "deny";
+              onValueChange={(selection) => {
+                const value = selection === "fail" ? "fail" : "deny";
                 isCreate
                   ? set!({ codexAcpNonInteractivePermissions: value })
                   : mark("adapterConfig", "nonInteractivePermissions", value);
               }}
-            >
-              <option value="deny">Deny</option>
-              <option value="fail">Fail</option>
-            </select>
+             options={[
+               { value: "deny", label: "Deny" },
+               { value: "fail", label: "Fail" },
+             ]}
+           />
           </Field>
           {!managedSandboxOnly && (
             <Field

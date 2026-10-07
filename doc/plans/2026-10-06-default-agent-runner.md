@@ -15,7 +15,7 @@ One owner carries implementation, verification and relevant review fixes through
 - Preview: http://127.0.0.1:3104/RUN/agents
 - Evidence task: http://127.0.0.1:3104/RUN/issues/RUN-2
 - Test-drive: the production source includes security fix `204740b27`; `/api/health` exposes the running checkout commit. The final handoff records the tested PR head.
-- Next action: confirm the final browser-fixture commit in CI, finish remaining local verification, and obtain the missing credentials/managed target for the unresolved live matrix below.
+- Next action: confirm CI and Greptile on the dropdown correction, then hand off the updated PR. The missing credentials and managed target still block the remaining provider acceptance matrix.
 
 ## Implemented
 
@@ -28,9 +28,19 @@ Live testing and regression review fixed historical-adapter SQL projection, buil
 - Workspace typecheck, production build, Storybook build and token gates passed after the functional review fixes. Server typecheck passed after the credential-routing guard fix.
 - Focused review regressions: 422 passed, then 66 passed after correcting the AgentCore test's step label. Credential inheritance, connection pools and permission suites: 183 passed after the security fix. Session/revision tests: 9 passed. Pinned Grok setup probes: 6 passed.
 - Complete local UI suite: 7,688 passed. Shared: 874 passed; skills catalog: 20 passed. CLI: 517 passed and one database-fixture failure, then its complete worktree suite passed 63 tests using canonical temporary paths.
-- The full local server run and source-only workspace follow-up are still running. Local failures so far include two accounting timeouts (31 tests passed in isolation), cold route-import timeouts and embedded PostgreSQL startup failures. A run that overlapped the security edit also loaded four stale permission expectations; the corrected credential/pool/permission suites subsequently passed all 183 tests. These failures are not represented as a green full local invocation.
-- CI on `204740b27`: every typecheck, build, general test, serialized server, runner, Docker, and canary job passed. One browser shard failed because its inbox-retry fixture navigated away before the wakeup request reached the server. The fixture now waits for the app's navigation; the focused real browser test passed locally (1 test, 34.8 seconds). Final current-head CI is pending.
-- Greptile reviewed `204740b27` at 5/5, with no actionable findings. The security scanner acknowledged the credential-routing fix and passed. All six review/security threads are resolved. Final head confirmation is pending.
+- The full local server invocation was stopped after embedded PostgreSQL exhausted the Mac's 32 System V shared-memory slots. The source-only workspace run passed 3,489 tests, with five database-startup failures. Accounting passed all 31 tests in isolation, cold route imports passed 49 tests with a larger local startup allowance, and the corrected credential/pool/permission suites passed all 183 tests. These results do not establish a green full local invocation.
+- CI on `204740b27`: every typecheck, build, general test, serialized server, runner, Docker, and canary job passed. One browser shard failed because its inbox-retry fixture navigated away before the wakeup request reached the server. The fixture now waits for the app's navigation; the focused real browser test passed locally (1 test, 34.8 seconds). CI on `bd0f1809d` passed all 53 successful checks, with two intentionally skipped checks and Snyk success. The new dropdown correction requires a fresh CI run.
+- Greptile reviewed `204740b27` at 5/5, with no actionable findings. The security scanner acknowledged the credential-routing fix and passed. All six review/security threads are resolved. The `bd0f1809d` review was confirmed at 5/5. The dropdown correction requires a fresh review.
+
+## Dropdown correction (2026-10-07)
+
+The dark-mode Runner menu used native HTML options with unreadable text on the browser's light popup. Extracted the existing harness picker into the shared `SelectPopover` surface and reused its trigger and menu for Runner, Managed harness, Model, Thinking effort, environment, manager, secret requirement, schema-driven choices, and adapter-specific runtime choices. Searchable model entry and legacy settings remain available. Added an existing legacy-agent editing story and keyboard-selection/dismissal coverage.
+
+- Complete UI suite: 7,690 passed across 693 files. Targeted dropdown/configuration suites: 158 passed.
+- Workspace typecheck, production build, Storybook build, and token gates passed. The tsx preflight required the normal sandbox exception for its local IPC socket.
+- Real test-drive: opened the Runner and Managed harness menus in dark mode; verified selected legacy state, readable options, keyboard movement and Escape; searched and selected a model, then discarded the test draft. Checked the runner menu at 390px width and restored the normal viewport. API readback retained `grok_local` and `grok-4.7`.
+- [Dark menu evidence](http://127.0.0.1:3104/api/attachments/0a5e7872-508e-4edb-be09-c91973d013a7/content) — work product `a7ba4c67-4bbb-48fb-ad2d-22b1d323b351`.
+- [Mobile menu evidence](http://127.0.0.1:3104/api/attachments/ec5a31b8-2e12-41e1-82c5-ef5f396b66ba/content) — work product `044cfc23-1d26-41f7-9cb6-184bdc79ce45`.
 
 ## Observed live acceptance
 

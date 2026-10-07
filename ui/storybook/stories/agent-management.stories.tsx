@@ -931,3 +931,17 @@ export const NativeRunnerDefault: Story = {
 export const ExplicitLegacyRunner: Story = {
   render: () => <StorybookQueryFixtures><AgentConfigFormStory runner="legacy" /></StorybookQueryFixtures>,
 };
+
+function ExistingLegacyRunnerStory() {
+  const [agent, setAgent] = useState(agentManagementAgents[0]!);
+  return <StorybookQueryFixtures>
+    <AgentConfigForm mode="edit" agent={agent} sectionLayout="cards" showAdapterTypeField
+      showAdapterTestEnvironmentButton={false}
+      onSave={patch => setAgent(current => ({ ...current, ...patch } as Agent))} />
+  </StorybookQueryFixtures>;
+}
+
+export const ExistingLegacyRunner: Story = {
+  parameters: { docs: { description: { story: "An existing Codex agent keeps its legacy runner and custom CLI settings. Harness, Runner, Managed harness, Model, Thinking effort, and advanced runtime choices share the production dropdown surface." } } },
+  render: () => <ExistingLegacyRunnerStory />,
+};

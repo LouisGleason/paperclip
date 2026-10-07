@@ -601,15 +601,20 @@ async function renderStatefulCreateClaudeSandbox(environments: Environment[]) {
   return { container, root, valuesRef };
 }
 
+async function openPicker(container: HTMLElement, label: string) {
+  const trigger = container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
+  expect(trigger).toBeTruthy();
+  await act(async () => trigger!.click());
+  await flushReact();
+  return document.body.querySelector<HTMLElement>(`[role="listbox"][aria-label="${label}"]`)!;
+}
+
 async function selectEnvironment(container: HTMLElement, environmentId: string) {
-  const select = container.querySelector("select");
-  await act(async () => {
-    if (select) {
-      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set;
-      setter?.call(select, environmentId);
-      select.dispatchEvent(new Event("change", { bubbles: true }));
-    }
-  });
+  const menu = await openPicker(container, "Environment override");
+  const option = [...menu.querySelectorAll<HTMLButtonElement>('[role="option"]')]
+    .find(item => item.dataset.value === environmentId);
+  expect(option).toBeTruthy();
+  await act(async () => option!.click());
   await flushReact();
 }
 
@@ -806,8 +811,8 @@ describe("AgentConfigForm environment selector", () => {
       }, { showAdapterTypeField: true });
       roots.push(result.root);
       if (provider === "claude_managed") {
-        const select = result.container.querySelector<HTMLSelectElement>('select:has(option[value="claude_managed"])')!;
-        await act(async () => { select.value = provider; select.dispatchEvent(new Event("change", { bubbles: true })); });
+        const menu = await openPicker(result.container, "Managed harness");
+        await act(async () => menu.querySelector<HTMLButtonElement>('[data-value="claude_managed"]')!.click());
       } else {
       await act(async () => {
         result.container.querySelector<HTMLButtonElement>('[aria-label="Harness"]')!
@@ -982,7 +987,7 @@ describe("AgentConfigForm environment selector", () => {
     roots.push(result.root);
 
     const text = result.container.textContent ?? "";
-    const selector = result.container.querySelector("select");
+    const selector = await openPicker(result.container, "Environment override");
 
     expect(text).toContain("Environment");
     expect(text).toContain("Environment override");
@@ -1009,7 +1014,7 @@ describe("AgentConfigForm environment selector", () => {
     roots.push(result.root);
 
     const text = result.container.textContent ?? "";
-    const selector = result.container.querySelector("select");
+    const selector = await openPicker(result.container, "Environment override");
 
     expect(text).toContain("Environment override");
     expect(selector?.textContent).toContain("E2B · sandbox");
@@ -1031,7 +1036,7 @@ describe("AgentConfigForm environment selector", () => {
     roots.push(result.root);
 
     const text = result.container.textContent ?? "";
-    const selector = result.container.querySelector("select");
+    const selector = await openPicker(result.container, "Environment override");
 
     expect(text).toContain("Environment override");
     expect(selector?.textContent).toContain("E2B · sandbox");
@@ -1053,7 +1058,7 @@ describe("AgentConfigForm environment selector", () => {
     roots.push(result.root);
 
     const text = result.container.textContent ?? "";
-    const selector = result.container.querySelector("select");
+    const selector = await openPicker(result.container, "Environment override");
 
     expect(text).toContain("Environment override");
     expect(selector?.textContent).toContain("Default: Local");
@@ -1073,7 +1078,7 @@ describe("AgentConfigForm environment selector", () => {
     ]);
     roots.push(result.root);
 
-    const selector = result.container.querySelector("select");
+    const selector = await openPicker(result.container, "Environment override");
 
     expect(selector?.textContent).toContain("Default: Paperclip Computer");
     expect(selector?.textContent).toContain("Paperclip Computer");
@@ -2475,15 +2480,7 @@ describe("AgentConfigForm environment selector", () => {
     await runTest(result.container);
     expect(findButton(result.container, "Sign in")).toBeTruthy();
 
-    const select = result.container.querySelector("select");
-    await act(async () => {
-      if (select) {
-        const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set;
-        setter?.call(select, "");
-        select.dispatchEvent(new Event("change", { bubbles: true }));
-      }
-    });
-    await flushReact();
+    await selectEnvironment(result.container, "");
 
     expect(findButton(result.container, "Sign in")).toBeFalsy();
   });
