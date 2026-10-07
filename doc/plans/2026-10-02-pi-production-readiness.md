@@ -7,56 +7,46 @@ widgets, images, Cursor or Copilot qualification. The existing draft stack must 
 
 ## Production qualification state — 2026-10-07
 
-The shipping runtime is frozen at `15af2eefbc2dc9f270875836e9bb404f4ed3d135`
-with Pi profile 17. The final target is native Linux. All 26 accepted Product
-cells and seven Runner cases require passes on the final installed artifacts
-and recorded harness definitions. Mac coverage is deferred. Historical passes
-do not transfer. The caller chooses the production model; the accepted model
-and low thinking remain fixture inputs.
+The candidate now uses Pi profile 18. Its production cancellation fix requires a
+new frozen source revision, normal Linux packages, cloud image and all 33 accepted
+live cases. Historical profile-17 passes do not transfer. Mac qualification stays
+deferred. The caller chooses the production model; the accepted model and low
+thinking remain fixture inputs.
 
-Both credential boundaries reserve the same 40 loader, shell and process-control
-names while permitting custom names such as `LD_API_KEY` and `DYLD_API_KEY`.
-Shared negative inputs and actual child-process tests cover explicit bound-key
-forwarding and unrelated-secret exclusion. Current generated release profiles
-also decode automatically, with separate exact launch admission. Pi's native
-1.0.0 distributions, wrapper, extension and closure hashes remain unchanged.
+The corrected Stop fixture reached the real pending native-write permission and
+received the board Stop acknowledgement. Pi then returned `cancelled` alongside
+service-failure metadata, so ACPX reported a failed turn. The original failed
+attempt, unchanged strict assertions, no-write observations and runtime-retirement
+evidence remain retained. The Pi wrapper now omits service-failure metadata only
+for its authoritative cancelled terminal, preserving partial usage and ordinary
+provider failures. ACPX and server error handling remain unchanged.
+
+Profile 18 binds the corrected wrapper/helper and regenerated closure declarations.
+Upstream pinned pi-acp patch application reproduces both declared file hashes.
+The same 40 reserved credential names, explicit key forwarding, arbitrary caller
+model support, native Pi 1.0.0 distributions and Node pins remain unchanged.
 
 | Release gate | Current evidence |
 | --- | --- |
-| Normal native Linux build | Workspace and standalone public builds pass at the frozen runtime. |
-| Normal public installation | CLI/server and separate Daytona plugin npm installs and normal hooks pass; lockfiles stay unchanged. |
-| Installed package integrity and Pi admission | Full archive graph and managed-asset verification, normal Pi runtime setup, credential-free public admission and actual server/UI startup pass. Installed daemon SHA-256 is `905949ca03c1859974ce9868aea6262a5338f98dace66bd029a57e11272996be`. |
-| Free runtime checks | Full release Rust: 689 pass, two ignored. Runner TypeScript typecheck passes; provider/configuration/compatibility checks: 58 pass, one skip. Actual server native-input boundary: 68 pass. |
-| Final Product acceptance | 1/26. Corrected definition-4 file-edit passes on the frozen installation and harness `92cf55a7a87903b6bd8603f4d7cac6cc510418c0`, with independent process/scratch/credential-input cleanup and retained canonical evidence. Preserve the failed definition-3 attempt. The next Stop attempt failed because its title-based lookup missed the composer-generated title before Stop could run; its original timeout and cleanup failure stay retained. Definitions 9/16 now bind explicit creation-response IDs, with 176 free checks passing. Resume only on the corrected harness, with no automatic retries. |
-| Final Runner acceptance | 0/7. Definitions `a29b289cb3a80731c6f8195159d263e5336b4d4a` validate seven cases and pass 139 free tests; final live runs remain pending. |
-| Final Daytona image | The user-approved hosted Linux workflow is applied. The first cloud build exposed two ignored release-declaration inputs; the exact build-context correction and 20 focused checks pass. [Corrected cloud build](https://github.com/paperclipai/paperclip/actions/runs/37653872385) passed. Anonymous OCI admission verifies Linux amd64 and source `f4bb181daeaa201c2528f774182cb5a25edfc4c6`; immutable image digest is `sha256:622efa468df3218a77c1302189f20a629fd45a8c816dca3f00e1ec6eed4b3a64`. Guest admission and 13 Daytona cells remain pending. |
-| Current PR-head CI and review | Harness head `92cf55a7a87903b6bd8603f4d7cac6cc510418c0` passes CI and review. Cloud build head has 52 passing checks and one Rust-host shutdown during compilation. No Rust test failed; GitHub returned HTTP 500 for the failed-job rerun. Current fixture changes require fresh checks; no unresolved review threads were observed. |
+| Offline cancellation proof | New unit and actual subprocess regressions fail on profile-17 bytes and pass on the corrected wrapper. All 49 actual Pi ACP protocol tests pass; 99 focused Runner tests pass, one skipped. |
+| Free harness checks | All 2,480 Product E2E unit tests pass; Runner TypeScript typecheck and generated TypeScript/Rust profile parity pass. The broad Runner suite records 3,379 passes and three failures: two timeouts pass on isolated recheck; the warm Pi case passes against the current rebuilt daemon. The first Rust run exposed a stale fixture in the external test checkout; current-source verification is pending. |
+| Normal native Linux build and public installation | Historical profile-17 workspace/public builds, normal npm lifecycle hooks, strict installed graph, Pi setup and actual server/UI admission pass. New profile-18 artifacts require rebuilding and full admission. |
+| Final Product acceptance | 0/26 on profile 18. Historical profile 17 has one file-edit pass and two retained Stop failures: creation-title lookup, then the production cancellation defect. Resume with one changed Stop attempt after fresh artifact admission; no automatic retries. |
+| Final Runner acceptance | 0/7 on profile 18. The seven cases and their assertions stay frozen; roster identity must match the new production profile and source. |
+| Cloud image | [Hosted Linux build](https://github.com/paperclipai/paperclip/actions/runs/37653872385) passed for source `f4bb181daeaa201c2528f774182cb5a25edfc4c6`, image `sha256:622efa468df3218a77c1302189f20a629fd45a8c816dca3f00e1ec6eed4b3a64`. Anonymous OCI and actual credential-free Daytona guest admission pass; owned probe deletion is confirmed. Profile 18 requires a new cloud build and guest admission. No local Docker is used. |
+| Current PR-head CI and review | New production source requires fresh latest-head checks and review; previous CI results remain historical. No merge, release or rollout is authorized. |
 
-The first final-source file-edit run edited and independently validated the file,
-registered its real download and completed the task. Its Pi prompt requested
-artifact title `Verified text`, while the unchanged shared registration check
-requires the exact filename as title. Extended definition 4 corrects that prompt
-instruction and adds a cross-fixture regression check. Native edit, exact bytes,
-command/result, registration, run attribution and cleanup grading stay unchanged.
-Pi controls definition 9 and native definition 16 also preserve task identity from
-the public creation response and use explicit titles for strict native operations.
-The original Stop title-lookup failure remains failed; it never reached Stop.
-No Stop, permission, native-byte, process-retirement or cleanup assertion is relaxed.
+The accepted Product fixtures preserve explicit task titles and creation-response
+issue IDs. Native edit, exact bytes, command/result, registration, run attribution,
+Stop, permission, process retirement and cleanup assertions stay unchanged.
+All original failures retain their canonical results and provenance. Billing
+snapshots remain provisional when provider usage has not settled.
 
-The failed definition-3 attempt does not become a pass. Its recorded usage is
-39,343 input, 77,312 cached input and 1,359 output tokens; provider cost is unpriced
-and key snapshots may settle later. No unchanged paid retry is permitted.
-
-Earlier installs exhausted the owned host's 10 GiB scratch disk. The final
-installation retires its completed npm cache only after strict base archive
-verification, then checks every installed file plus normal managed Pi assets.
-A nested/top-level npm bin classification error in the external verifier was
-corrected on the same installed bytes; the original failed audit is retained.
-No grading rule or production artifact was changed for that correction.
-Local full database integration remains blocked by host System V shared-memory
-capacity. Preserve those observations and require current Linux CI. No merge,
-release or rollout is authorized. The dedicated key retains its $5 lifetime cap
-inside the approved $100 total token ceiling, with no BYOK or automatic retries.
+The previous public installation retired only its completed owned pnpm content
+cache after strict base archive verification. Local database integration remains
+blocked by System V shared-memory capacity; require current Linux CI. The dedicated
+OpenRouter key keeps its $5 lifetime cap inside the approved $100 total token
+ceiling, with no reset, BYOK, fallback or unchanged paid retry.
 
 ## Final fixture reconciliation — 2026-10-07
 
