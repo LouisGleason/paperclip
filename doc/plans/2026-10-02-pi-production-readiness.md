@@ -7,31 +7,51 @@ widgets, images, Cursor or Copilot qualification. The existing draft stack must 
 
 ## Production qualification state — 2026-10-07
 
-The final target is native Linux with Pi profile 17. All 26 accepted Product
-cells and seven Runner cases require passes on the final source and installed
-artifact set. Mac coverage is deferred. Historical passes do not transfer.
+The shipping runtime is frozen at `15af2eefbc2dc9f270875836e9bb404f4ed3d135`
+with Pi profile 17. The final target is native Linux. All 26 accepted Product
+cells and seven Runner cases require passes on the final installed artifacts
+and recorded harness definitions. Mac coverage is deferred. Historical passes
+do not transfer. The caller chooses the production model; the accepted model
+and low thinking remain fixture inputs.
 
-Review found that Rust's initial broad `LD_` exclusion rejected valid custom
-credentials; merely matching the controller then admitted real loader controls.
-Both boundaries now reserve the same 40 loader, shell and process-control names
-while permitting ordinary custom names such as `LD_API_KEY` and `DYLD_API_KEY`.
-They share negative test inputs, and real child-process coverage verifies bound
-credential forwarding and unrelated-secret exclusion. Profile 17 binds this
-provider-configuration source correction. The Pi 1.0.0 native distributions,
-wrapper, runtime extension and platform closure hashes remain unchanged.
+Both credential boundaries reserve the same 40 loader, shell and process-control
+names while permitting custom names such as `LD_API_KEY` and `DYLD_API_KEY`.
+Shared negative inputs and actual child-process tests cover explicit bound-key
+forwarding and unrelated-secret exclusion. Current generated release profiles
+also decode automatically, with separate exact launch admission. Pi's native
+1.0.0 distributions, wrapper, extension and closure hashes remain unchanged.
 
-The normal native builds of `aa67de311` and `f817030f8` passed. Public Linux
-package installation for `f817030f8` passed npm lifecycle checks but Pi setup
-ran out of the disposable host's 10 GiB scratch disk. Preserve that failure and
-superseded archives; reclaim only owned obsolete artifacts and completed caches
-before rebuilding the corrected final source. No live attempt ran on `f817`.
+| Release gate | Current evidence |
+| --- | --- |
+| Normal native Linux build | Workspace and standalone public builds pass at the frozen runtime. |
+| Normal public installation | CLI/server and separate Daytona plugin npm installs and normal hooks pass; lockfiles stay unchanged. |
+| Installed package integrity and Pi admission | Full archive graph and managed-asset verification, normal Pi runtime setup, credential-free public admission and actual server/UI startup pass. Installed daemon SHA-256 is `905949ca03c1859974ce9868aea6262a5338f98dace66bd029a57e11272996be`. |
+| Free runtime checks | Full release Rust: 689 pass, two ignored. Runner TypeScript typecheck passes; provider/configuration/compatibility checks: 58 pass, one skip. Actual server native-input boundary: 68 pass. |
+| Final Product acceptance | 0/26. The first installed file-edit attempt failed the shared artifact-title check; cleanup passed. Keep its original failure and token usage. |
+| Final Runner acceptance | 0/7. Definitions `a29b289cb3a80731c6f8195159d263e5336b4d4a` validate seven cases and pass 139 free tests; final live runs remain pending. |
+| Final Daytona image | Requires the prepared Linux workflow-host correction and explicit approval before applying it; 13 Daytona cells remain pending. |
+| Current PR-head CI and review | Required after the fixture-only correction. Test-only follow-ups fix future-version and Cursor rejection fixtures. |
 
-The full local Rust repeat at `f817` failed one Codex receipt-observation deadline;
-the unchanged test passes in isolation. Linux CI passed its native Runner lane,
-but browser shard 5 failed the signoff fixture's run-availability wait. Preserve
-both observations and require new-head checks and review. The final source still
-needs normal installed admission and all 33 live cases. No merge or release is
-authorized. The fixture model and low thinking remain test inputs.
+The first final-source file-edit run edited and independently validated the file,
+registered its real download and completed the task. Its Pi prompt requested
+artifact title `Verified text`, while the unchanged shared registration check
+requires the exact filename as title. Extended definition 4 corrects that prompt
+instruction and adds a cross-fixture regression check. Native edit, exact bytes,
+command/result, registration, run attribution and cleanup grading stay unchanged.
+The failed definition-3 attempt does not become a pass. Its recorded usage is
+39,343 input, 77,312 cached input and 1,359 output tokens; provider cost is unpriced
+and key snapshots may settle later. No unchanged paid retry is permitted.
+
+Earlier installs exhausted the owned host's 10 GiB scratch disk. The final
+installation retires its completed npm cache only after strict base archive
+verification, then checks every installed file plus normal managed Pi assets.
+A nested/top-level npm bin classification error in the external verifier was
+corrected on the same installed bytes; the original failed audit is retained.
+No grading rule or production artifact was changed for that correction.
+Local full database integration remains blocked by host System V shared-memory
+capacity. Preserve those observations and require current Linux CI. No merge,
+release or rollout is authorized. The dedicated key retains its $5 lifetime cap
+inside the approved $100 total token ceiling, with no BYOK or automatic retries.
 
 ## Final fixture reconciliation — 2026-10-07
 

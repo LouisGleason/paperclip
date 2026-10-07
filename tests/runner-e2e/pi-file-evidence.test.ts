@@ -192,6 +192,12 @@ describe("Pi edit, validation and public artifact oracle", () => {
     for (const cell of cells) {
       const prompt = cell.task.buildPrompt("fixture");
       expect(prompt.includes("register_deliverable")).toBe(cell.profile.qualificationCandidate === "pi");
+      if (cell.profile.qualificationCandidate === "pi") {
+        const artifact = cell.task.buildMatchers("fixture", cell).find(matcher => matcher.kind === "artifact_exact");
+        if (!artifact || artifact.kind !== "artifact_exact") throw new Error("Pi file task must require a registered artifact");
+        expect(artifact.name).toBe(piFileContract("fixture").filename);
+        expect(prompt).toContain(`title ${artifact.name},`);
+      }
     }
     expect(runnerMatrix.filter(c => c.profile.qualificationCandidate === "pi")).toHaveLength(26);
   });

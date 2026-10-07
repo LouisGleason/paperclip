@@ -373,8 +373,10 @@ projected title and a validation marker. A marker-only echo cannot pass. Final b
 match the fixture. The Pi task prompt explicitly forbids additional shell calls,
 including metadata commands, and supplies the expected post-edit byte size and
 hash for registration. Extra Bash calls fail the unchanged oracle even when the
-edited file and downloadable artifact are correct. Extended definitions 3 retain
-older attempts under their original definitions and grades. The real
+edited file and downloadable artifact are correct. Extended definition 4 makes
+Pi's artifact title equal the exact filename required by the shared registered
+artifact check. Definition 3 attempts retain their original definitions and
+grades; its Pi prompt requested a different title. The real
 `register_deliverable` receipt, attachment metadata, publication activity,
 visible task attachment and authenticated public download must all agree on the
 file's bytes, hash, company, issue, agent and originating run. A file on disk or a
