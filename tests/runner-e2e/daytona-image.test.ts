@@ -88,6 +88,14 @@ describe("runner E2E Daytona image contract", () => {
     expect(dockerignore).toContain("**/node_modules");
     expect(dockerignore).toContain("packages/paperclip-runner/dist");
     expect(dockerignore).toContain("packages/paperclip-runner/runner/target");
+    expect(await readFile(path.join(repositoryRoot, ".github/docker-context-checks.Dockerfile"), "utf8")).toContain("node packages/paperclip-runner/scripts/generate-acpx-profiles.mjs --check");
+    for (const declaration of [
+      "test-fixtures/pi-acp/profile-v17-identity.json",
+      "test/fixtures/copilot-profile-v16-identity.json",
+    ]) {
+      expect(dockerignore).toContain(`!packages/paperclip-runner/${declaration}`);
+      await expect(readFile(path.join(repositoryRoot, "packages/paperclip-runner", declaration), "utf8")).resolves.toBeTruthy();
+    }
     for (const developmentOnlyInput of [
       "packages/paperclip-runner/devtools",
       "packages/paperclip-runner/docs",
