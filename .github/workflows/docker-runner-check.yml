@@ -19,6 +19,10 @@ on:
         description: "Build and verify clean public npm installation on hosted Linux (no provider credentials)"
         type: boolean
         default: false
+      verify_pi_macos_install:
+        description: "Verify frozen Pi shipping source on native hosted ARM and Intel Macs; no provider calls"
+        type: boolean
+        default: false
       build_eval_viewer:
         description: "Build the canonical eval report viewer on hosted Linux"
         type: boolean
@@ -37,8 +41,8 @@ permissions: {}
 
 concurrency:
   # Publishing a newer image must not discard an earlier verification's evidence.
-  group: docker-runner-check-${{ github.event.pull_request.number || github.ref }}-${{ inputs.verify_source && 'verification' || inputs.verify_public_install && 'public-install' || inputs.build_eval_viewer && 'viewer' || 'image' }}
-  cancel-in-progress: true
+  group: docker-runner-check-${{ github.event.pull_request.number || github.ref }}-${{ inputs.verify_pi_macos_install && 'mac-install' || inputs.verify_source && 'verification' || inputs.verify_public_install && 'public-install' || inputs.build_eval_viewer && 'viewer' || 'image' }}
+  cancel-in-progress: ${{ !inputs.verify_pi_macos_install }}
 
 jobs:
   runner:
@@ -98,6 +102,7 @@ jobs:
           echo "target_sha=$target_sha" >> "$GITHUB_OUTPUT"
 
   manual_image:
+    if: ${{ !inputs.verify_pi_macos_install }}
     name: Build and verify on Linux
     needs: authorize_manual
     # Keep maintainer authorization below; use a native hosted Linux builder.
@@ -212,3 +217,85 @@ jobs:
           name: grok-remote-verification-${{ github.run_id }}
           path: remote-verification/
           retention-days: 7
+
+  pi_native_macos_install:
+    if: github.event_name == 'workflow_dispatch' && inputs.verify_pi_macos_install
+    name: Pi normal install (${{ matrix.arch }})
+    needs: authorize_manual
+    runs-on: ${{ matrix.host }}
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - host: macos-15
+            arch: arm64
+          - host: macos-15-intel
+            arch: x64
+    steps:
+      - name: Authorize an explicit maintainer image build
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          REPOSITORY_ID: ${{ github.repository_id }}
+          ACTOR_ID: ${{ github.actor_id }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+          ALLOWED_IDS: ${{ vars.AWS_CI_TRUSTED_USER_IDS }}
+        run: |
+          set -euo pipefail
+          test "$REPOSITORY" = paperclipai/paperclip
+          test "$REPOSITORY_ID" = 1170821064
+          jq -e 'type == "array" and length > 0 and all(.[]; type == "number")' <<< "$ALLOWED_IDS" >/dev/null
+          triggering_id="$(gh api "users/$TRIGGERING_ACTOR" --jq .id)"
+          for id in "$ACTOR_ID" "$triggering_id"; do
+            jq -e --argjson id "$id" 'index($id) != null' <<< "$ALLOWED_IDS" >/dev/null
+          done
+      - name: Checkout verification orchestration
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          path: orchestration
+          persist-credentials: false
+      - name: Checkout frozen shipping source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: 06a3d9739f402baa7f8be7aaa29dda6db7354bfb
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify immutable source ancestry
+        env:
+          TARGET_SHA: ${{ needs.authorize_manual.outputs.target_sha }}
+          ORCHESTRATION_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git -C source rev-parse HEAD)" = 06a3d9739f402baa7f8be7aaa29dda6db7354bfb
+          test "$(git -C orchestration rev-parse HEAD)" = "$ORCHESTRATION_SHA"
+          git -C source merge-base --is-ancestor 06a3d9739f402baa7f8be7aaa29dda6db7354bfb "$TARGET_SHA"
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+        with:
+          version: 9.15.4
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24.21.0
+          package-manager-cache: false
+      - name: Normal native public npm installation and Pi admission
+        env:
+          PI_QUALIFICATION_ORCHESTRATION_SHA: ${{ github.sha }}
+          EXPECTED_ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          node orchestration/scripts/pi-qualification-macos.mjs "$PWD/source" "$RUNNER_TEMP/pi-native-install-evidence" "$EXPECTED_ARCH"
+      - name: Retain native installation evidence and package archives
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: pi-native-install-${{ matrix.arch }}-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/pi-native-install-evidence/*.json
+            ${{ runner.temp }}/pi-native-install-evidence/*.log
+            ${{ runner.temp }}/pi-native-install-evidence/archives/*.tgz
+          retention-days: 14
+          if-no-files-found: error
