@@ -466,7 +466,8 @@ export function connectionIntentService(db: Db) {
     }
     const publicMatches = searchAggregatorServices(preparedQuery);
     const bestMatches = publicMatches.filter(match => Math.floor(match.nameScore / 100) === Math.floor((publicMatches[0]?.nameScore ?? 0) / 100));
-    const publicService = findAggregatorService(serviceQuery, publicMatches) ?? (bestMatches.length === 1 ? bestMatches[0]!.service : undefined);
+    const namedPublicService = findAggregatorService(serviceQuery, publicMatches);
+    const publicService = namedPublicService ?? (bestMatches.length === 1 ? bestMatches[0]!.service : undefined);
     // Extract service namespaces only from the current identity's indexed tools.
     // Generic provider search/execute descriptions do not prove app support.
     const indexedServices = new Set<string>();
@@ -553,6 +554,14 @@ export function connectionIntentService(db: Db) {
       return alternatives;
     }
     const alternatives = await aggregatorAlternatives(targetService, targetName, publicService);
+    // A typo/prefix match is a discovery hint, not a selected app. Generic
+    // capabilities (e.g. "pages") can resemble a catalog name ("Page X").
+    // Retain authorized installed matches instead of prescribing provider consent.
+    const namedTarget = namedPublicService !== undefined
+      || indexedMatches.some(match => match.slug === targetService && match.nameScore >= 500);
+    if (alternatives.length && !namedTarget) {
+      return discoverySuggestions([...ranked(), ...alternatives]);
+    }
     if (explicit && explicitConsent) {
       const selected = alternatives.find(item => item.aggregator?.provider === explicit.provider);
       if (!selected) return { version: 1, query, results: [], instruction: "The explicitly requested external provider is unavailable or its app support could not be verified. Explain the limitation. Do not switch providers automatically." };
@@ -586,7 +595,7 @@ export function connectionIntentService(db: Db) {
 
     function discoverySuggestions(results: ConnectionSearchResultItem[]): ConnectionsSearchResult {
       return { version: 1, query, results: results.slice(0, 40),
-        instruction: "Multiple apps match this query. Choose the relevant service and method using descriptions and purposes. For available or needs_user_action results, tool methods and AgentMail use connection_request to show the inline setup card; other channel or AI methods use setupPath. Use ready tools as installed; ready AI authentication applies to the next execution without reconnection. For an aggregator result, search its aggregator.targetService to obtain the provider-choice question and follow that instruction before requesting a connection. Respect unavailable states. Do not treat a search match as provider consent or app authorization." };
+        instruction: "These are possible connection matches. Choose the relevant service and method using descriptions and purposes. For available or needs_user_action results, tool methods and AgentMail use connection_request to show the inline setup card; other channel or AI methods use setupPath. Use ready tools as installed; ready AI authentication applies to the next execution without reconnection. For an aggregator result, search its aggregator.targetService to obtain the provider-choice question and follow that instruction before requesting a connection. Respect unavailable states. Do not treat a search match as provider consent or app authorization." };
     }
   }
 

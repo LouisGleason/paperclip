@@ -57,6 +57,12 @@ grants consent. A provider connection is not proof that its underlying app is
 authorized. Multiple matching aggregator apps are returned as candidates; the
 agent searches the selected `aggregator.targetService` to get its provider question.
 
+A fuzzy or partial external app match remains a suggestion alongside authorized
+installed capability matches. It cannot replace those matches with a mandatory
+provider question. For example, a query for a page service can return the
+installed page tools alongside a Page X suggestion; selecting the exact Page X
+service is required before that external route asks for provider consent.
+
 ## Regression coverage
 
 ```sh

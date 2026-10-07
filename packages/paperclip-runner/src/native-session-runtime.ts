@@ -875,6 +875,8 @@ async function consumeTurn(
   },
   initialGoal?: HarnessThreadGoal | null,
   resumeInterruptedTurn?: (event: PrpEvent, signal: AbortSignal) => Promise<boolean>,
+  checkpointGovernedWait?: (wait: NonNullable<PersistedNativeSession["governedWait"]>, signal: AbortSignal) => Promise<void>,
+  initialGovernedWait?: PersistedNativeSession["governedWait"],
 ) {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const appendAbort = new AbortController();
@@ -936,10 +938,13 @@ async function consumeTurn(
       if (session.cancel === undefined) {
         throw new Error("native_governed_wait_cancellation_unavailable");
       }
-      const cancellation = session.cancel({
-        reason,
-        signal: appendAbort.signal,
-      });
+      // Revoke new publication before any asynchronous journal write. Persist
+      // the disposition before provider interruption, retaining usage and terminal
+      // evidence even when the interaction is answered during the restart.
+      session.revokeTurnPublication?.();
+      await checkpointGovernedWait?.({ sourceEvent: event, result }, appendAbort.signal);
+      appendAbort.signal.throwIfAborted();
+      const cancellation = session.cancel({ reason, signal: appendAbort.signal });
       governedCancellationCommitted = true;
       const cleanup = cancellation.cleanup;
       governedCleanupOperations.add(cleanup);
@@ -968,6 +973,9 @@ async function consumeTurn(
             eventCount += receipt.disposition === "committed" ? 1 : 0;
             highestContiguousSourceSeq = Math.max(highestContiguousSourceSeq, receipt.highestContiguousSourceSeq);
             if (terminal) {
+              if (trailing.eventType === "turn.failed" || trailing.payload.providerTerminalObserved === false) {
+                throw new NativeProviderTerminalFailure("governed_wait_provider_terminal_unproven", false);
+              }
               governedProviderTerminalObserved = true;
               return;
             }
@@ -975,7 +983,10 @@ async function consumeTurn(
         }
       })();
       await Promise.race([
-        drained.catch(() => quarantineSession("governed_accounting_drain_failed")),
+        drained.catch(error => {
+          quarantineSession("governed_accounting_drain_failed");
+          if (error instanceof NativeProviderTerminalFailure) throw error;
+        }),
         new Promise<void>(resolve => { drainTimer = setTimeout(() => {
           drainAbort.abort(new Error("governed accounting drain timed out"));
           quarantineSession("governed_accounting_drain_timed_out");
@@ -993,6 +1004,10 @@ async function consumeTurn(
         governedResult: result,
       };
     };
+    if (initialGovernedWait) {
+      return settleDurableResult(initialGovernedWait.sourceEvent, initialGovernedWait.result,
+        "Paperclip resumed settlement of this durable governed interaction.");
+    }
     while (true) {
       const next = await eventIterator.next().catch((error) => {
         throw providerFailure ?? error;
@@ -1916,6 +1931,42 @@ export async function executeNativeSession(
     issueId: input.binding.issueId,
     agentId: input.binding.agentId,
   };
+  let governedWait = persistedSession?.governedWait;
+  const governedReplay: PrpEvent[] = [];
+  if (governedWait) {
+    const event = governedWait.sourceEvent;
+    const validation = validatePrpStructuredRunResult(governedWait.result);
+    if (!event?.turnId || event.runId !== identity.runId || event.normalizedSessionId !== identity.sessionId
+      || event.sourceInstanceId !== options.runnerInstanceId || !Number.isSafeInteger(event.sourceSeq) || event.sourceSeq < 1
+      || !validation.ok || validation.result.reportedWorkDisposition !== "yielded"
+      || validation.result.completionClaim?.contractRevision !== input.completionContract.contract.revision) {
+      throw new Error("native_governed_wait_checkpoint_mismatch");
+    }
+    await runAbortableOperationWithin({
+      timeoutMs: options.timeoutMs ?? 900_000,
+      timeoutMessage: "native governed-wait recovery replay timed out",
+      operation: async signal => {
+        let afterSourceSeq = event.sourceSeq - 1;
+        while (true) {
+          const page = await options.controlPlane.replayEvents({ runId: identity.runId,
+            sourceInstanceId: options.runnerInstanceId, afterSourceSeq, limit: 1_000 }, { signal });
+          signal.throwIfAborted();
+          if (!page.events.length) break;
+          for (const entry of page.events) {
+            if (entry.runId !== identity.runId || entry.normalizedSessionId !== identity.sessionId
+              || entry.sourceInstanceId !== event.sourceInstanceId || entry.sourceSeq !== afterSourceSeq + 1
+              || governedReplay.length >= 10_000) throw new Error("native_governed_wait_replay_mismatch");
+            governedReplay.push(entry);
+            afterSourceSeq = entry.sourceSeq;
+          }
+        }
+      },
+    });
+    if (canonicalJson(governedReplay[0]) !== canonicalJson(event)) throw new Error("native_governed_wait_trigger_unproven");
+    if (governedReplay.some(entry => entry.eventType === "turn.started" && entry.turnId !== event.turnId)) {
+      throw new Error("native_governed_wait_turn_mismatch");
+    }
+  }
   let recovered = false;
   let session: NativeSession | null = null;
   let continuityBreak: {
@@ -2197,7 +2248,7 @@ export async function executeNativeSession(
       externalSignal?: AbortSignal,
     ) =>
       persistCheckpointWithin({
-        snapshot,
+        snapshot: governedWait ? { ...snapshot, governedWait } : snapshot,
         controlPlane: options.controlPlane,
         onCheckpoint: options.onCheckpoint,
         timeoutMs: checkpointTimeoutMs,
@@ -2285,6 +2336,21 @@ export async function executeNativeSession(
       await persistCheckpoint(recoveredSnapshot);
     }
 
+    const governedTerminal = governedWait ? governedReplay.find(event =>
+      event.turnId === governedWait!.sourceEvent.turnId && isTurnTerminal(event)) : undefined;
+    if (governedTerminal?.eventType === "turn.failed" || governedTerminal?.payload.providerTerminalObserved === false) {
+      throw new NativeProviderTerminalFailure("governed_wait_provider_terminal_unproven", false);
+    }
+    if (governedWait && recoveredActiveTurnId && recoveredActiveTurnId !== governedWait.sourceEvent.turnId) {
+      throw new Error("native_governed_wait_turn_mismatch");
+    }
+    if (governedWait) {
+      for (const event of governedReplay) {
+        if (event.turnId === governedWait.sourceEvent.turnId && (event.payload.kind === "usage" || isTurnTerminal(event))) {
+          await options.controlPlane.appendEvent(event);
+        }
+      }
+    }
     let consumed = {
       event: null as PrpEvent | null,
       eventCount: 0,
@@ -2367,7 +2433,10 @@ export async function executeNativeSession(
         replayedDisposition?.terminal ?? dispositionFallback;
       const consumptionAbort = new AbortController();
       const consuming =
-        recoveryTerminal === null
+        governedTerminal && governedWait
+          ? Promise.resolve({ event: governedWait.sourceEvent, governedResult: governedWait.result,
+              eventCount: 0, highestContiguousSourceSeq: governedTerminal.sourceSeq })
+          : recoveryTerminal === null
           ? consumeTurn(
               session,
               options.controlPlane,
@@ -2390,6 +2459,11 @@ export async function executeNativeSession(
                 : undefined,
               recoveredSnapshot.goal,
               resumeInterruptedTurn,
+              async (wait, signal) => {
+                governedWait = structuredClone(wait);
+                await checkpoint(signal);
+              },
+              governedWait,
             )
           : Promise.resolve({
               event: recoveryTerminal,
@@ -2405,12 +2479,12 @@ export async function executeNativeSession(
       // that later rejection becomes process-fatal under Node's strict policy.
       void consuming.catch(() => undefined);
       try {
-        const shouldStartFreshTurn =
+        const shouldStartFreshTurn = !governedWait && (
           !recovered ||
           (!recoveredActiveTurnId &&
             !adoptedProviderTerminal &&
             !checkpointedDispositionTerminal &&
-            !dispositionRecoveryStillOwned);
+            !dispositionRecoveryStillOwned));
         if (options.sessionGoalControl) {
           // Explicit controls remain authoritative after controller loss. In
           // particular, pause/clear/edit must reach a recovered session even

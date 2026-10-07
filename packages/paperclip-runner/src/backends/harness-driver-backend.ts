@@ -738,6 +738,10 @@ class HarnessNativeSession implements NativeSession {
     return this.#session.interrupt(input);
   }
 
+  revokeTurnPublication() {
+    this.#explicitlyCancelled = true;
+  }
+
   cancel(input: { reason: string; signal: AbortSignal }) {
     if (input.signal.aborted) {
       throw (
@@ -747,7 +751,7 @@ class HarnessNativeSession implements NativeSession {
     // This flag is the adapter's synchronous publication boundary. Provider
     // interruption happens afterward as passive cleanup, so a slow or broken
     // transport cannot synthesize or publish new accepted output for the turn.
-    this.#explicitlyCancelled = true;
+    this.revokeTurnPublication();
     const interrupt = this.#session.interrupt;
     return {
       cleanup:

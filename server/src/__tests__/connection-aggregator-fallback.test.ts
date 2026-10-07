@@ -317,9 +317,34 @@ const support = await getEmbeddedPostgresTestSupport();
       expect(result.results.some(item => item.service === "google-sheets")).toBe(true);
       expect(result.instruction).not.toContain("search its exact name");
     });
+    it("keeps installed capability matches when a generic query resembles an external app name", async () => {
+      await resetQuestions();
+      const installed = await seedProvider("Studio library", "notion:list_pages");
+      await db.update(toolCatalogEntries).set({ description: "Read recent pages and return their titles and verification code" })
+        .where(eq(toolCatalogEntries.connectionId, installed.id));
+      const service = connectionIntentService(db);
+      const result = await service.search(claims,
+        "connected page service that can find or list recent pages and return page titles plus a verification code");
+      expect(result.results).toEqual(expect.arrayContaining([expect.objectContaining({
+        service: `connection:${installed.id}`, connectionId: installed.id, state: "ready",
+      })]));
+      expect(result.providerQuestion).toBeUndefined();
+      expect(result.instruction).not.toContain("Ask the responsible user with providerQuestion");
+      // A deliberate app name still reaches the existing governed provider choice.
+      const named = await service.search(claims, "Page X");
+      expect(named.providerQuestion?.id).toBe("connection-provider:page-x");
+      expect(named.results[0]?.service).toBe("via:composio:page-x");
+    });
+    it("keeps an external typo as a discovery suggestion until its app is selected", async () => {
+      await resetQuestions();
+      const result = await connectionIntentService(db).search(claims,
+        "Find Circlebak meeting transcripts and action items from yesterday");
+      expect(result.results.some(item => item.service === "via:composio:circleback-mcp")).toBe(true);
+      expect(result.providerQuestion).toBeUndefined();
+      expect(result.instruction).toContain("aggregator.targetService");
+    });
     it.each([
       ["help me find tools for circle back", "circleback-mcp"],
-      ["Find Circlebak meeting transcripts and action items from yesterday", "circleback-mcp"],
       ["Can you connect Circleback MCP to get all our meeting notes?", "circleback-mcp"],
       ["Find Attio tools to review all our customer contacts before next week's meeting", "attio"],
       ["Help me find a ClickUp connection to organize our team's projects", "clickup"],

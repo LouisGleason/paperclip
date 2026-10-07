@@ -5140,6 +5140,62 @@ describe("native startup cancellation fence", () => {
 });
 
 describe("native startup restart detachment", () => {
+  it("waits for a checkpointed governed settlement before relinquishing its controller", async () => {
+    const restarting = structuredClone(execution);
+    restarting.binding.runId = "restart-governed-settlement";
+    let release!: () => void, announce!: () => void;
+    const accounting = new Promise<void>(resolve => { release = resolve; });
+    const checkpointed = new Promise<void>(resolve => { announce = resolve; });
+    const detach = vi.fn(async () => undefined);
+    state.execute.mockReset().mockImplementationOnce(async options => {
+      await options.onSession({ detachControllerForRestart: detach });
+      await options.onCheckpoint({ governedWait: { sourceEvent: { turnId: "settling-turn" } } });
+      announce();
+      await accounting;
+      await options.onSession(null);
+      throw new Error("settlement test complete");
+    });
+    const outcome = executePaperclipNativeSession({ db: leaseDb(restarting), execution: restarting, runnerInstanceId: "runner" }).catch(error => error);
+    await checkpointed;
+    const detached = detachNativeSessionsForRestart([restarting.binding.runId]);
+    try {
+      await new Promise(resolve => setImmediate(resolve));
+      expect(detach).not.toHaveBeenCalled();
+      release();
+      await outcome;
+      expect(await detached).toMatchObject({ inactiveRunIds: [restarting.binding.runId] });
+      expect(detach).not.toHaveBeenCalled();
+    } finally { release(); await outcome; await detached; }
+  });
+  it("bounds governed settlement without allowing the detached controller to publish success", async () => {
+    const restarting = structuredClone(execution);
+    restarting.binding.runId = "restart-governed-settlement-timeout";
+    let release!: () => void, announce!: () => void;
+    const accounting = new Promise<void>(resolve => { release = resolve; });
+    const checkpointed = new Promise<void>(resolve => { announce = resolve; });
+    const detach = vi.fn(async () => undefined);
+    const onUsage = vi.fn(async () => undefined);
+    state.execute.mockReset().mockImplementationOnce(async options => {
+      await options.onSession({ detachControllerForRestart: detach });
+      await options.onCheckpoint({ governedWait: { sourceEvent: { turnId: "settling-turn" } } });
+      announce(); await accounting;
+      await options.onSession(null);
+      return { result: {}, terminal: { runTerminalState: "succeeded" }, usage: null };
+    });
+    const outcome = executePaperclipNativeSession({ db: leaseDb(restarting), execution: restarting, runnerInstanceId: "runner", onUsage }).catch(error => error);
+    await checkpointed;
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    const detaching = detachNativeSessionsForRestart([restarting.binding.runId]);
+    try {
+      await vi.advanceTimersByTimeAsync(19_999);
+      expect(detach).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(await detaching).toMatchObject({ detachedRunIds: [restarting.binding.runId] });
+      release();
+      expect(await outcome).toBeInstanceOf(NativeControllerDetachedForRestartError);
+      expect(onUsage).not.toHaveBeenCalled();
+    } finally { vi.useRealTimers(); release(); await outcome; await detaching; }
+  });
   it("waits for in-flight runner startup and its detach acknowledgement before shutdown returns", async () => {
     const root = await mkdtemp(join(tmpdir(), "native-startup-detach-"));
     const previous = process.env.PAPERCLIP_RUNNER_STATE_DIR;

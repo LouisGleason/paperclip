@@ -974,7 +974,7 @@ describe("HarnessDriverBackend", () => {
     await expect(iterator.next()).rejects.toThrow("provider transport lost after resolution");
   });
 
-  it("retains final usage after cancellation without accepting late output", async () => {
+  it.each([false, true])("retains final usage without accepting late output (journal boundary only: %s)", async journalOnly => {
     class AccountingAfterCancelSession extends FakeHarnessSession {
       async interrupt() {}
       override async *events() {
@@ -987,7 +987,8 @@ describe("HarnessDriverBackend", () => {
     const session = await backend.openSession({
       identity: { runId: "run-1", sessionId: "session-1", companyId: "company-1", issueId: "issue-1", agentId: "agent-1" }, workingDirectory: "/workspace",
     });
-    await session.cancel({ reason: "durable governed wait", signal: new AbortController().signal }).cleanup;
+    if (journalOnly) session.revokeTurnPublication();
+    else await session.cancel({ reason: "durable governed wait", signal: new AbortController().signal }).cleanup;
     const events = [];
     for await (const event of session.events()) events.push(event);
     expect(events.filter(event => event.payload.kind === "agentMessage")).toHaveLength(0);
