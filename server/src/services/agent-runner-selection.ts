@@ -90,7 +90,7 @@ export async function resolveNewAgentRunnerForCompany(db: Db, companyId: string,
     let output: string;
     try {
       // Probe only OS/CPU identity: no provider credentials or workspace writes.
-      output = (await runSshCommand(parsed.config, "uname -s; uname -m", { timeoutMs: 10_000, maxBuffer: 1024 })).stdout;
+      output = (await runSshCommand(parsed.config, "uname -s; uname -m", { timeoutMs: 10_000 })).stdout;
     } catch {
       throw unprocessable("Could not check the SSH host's platform. Check its connection and retry, or explicitly select the legacy runner.", { code: "agent_runner_platform_probe_failed" });
     }

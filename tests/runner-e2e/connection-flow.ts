@@ -285,7 +285,7 @@ export async function runConnectionFlow(input: ConnectionFlowInput) {
   let completed: Awaited<(typeof probes)[number]>[];
   try {
     await page.getByRole("button", { name: /^(Run test|Test again)$/ }).click();
-    await page.getByRole("button", { name: "Test again", exact: true }).waitFor({ state: "visible", timeout: 180_000 });
+    await page.getByRole("button", { name: /^(Test again|Retry test)$/ }).waitFor({ state: "visible", timeout: 180_000 });
     completed = await Promise.all(probes);
   } finally {
     page.off("response", recordProbe);

@@ -1,5 +1,5 @@
 import type { AdapterRuntimeCommandSpec, ServerAdapterModule } from "./types.js";
-import { assertNativeRunnerSetupReady, assertRemoteAcpxSetupReady } from "../services/native-runtime/setup-readiness.js";
+import { assertNativeRunnerSetupReady, assertRemoteAcpxSetupReady, testNativeAcpxAuthentication } from "../services/native-runtime/setup-readiness.js";
 import { parseAdapterModelsEnv } from "../services/adapter-models-env.js";
 import { stampClaudeAgentIdHeader } from "./claude-agent-id-header.js";
 import {
@@ -439,18 +439,15 @@ const paperclipRunnerAdapter: ServerAdapterModule = {
             throw new Error(`ACPX ${profile.acpxAgent} requires a qualified Linux x64 or macOS architecture.`);
           }
           await assertRemoteAcpxSetupReady(context, profile.acpxAgent, profile.model);
-          return {
-            adapterType: "paperclip_runner", status: "pass" as const, testedAt: new Date().toISOString(),
-            checks: [{ code: "acpx_runtime_ready", level: "info" as const,
-              message: `Paperclip Runner and ACPX ${profile.acpxAgent} are installed and verified in the selected environment.` }],
-          };
+          const authentication = await testNativeAcpxAuthentication(context, profile.acpxAgent, profile.model);
+          return { ...authentication, checks: [{ code: "acpx_runtime_ready", level: "info" as const,
+            message: `Paperclip Runner and ACPX ${profile.acpxAgent} are installed and verified in the selected environment.` }, ...authentication.checks] };
         }
         const { probeAcpxClaudeInstallation, probeAcpxGrokInstallation, probeAcpxCursorInstallation } = await import("../vendor/paperclip-runner/live/index.js");
         await (profile.acpxAgent === "grok" ? probeAcpxGrokInstallation : profile.acpxAgent === "cursor" ? probeAcpxCursorInstallation : probeAcpxClaudeInstallation)(profile.model);
-        return {
-          adapterType: "paperclip_runner", status: "pass" as const, testedAt: new Date().toISOString(),
-          checks: [{ code: "acpx_runtime_ready", level: "info" as const, message: `ACPX ${profile.acpxAgent} runtime is installed and verified. Model access is checked when it runs.` }],
-        };
+        const authentication = await testNativeAcpxAuthentication(context, profile.acpxAgent, profile.model);
+        return { ...authentication, checks: [{ code: "acpx_runtime_ready", level: "info" as const,
+          message: `ACPX ${profile.acpxAgent} runtime is installed and verified.` }, ...authentication.checks] };
       } catch (error) {
         return {
           adapterType: "paperclip_runner", status: "fail" as const, testedAt: new Date().toISOString(),

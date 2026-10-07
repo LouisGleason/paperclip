@@ -370,6 +370,8 @@ export interface AdapterEnvironmentTestContext {
   companyId: string;
   adapterType: string;
   config: Record<string, unknown>;
+  /** Controller-owned credential home from the resolved AI connection, never adapter config. */
+  managedAiCredentialHome?: string;
   /**
    * Optional execution target the adapter should run probes against.
    *

@@ -1739,8 +1739,17 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                     && Boolean(currentThinkingEffort)
                     && !supportedEfforts.includes(String(currentThinkingEffort));
                   if (isCreate) {
+                    const adapterSchemaValues = { ...val!.adapterSchemaValues };
+                    if (adapterType === "paperclip_runner" && modelHarness === "opencode_local") {
+                      // Harness selection and imports seed the schema model. The
+                      // ordinary picker owns subsequent model choices.
+                      delete adapterSchemaValues.model;
+                    }
                     set!({
                       model: v,
+                      ...(adapterType === "paperclip_runner" && modelHarness === "opencode_local"
+                        ? { adapterSchemaValues }
+                        : {}),
                       ...(clearUnsupportedEffort ? { thinkingEffort: "" } : {}),
                     });
                     return;

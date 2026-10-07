@@ -157,6 +157,15 @@ function createServerEnv(
   env.HEARTBEAT_SCHEDULER_ENABLED = "false";
   env.PAPERCLIP_MIGRATION_AUTO_APPLY = "true";
   env.PAPERCLIP_UI_DEV_MIDDLEWARE = "false";
+  // This fixture verifies control-plane persistence without provider execution.
+  // Its isolated HOME prevents reuse of developer login files; remove API
+  // credentials and alternative credential homes as well.
+  for (const key of [
+    "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN",
+    "CURSOR_API_KEY", "CURSOR_AUTH_TOKEN", "XAI_API_KEY", "GROK_API_KEY",
+    "GOOGLE_API_KEY", "GEMINI_API_KEY", "OPENROUTER_API_KEY",
+    "CODEX_HOME", "CLAUDE_CONFIG_DIR", "CURSOR_CONFIG_DIR", "XDG_CONFIG_HOME",
+  ]) delete env[key];
 
   return env;
 }
@@ -272,6 +281,23 @@ async function waitForServer(
   );
 }
 
+async function waitForServerPortClosed(apiBase: string) {
+  const { hostname, port } = new URL(apiBase);
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < 5_000) {
+    const listening = await new Promise<boolean>((resolve) => {
+      const socket = net.createConnection({ host: hostname, port: Number(port) });
+      socket.setTimeout(500);
+      socket.once("connect", () => { socket.destroy(); resolve(true); });
+      socket.once("error", () => { socket.destroy(); resolve(false); });
+      socket.once("timeout", () => { socket.destroy(); resolve(true); });
+    });
+    if (!listening) return;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(`The stopped fixture server still listens on ${apiBase}`);
+}
+
 describeEmbeddedPostgres("paperclipai company import/export e2e", () => {
   let tempRoot = "";
   let configPath = "";
@@ -280,8 +306,28 @@ describeEmbeddedPostgres("paperclipai company import/export e2e", () => {
   let paperclipHome = "";
   let cliShellHome = "";
   let paperclipInstanceId = "";
+  let serverPort = 0;
   let serverProcess: ServerProcess | null = null;
   let tempDb: Awaited<ReturnType<typeof startEmbeddedPostgresTestDatabase>> | null = null;
+
+  async function startServer() {
+    if (!tempDb) throw new Error("The fixture database is not initialized");
+    const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+    const output = { stdout: [] as string[], stderr: [] as string[] };
+    const child = spawn("pnpm", ["paperclipai", "run", "--config", configPath], {
+      cwd: repoRoot,
+      env: createServerEnv(configPath, serverPort, tempDb.connectionString, {
+        paperclipHome,
+        instanceId: paperclipInstanceId,
+        shellHome: cliShellHome,
+      }),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    serverProcess = child;
+    child.stdout?.on("data", (chunk) => output.stdout.push(String(chunk)));
+    child.stderr?.on("data", (chunk) => output.stderr.push(String(chunk)));
+    await waitForServer(apiBase, child, output);
+  }
 
   beforeAll(async () => {
     tempRoot = mkdtempSync(path.join(os.tmpdir(), "paperclip-company-cli-e2e-"));
@@ -295,34 +341,10 @@ describeEmbeddedPostgres("paperclipai company import/export e2e", () => {
 
     tempDb = await startEmbeddedPostgresTestDatabase("paperclip-company-cli-db-");
 
-    const port = await getAvailablePort();
-    writeTestConfig(configPath, tempRoot, port, tempDb.connectionString);
-    apiBase = `http://127.0.0.1:${port}`;
-
-    const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
-    const output = { stdout: [] as string[], stderr: [] as string[] };
-    const child = spawn(
-      "pnpm",
-      ["paperclipai", "run", "--config", configPath],
-      {
-        cwd: repoRoot,
-        env: createServerEnv(configPath, port, tempDb.connectionString, {
-          paperclipHome,
-          instanceId: paperclipInstanceId,
-          shellHome: cliShellHome,
-        }),
-        stdio: ["ignore", "pipe", "pipe"],
-      },
-    );
-    serverProcess = child;
-    child.stdout?.on("data", (chunk) => {
-      output.stdout.push(String(chunk));
-    });
-    child.stderr?.on("data", (chunk) => {
-      output.stderr.push(String(chunk));
-    });
-
-    await waitForServer(apiBase, child, output);
+    serverPort = await getAvailablePort();
+    writeTestConfig(configPath, tempRoot, serverPort, tempDb.connectionString);
+    apiBase = `http://127.0.0.1:${serverPort}`;
+    await startServer();
   }, 60_000);
 
   afterAll(async () => {
@@ -341,6 +363,71 @@ describeEmbeddedPostgres("paperclipai company import/export e2e", () => {
       rmSync(tempRoot, { recursive: true, force: true });
     }
   });
+
+  it("preserves reviewed native and legacy hire configurations through a server restart and approval", async () => {
+    type Agent = { id: string; companyId: string; status: string; adapterType: string; adapterConfig: Record<string, unknown>; runtimeConfig: Record<string, unknown> };
+    type Approval = { id: string; companyId: string; status: string; requestedByAgentId: string | null; payload: Record<string, unknown> };
+    const company = await api<{ id: string }>(apiBase, "/api/companies", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: `Pending runner restart ${Date.now()}` }),
+    });
+    await api(apiBase, `/api/companies/${company.id}`, {
+      method: "PATCH", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ requireBoardApprovalForNewAgents: true }),
+    });
+    const pendingHires: Array<{ agent: Agent; approval: Approval }> = [];
+    for (const runner of [undefined, "legacy"] as const) {
+      const hire = await api<{ agent: Agent; approval: Approval }>(apiBase, `/api/companies/${company.id}/agent-hires`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          name: runner ? "Reviewed legacy coder" : "Reviewed automatic coder", role: "engineer",
+          adapterType: "codex_local", adapterConfig: { model: "gpt-5.6-sol" },
+          ...(runner ? { runner } : {}),
+          runtimeConfig: { heartbeat: { enabled: false, wakeOnDemand: false } },
+          instructionsBundle: { files: { "AGENTS.md": "Wait for an assigned task after board approval." } },
+        }),
+      });
+      expect(hire.agent.status).toBe("pending_approval");
+      expect(hire.agent.adapterType).toBe(runner ? "codex_local" : "paperclip_runner");
+      if (!runner) expect(hire.agent.adapterConfig.provider).toBe("codex");
+      expect(hire.approval).toMatchObject({ companyId: company.id, status: "pending", requestedByAgentId: null });
+      expect(hire.approval.payload).toMatchObject({
+        agentId: hire.agent.id, adapterType: hire.agent.adapterType,
+        adapterConfig: hire.agent.adapterConfig, runtimeConfig: hire.agent.runtimeConfig,
+      });
+      const frozenEdit = await fetch(`${apiBase}/api/agents/${hire.agent.id}`, {
+        method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ title: "Unreviewed change" }),
+      });
+      expect(frozenEdit.status).toBe(409);
+      pendingHires.push(hire);
+    }
+
+    const oldProcessId = serverProcess!.pid;
+    await stopServerProcess(serverProcess);
+    await waitForServerPortClosed(apiBase);
+    await startServer();
+    expect(serverProcess!.pid).not.toBe(oldProcessId);
+    for (const { agent, approval } of pendingHires) {
+      const persistedApproval = await api<Approval>(apiBase, `/api/approvals/${approval.id}`);
+      expect(persistedApproval.status).toBe("pending");
+      expect(persistedApproval.payload).toEqual(approval.payload);
+      const persistedAgent = await api<Agent>(apiBase, `/api/agents/${agent.id}`);
+      expect(persistedAgent).toMatchObject({ status: "pending_approval", companyId: company.id, adapterType: agent.adapterType });
+      expect(persistedAgent.adapterConfig).toEqual(agent.adapterConfig);
+      expect(persistedAgent.runtimeConfig).toEqual(agent.runtimeConfig);
+      await api(apiBase, `/api/approvals/${approval.id}/approve`, {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ decisionNote: "Approve the configuration reviewed before restart" }),
+      });
+      const activated = await api<Agent>(apiBase, `/api/agents/${agent.id}`);
+      expect(activated).toMatchObject({ status: "idle", companyId: company.id, adapterType: agent.adapterType });
+      expect(activated.adapterConfig).toEqual(agent.adapterConfig);
+      expect(activated.runtimeConfig).toEqual(agent.runtimeConfig);
+      const decided = await api<Approval>(apiBase, `/api/approvals/${approval.id}`);
+      expect(decided.status).toBe("approved");
+      expect(decided.payload).toEqual(approval.payload);
+    }
+    expect(await api(apiBase, `/api/companies/${company.id}/heartbeat-runs`)).toEqual([]);
+  }, 60_000);
 
   it("exports a company package and imports it into new and existing companies", async () => {
     expect(serverProcess).not.toBeNull();

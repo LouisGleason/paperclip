@@ -17,6 +17,7 @@ import { aiConnectionsApi } from "../api/ai-connections";
 import { CodexLocalConfigFields } from "../adapters/codex-local/config-fields";
 import type { AdapterConfigFieldsProps } from "../adapters/types";
 import { DEFAULT_CODEX_LOCAL_MODEL } from "@paperclipai/adapter-codex-local";
+import { buildPaperclipRunnerConfig } from "@paperclipai/adapter-codex-local/ui";
 
 const mockAgentsApi = vi.hoisted(() => ({
   adapterModels: vi.fn(),
@@ -552,7 +553,10 @@ async function renderCreateClaudeSandbox(
 // `renderCreateForm` harness cannot show the environment-change reset, because
 // its `values` prop never changes. `valuesRef` exposes the current merged
 // values to the test.
-async function renderStatefulCreateClaudeSandbox(environments: Environment[]) {
+async function renderStatefulCreateClaudeSandbox(
+  environments: Environment[],
+  valueOverrides: Partial<typeof defaultCreateValues> = {},
+) {
   mockEnvironmentsApi.list.mockResolvedValue(environments);
 
   const container = document.createElement("div");
@@ -567,6 +571,7 @@ async function renderStatefulCreateClaudeSandbox(environments: Environment[]) {
       ...defaultCreateValues,
       adapterType: "claude_local",
       defaultEnvironmentId: "sandbox-1",
+      ...valueOverrides,
     },
   };
 
@@ -791,6 +796,44 @@ describe("AgentConfigForm environment selector", () => {
     await act(async () => save.click());
     expect(result.onSave).toHaveBeenCalledWith(expect.objectContaining({ adapterConfig: expect.objectContaining({ thinking: "low" }) }));
     expect(result.onSave.mock.calls[0][0].adapterConfig.effort).toBeUndefined();
+  });
+
+  it.each([
+    ["new", "openrouter/deepseek/deepseek-v4-flash-0731"],
+    ["imported", "openrouter/anthropic/claude-sonnet-4.6"],
+  ])("persists the selected OpenCode model for a %s native agent", async (_, originalModel) => {
+    const selectedModel = "openrouter/openai/gpt-5.5";
+    mockAgentsApi.adapterModels.mockResolvedValue([
+      { id: originalModel, label: "Original model" },
+      { id: selectedModel, label: "Selected model" },
+    ]);
+    const result = await renderStatefulCreateClaudeSandbox([], {
+      adapterType: "paperclip_runner",
+      defaultEnvironmentId: "",
+      model: originalModel,
+      adapterSchemaValues: {
+        provider: "opencode",
+        model: originalModel,
+        opencodePermissionMode: "allow",
+        lifecycleMode: "per_turn",
+        instructionsBundleMode: "inline",
+      },
+    });
+    roots.push(result.root);
+    await openPicker(result.container, "Model");
+    const selected = document.querySelector(`[role="listbox"][aria-label="Models"] [title="${selectedModel}"]`)?.closest("button");
+    expect(selected).toBeTruthy();
+    await act(async () => selected!.click());
+    await flushReact();
+
+    expect(result.container.querySelector('[aria-label="Model"]')?.textContent).toContain("Selected model");
+    expect(buildPaperclipRunnerConfig(result.valuesRef.current)).toMatchObject({
+      provider: "opencode",
+      model: selectedModel,
+      opencodePermissionMode: "allow",
+      lifecycleMode: "per_turn",
+      instructionsBundleMode: "inline",
+    });
   });
 
   it.each([

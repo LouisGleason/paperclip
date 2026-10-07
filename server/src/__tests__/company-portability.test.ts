@@ -6036,6 +6036,86 @@ describe("company portability", () => {
     expect(preview.plan.issuePlans).toHaveLength(0);
   });
 
+  it.each([
+    { runner: "legacy", adapterType: "codex_local", adapterConfig: { model: "gpt-5.6-sol" } },
+    { runner: "paperclip", adapterType: "paperclip_runner", adapterConfig: { provider: "codex", model: "gpt-5.6-sol" } },
+  ])("exports and imports the resolved $runner execution choice", async ({ runner, adapterType, adapterConfig }) => {
+    const portability = companyPortabilityService({} as any);
+    const [sourceAgent] = await agentSvc.list();
+    agentSvc.list.mockResolvedValue([{ ...sourceAgent, adapterType, adapterConfig }]);
+    const exported = await portability.exportBundle("company-1", {
+      include: { company: false, agents: true, projects: false, issues: false },
+    });
+    expect(asTextFile(exported.files[".paperclip.yaml"])).toContain(`runner: "${runner}"`);
+
+    agentSvc.list.mockResolvedValue([]);
+    agentSvc.create.mockImplementation(async (_companyId: string, input: Record<string, unknown>) => ({ id: "agent-created", ...input }));
+    const imported = await portability.importBundle({
+      source: { type: "inline", rootPath: exported.rootPath, files: exported.files },
+      include: { company: false, agents: true, projects: false, issues: false },
+      target: { mode: "existing_company", companyId: "company-1" },
+      agents: "all",
+      collisionStrategy: "rename",
+    }, "user-1");
+
+    expect(imported.agents).toEqual([expect.objectContaining({ action: "created", id: "agent-created" })]);
+    expect(agentSvc.create).toHaveBeenCalledWith("company-1", expect.objectContaining({ runner, adapterType, adapterConfig: expect.objectContaining(adapterConfig) }));
+  });
+
+  it("uses creation defaults for a runner-omitted package", async () => {
+    const portability = companyPortabilityService({} as any);
+    const [sourceAgent] = await agentSvc.list();
+    agentSvc.list.mockResolvedValue([{ ...sourceAgent, adapterType: "codex_local", adapterConfig: { model: "gpt-5.6-sol" } }]);
+    const exported = await portability.exportBundle("company-1", {
+      include: { company: false, agents: true, projects: false, issues: false },
+    });
+    const files = { ...exported.files, ".paperclip.yaml": asTextFile(exported.files[".paperclip.yaml"]).replace(/^\s*runner: "legacy"\n/gm, "") };
+    expect(files[".paperclip.yaml"]).not.toContain("runner:");
+    agentSvc.list.mockResolvedValue([]);
+    agentSvc.create.mockImplementation(async (_companyId: string, input: Record<string, unknown>) => ({ id: "agent-created", ...input }));
+
+    await portability.importBundle({
+      source: { type: "inline", rootPath: exported.rootPath, files },
+      include: { company: false, agents: true, projects: false, issues: false },
+      target: { mode: "existing_company", companyId: "company-1" },
+      agents: "all",
+      collisionStrategy: "rename",
+    }, "user-1");
+
+    expect(agentSvc.create).toHaveBeenCalledWith("company-1", expect.objectContaining({
+      runner: "paperclip", adapterType: "paperclip_runner", adapterConfig: expect.objectContaining({ provider: "codex", model: "gpt-5.6-sol" }),
+    }));
+  });
+
+  it.each([
+    { adapterType: "codex_local", adapterConfig: { model: "gpt-5.6-sol" } },
+    { adapterType: "paperclip_runner", adapterConfig: { provider: "codex", model: "gpt-5.6-sol" } },
+  ])("preserves existing $adapterType execution when replacing from a runner-omitted package", async ({ adapterType, adapterConfig }) => {
+    const portability = companyPortabilityService({} as any);
+    const [sourceAgent] = await agentSvc.list();
+    agentSvc.list.mockResolvedValue([{ ...sourceAgent, adapterType: "codex_local", adapterConfig: { model: "gpt-5.6-sol" } }]);
+    const exported = await portability.exportBundle("company-1", {
+      include: { company: false, agents: true, projects: false, issues: false },
+    });
+    const files = { ...exported.files, ".paperclip.yaml": asTextFile(exported.files[".paperclip.yaml"]).replace(/^\s*runner: "legacy"\n/gm, "") };
+    const existingAgent = { ...sourceAgent, adapterType, adapterConfig };
+    agentSvc.list.mockResolvedValue([existingAgent]);
+    agentSvc.update.mockImplementation(async (id: string, input: Record<string, unknown>) => ({ ...existingAgent, id, ...input }));
+
+    const imported = await portability.importBundle({
+      source: { type: "inline", rootPath: exported.rootPath, files },
+      include: { company: false, agents: true, projects: false, issues: false },
+      target: { mode: "existing_company", companyId: "company-1" },
+      agents: "all",
+      collisionStrategy: "replace",
+    }, "user-1");
+
+    expect(imported.agents).toEqual([expect.objectContaining({ action: "updated", id: existingAgent.id })]);
+    expect(agentSvc.create).not.toHaveBeenCalled();
+    expect(agentSvc.update).toHaveBeenCalledWith(existingAgent.id, expect.objectContaining({ adapterType, adapterConfig: expect.objectContaining(adapterConfig) }));
+    expect(agentSvc.update.mock.calls.every(([, patch]) => !patch.adapterType || patch.adapterType === adapterType)).toBe(true);
+  });
+
   it("accepts runner imports independently of the deprecated experimental flag", async () => {
     const portability = companyPortabilityService({} as any);
     const exported = await portability.exportBundle("company-1", {

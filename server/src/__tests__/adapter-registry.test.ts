@@ -1,4 +1,8 @@
-vi.mock("../services/native-runtime/setup-readiness.js", () => ({ assertNativeRunnerSetupReady: vi.fn(async () => undefined), assertRemoteAcpxSetupReady: vi.fn(async () => undefined) }));
+vi.mock("../services/native-runtime/setup-readiness.js", () => ({
+  assertNativeRunnerSetupReady: vi.fn(async () => undefined), assertRemoteAcpxSetupReady: vi.fn(async () => undefined),
+  testNativeAcpxAuthentication: vi.fn(async (_context: unknown, agent: string) => ({ adapterType: "paperclip_runner", status: "pass", testedAt: new Date().toISOString(), checks: [{ code: `${agent}_hello_probe_passed`, level: "info" }] })),
+}));
+import { testNativeAcpxAuthentication } from "../services/native-runtime/setup-readiness.js";
 import { probeAcpxClaudeInstallation, probeAcpxCursorInstallation } from "@paperclipai/paperclip-runner/live";
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 import { buildSandboxNpmInstallCommand } from "@paperclipai/adapter-utils";
@@ -51,6 +55,7 @@ const externalAdapter: ServerAdapterModule = {
 
 describe("server adapter registry", () => {
   beforeEach(() => {
+    vi.mocked(testNativeAcpxAuthentication).mockClear();
     unregisterServerAdapter("external_test");
     unregisterServerAdapter("hermes_local");
     unregisterServerAdapter("hermes_gateway");
@@ -309,7 +314,7 @@ describe("server adapter registry", () => {
     expect(result).toMatchObject({
       adapterType: "paperclip_runner",
       status: "pass",
-      checks: [{ code: "acpx_runtime_ready", level: "info" }],
+      checks: expect.arrayContaining([{ code: "acpx_runtime_ready", level: "info", message: expect.any(String) }, expect.objectContaining({ code: "claude_hello_probe_passed" })]),
     });
   });
 
@@ -324,7 +329,7 @@ describe("server adapter registry", () => {
     expect(probe).toHaveBeenLastCalledWith("custom-claude-model");
     expect(result).toMatchObject({
       status: ready ? "pass" : "fail",
-      checks: [expect.objectContaining({ code: ready ? "acpx_runtime_ready" : "acpx_runtime_unavailable" })],
+      checks: expect.arrayContaining([expect.objectContaining({ code: ready ? "acpx_runtime_ready" : "acpx_runtime_unavailable" })]),
     });
   });
 
@@ -340,8 +345,16 @@ describe("server adapter registry", () => {
     expect(probe).toHaveBeenLastCalledWith(model);
     expect(result).toMatchObject({
       status: ready ? "pass" : "fail",
-      checks: [expect.objectContaining({ code: ready ? "acpx_runtime_ready" : "acpx_runtime_unavailable" })],
+      checks: expect.arrayContaining([expect.objectContaining({ code: ready ? "acpx_runtime_ready" : "acpx_runtime_unavailable" })]),
     });
+  });
+
+  it("does not treat installed native Claude assets as successful account authentication", async () => {
+    vi.mocked(testNativeAcpxAuthentication).mockResolvedValueOnce({ adapterType: "paperclip_runner", status: "fail", testedAt: new Date().toISOString(), checks: [{ code: "claude_hello_probe_auth_required", level: "error", message: "The selected account needs sign-in." }] });
+    const config = { provider: "acpx", acpxAgent: "claude", model: "claude-sonnet-5", env: { CLAUDE_CODE_OAUTH_TOKEN: "selected-token" } };
+    const result = await requireServerAdapter("paperclip_runner").testEnvironment({ companyId: "company-1", adapterType: "paperclip_runner", config });
+    expect(result).toMatchObject({ status: "fail", checks: expect.arrayContaining([expect.objectContaining({ code: "acpx_runtime_ready" }), expect.objectContaining({ code: "claude_hello_probe_auth_required" })]) });
+    expect(testNativeAcpxAuthentication).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ companyId: "company-1", config }), "claude", "claude-sonnet-5");
   });
 
   it("keeps the ACPX Pi profile unavailable", async () => {

@@ -72,7 +72,7 @@ describe("server-owned agent runner selection", () => {
     ssh.run.mockResolvedValue({ stdout });
     const input = { adapterType, defaultEnvironmentId: "ssh-target" };
     await expect(resolveNewAgentRunnerForCompany({} as never, "company", input)).resolves.toMatchObject({ adapterType: expected });
-    expect(ssh.run).toHaveBeenCalledWith({ host: "qa-host" }, "uname -s; uname -m", { timeoutMs: 10_000, maxBuffer: 1024 });
+    expect(ssh.run).toHaveBeenCalledWith({ host: "qa-host" }, "uname -s; uname -m", { timeoutMs: 10_000 });
     if (expected !== "paperclip_runner") await expect(resolveNewAgentRunnerForCompany({} as never, "company", { ...input, runner: "paperclip" })).rejects.toThrow(/unavailable/);
   });
   it("reports an unreachable SSH target without silently changing runners", async () => {
