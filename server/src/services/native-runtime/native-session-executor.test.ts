@@ -2384,13 +2384,26 @@ describe("remote preinstalled executable discovery", () => {
 });
 
 describe("shared native remote artifact staging", () => {
-  it.each(["qualified", "unsupported-codex", "missing-codex"] as const)("stages the task's daemon and verifies Codex without a provider pack (%s)", async mode => {
+  it.each(["qualified", "unsupported-codex", "missing-codex", "missing-controller"] as const)("verifies the task's artifacts without a provider pack (%s)", async mode => {
     const root = await mkdtemp(join(tmpdir(), "native-ssh-artifacts-"));
     const guestBin = join(root, "guest-bin");
     const runtime = join(root, "owned-runtime");
-    const controllerRunner = resolve("packages/paperclip-runner/runner/target/debug/paperclip-runnerd");
+    const controllerRunner = join(root, "controller-runnerd");
     try {
       await mkdir(guestBin, { mode: 0o700 });
+      // Exercise the actual staging shell and checksum/metadata verification
+      // without depending on an unrelated local Rust build in the unit lane.
+      if (mode !== "missing-controller") {
+        const metadata = {
+          schema: "paperclip-runner/runnerd-build-metadata/v1",
+          binaryName: "paperclip-runnerd",
+          packageName: "@paperclipai/paperclip-runner",
+          binaryContractVersion: 2,
+          durableSessionCapabilities: ["unlimited_runtime", "connection_lease_renewal"],
+          prpTransportModes: ["dial_wss"],
+        };
+        await writeFile(controllerRunner, `#!/bin/sh\ntest "$1" = --build-metadata || exit 2\ncat <<'METADATA'\n${JSON.stringify(metadata)}\nMETADATA\n`, { mode: 0o700 });
+      }
       if (mode !== "missing-codex") {
         await writeFile(join(guestBin, "codex"), `#!/bin/sh\nprintf 'codex-cli ${mode === "unsupported-codex" ? "0.148.9" : "0.160.0"}\\n'\n`, { mode: 0o700 });
       }
@@ -2417,7 +2430,8 @@ describe("shared native remote artifact staging", () => {
         expect(createHash("sha256").update(await readFile(remoteBinary)).digest("hex")).toBe(createHash("sha256").update(await readFile(controllerRunner)).digest("hex"));
         expect(await readFile(remoteCodex, "utf8")).toContain(`exec '${join(guestBin, "codex")}' "$@"`);
       } else {
-        await expect(artifacts.prepare("dial_wss")).rejects.toThrow(mode === "missing-codex" ? "runner_remote_codex_artifact_unavailable" : "runner_remote_provider_artifact_incompatible");
+        await expect(artifacts.prepare("dial_wss")).rejects.toThrow(mode === "missing-controller" ? "runner_remote_artifact_unavailable"
+          : mode === "missing-codex" ? "runner_remote_codex_artifact_unavailable" : "runner_remote_provider_artifact_incompatible");
         await expect(access(remoteCodex)).rejects.toThrow();
       }
       expect(calls.some(input => JSON.stringify(input.args).includes("provider-pack"))).toBe(false);

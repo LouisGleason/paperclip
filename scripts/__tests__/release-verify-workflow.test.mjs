@@ -166,6 +166,17 @@ test("provider-free qualification reuses the installed browser oracle and preser
   assert.doesNotMatch(service.split("steps:")[0], /qualification_source_sha == ''/);
   assert.ok(service.indexOf("Validate paired immutable qualification inputs") < service.indexOf("Checkout repository"));
   assert.match(service, /ref: \$\{\{ inputs\.qualification_source_sha \|\| github\.sha \}\}/);
+  const bootstrap = service.match(/name: Build only the exact candidate CLI bootstrap[\s\S]*?(?=\n      - name:)/)?.[0];
+  assert.ok(bootstrap);
+  const sourceCheck = bootstrap.indexOf('test "$(git rev-parse HEAD)" = "$SOURCE_SHA"');
+  const sourceLock = bootstrap.indexOf('sha256sum pnpm-lock.yaml > "$RUNNER_TEMP/service-source-qualification/source-lock.sha256"');
+  const resolveLock = bootstrap.indexOf("pnpm install --resolution-only --ignore-scripts --no-frozen-lockfile");
+  const buildLock = bootstrap.indexOf('sha256sum pnpm-lock.yaml > "$RUNNER_TEMP/service-source-qualification/build-lock.sha256"');
+  const frozenInstall = bootstrap.indexOf("pnpm install --frozen-lockfile");
+  assert.ok(sourceCheck >= 0 && sourceCheck < sourceLock && sourceLock < resolveLock && resolveLock < buildLock && buildLock < frozenInstall,
+    "Exact-source qualification must record the committed and CI-generated lock before its frozen install");
+  assert.match(bootstrap, /source-sha\.txt/);
+  assert.match(bootstrap, /bootstrap-lock-resolution\.log/);
   assert.match(service, /pnpm --filter paperclipai build/);
   assert.match(service, /SERVICE_QUALIFICATION_RECEIPT:/);
   assert.match(workflow, /name: Launch Docker smoke harness\n\s+if: inputs\.qualification_source_sha == ''/);

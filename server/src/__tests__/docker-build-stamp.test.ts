@@ -109,6 +109,9 @@ describe("Docker Rust dependency cache", () => {
 describe("Standard image remote provider pack", () => {
   it("materializes qualified native bridge authority after building without changing legacy target availability", () => {
     const build = stageBody(dockerfile, "build");
+    const toolchain = stageBody(dockerfile, "rust-toolchain");
+    expect(toolchain).toMatch(/apt-get install -y --no-install-recommends[^\n]*\bpatch\b/);
+    expect(stageBody(dockerfile, "base")).not.toMatch(/apt-get install[^\n]*\bpatch\b/);
     const materialization = build.indexOf('RUN node scripts/prepare-bundled-package.mjs --docker-provider-graph /app/server "${TARGETARCH}"');
     expect(materialization).toBeGreaterThan(build.indexOf("RUN pnpm --filter @paperclipai/server build"));
     expect(build.indexOf("ARG TARGETARCH")).toBeLessThan(materialization);

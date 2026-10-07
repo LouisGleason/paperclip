@@ -118,6 +118,7 @@ describe("managed install commands", () => {
         ];
         fs.mkdirSync(path.join(checkout, "cli"), { recursive: true });
         fs.writeFileSync(path.join(checkout, "cli", "package.json"), JSON.stringify({ version: "0.3.1" }));
+        fs.writeFileSync(path.join(checkout, "pnpm-lock.yaml"), "source lockfile awaiting refresh\n");
         fs.mkdirSync(path.join(checkout, "scripts"), { recursive: true });
         fs.writeFileSync(path.join(checkout, "scripts", "release-package-manifest.json"), JSON.stringify(packages.map(({ dir, name }) => ({ dir, name }))));
         for (const workspacePackage of packages) {
@@ -127,6 +128,12 @@ describe("managed install commands", () => {
         return { stdout: "", stderr: "" };
       }
       if (file === "corepack") {
+        if (args.includes("--resolution-only")) {
+          fs.writeFileSync(path.join(_options!.cwd as string, "pnpm-lock.yaml"), "resolved checkout lockfile\n");
+        }
+        if (args.includes("--frozen-lockfile")) {
+          expect(fs.readFileSync(path.join(_options!.cwd as string, "pnpm-lock.yaml"), "utf8")).toBe("resolved checkout lockfile\n");
+        }
         if (args.includes("pack")) {
           const destination = args[args.indexOf("--pack-destination") + 1];
           const packageDir = args[args.indexOf("--dir") + 1];
@@ -160,12 +167,57 @@ describe("managed install commands", () => {
     expect(manifest).toMatchObject({ source: "git", repo: "HenkDz/paperclip", ref: "master", sha });
     expect(manifest?.payloadPath).toContain(path.join("git", sha.slice(0, 12)));
     expect(runCommand.mock.calls.filter(([command, args]) => command === "curl" && args.includes("--output"))).toHaveLength(1);
-    expect(runCommand.mock.calls.filter(([command, args]) => command === "corepack" && args[1] === "install")).toHaveLength(1);
+    const pnpmInstallCalls = runCommand.mock.calls.filter(([command, args]) => command === "corepack" && args[1] === "install");
+    expect(pnpmInstallCalls.map(([, args]) => args)).toEqual([
+      ["pnpm", "install", "--resolution-only", "--ignore-scripts", "--no-frozen-lockfile"],
+      ["pnpm", "install", "--frozen-lockfile"],
+    ]);
+    const checkoutPath = runCommand.mock.calls.find(([command]) => command === "tar")?.[1].at(-1);
+    expect(checkoutPath).toContain(path.join("installs", "git", `.${sha.slice(0, 12)}.tmp-`));
+    for (const [, , options] of pnpmInstallCalls) expect(options?.cwd).toBe(checkoutPath);
+    expect(runCommand.mock.calls.indexOf(pnpmInstallCalls[1])).toBeLessThan(
+      runCommand.mock.calls.findIndex(([command]) => command === "bash"),
+    );
     expect(runCommand.mock.calls.filter(([command, args]) => command === "corepack" && args.includes("pack"))).toHaveLength(2);
     expect(runCommand.mock.calls.filter(([command, args]) => command === process.execPath && args[0]?.endsWith("prepare-bundled-package.mjs"))).toHaveLength(1);
     expect(runCommand.mock.calls.filter(([command, args]) => command === "npm" && args[0] === "pack")).toHaveLength(2);
     const installCall = runCommand.mock.calls.find(([command, args]) => command === "npm" && args[0] === "install");
     expect(installCall?.[1].filter((arg) => arg.endsWith(".tgz"))).toHaveLength(4);
+  });
+
+  it("cleans a failed Git checkout lockfile resolution and preserves the active install", async () => {
+    const previousSha = "1".repeat(40);
+    await installCommand({ ref: previousSha, yes: true }, { runCommand: createGitCheckoutRunCommand(previousSha) });
+    const paths = resolveInstallStorePaths();
+    const previousManifest = fs.readFileSync(paths.manifestPath, "utf8");
+    const previousTarget = fs.readlinkSync(paths.currentPath);
+    const previousShim = fs.readFileSync(paths.shimPath, "utf8");
+    const sha = "2".repeat(40);
+    const checkoutCommands = createGitCheckoutRunCommand(sha);
+    let failedCheckout: string | undefined;
+    const runCommand = vi.fn(async (file: string, args: string[], options?: Parameters<CommandRunner>[2]) => {
+      if (file === "corepack" && args.includes("--resolution-only")) {
+        failedCheckout = options?.cwd as string;
+        expect(fs.existsSync(paths.lockPath)).toBe(true);
+        fs.writeFileSync(path.join(failedCheckout, "pnpm-lock.yaml"), "partial failed resolution\n");
+        throw new Error("dependency lockfile resolution failed");
+      }
+      return checkoutCommands(file, args, options);
+    });
+
+    await expect(installCommand({ ref: sha, yes: true }, { runCommand }))
+      .rejects.toThrow("dependency lockfile resolution failed");
+
+    expect(failedCheckout).toBeDefined();
+    expect(fs.existsSync(path.dirname(failedCheckout!))).toBe(false);
+    expect(fs.readdirSync(path.join(paths.installsRoot, "git"))).toEqual([previousSha.slice(0, 12)]);
+    expect(runCommand.mock.calls.some(([, args]) => args.includes("--frozen-lockfile"))).toBe(false);
+    expect(runCommand.mock.calls.some(([file]) => file === "bash" || file === "npm")).toBe(false);
+    expect(fs.existsSync(paths.lockPath)).toBe(false);
+    expect(fs.readFileSync(paths.manifestPath, "utf8")).toBe(previousManifest);
+    expect(fs.readlinkSync(paths.currentPath)).toBe(previousTarget);
+    expect(fs.readFileSync(paths.shimPath, "utf8")).toBe(previousShim);
+    expect(fs.existsSync(readInstallManifest(paths)!.payloadPath)).toBe(true);
   });
 
   it("builds git checkouts with NODE_ENV cleared so ambient production mode keeps devDependencies", async () => {
@@ -178,7 +230,7 @@ describe("managed install commands", () => {
       file === "corepack" ||
       (file === "npm" && args[0] === "pack") ||
       (file === process.execPath && args[0]?.endsWith("prepare-bundled-package.mjs")));
-    expect(buildCalls).toHaveLength(9);
+    expect(buildCalls).toHaveLength(10);
     for (const call of buildCalls) {
       const env = call[2]?.env;
       expect(env, `${call[0]} ${call[1].join(" ")} must run with an explicit env`).toBeDefined();

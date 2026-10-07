@@ -874,12 +874,6 @@ importers:
 
   server:
     dependencies:
-      '@agentclientprotocol/claude-agent-acp':
-        specifier: 0.73.0
-        version: 0.73.0(patch_hash=riqgguivxjxydoydnzpedjy5au)(@anthropic-ai/sdk@0.129.0(zod@4.6.5))(@modelcontextprotocol/sdk@1.30.0(zod@4.6.5))
-      '@agentclientprotocol/codex-acp':
-        specifier: 1.6.2
-        version: 1.6.2(patch_hash=ilkykmzaax6atpgtip6bxikv6i)
       '@ai-sdk/openai':
         specifier: 4.0.86
         version: 4.0.86(zod@4.4.3)
