@@ -12,10 +12,10 @@ One owner carries implementation, verification and relevant review fixes through
 - Branch: `codex/default-agent-runner`
 - Base: `799e4d556` (master)
 - PR: https://github.com/paperclipai/paperclip/pull/15422
-- Preview: http://127.0.0.1:3108/RUN/agents
-- Evidence task: http://127.0.0.1:3108/RUN/issues/RUN-2
-- Last live server revision: `8609542993a524597cf01c4e615bfe4bd4b0a8da`; review fixes are being committed and the test-drive will be restarted on the final tested revision.
-- Next action: push review fixes, rerun current-head CI/review, complete available onboarding acceptance and the required full test run.
+- Preview: http://127.0.0.1:3104/RUN/agents
+- Evidence task: http://127.0.0.1:3104/RUN/issues/RUN-2
+- Last live server source: `326e7ef56c8100f7f89e16f226a4206a14bb90d2`; the test-drive will be restarted after the final security review fix.
+- Next action: verify and push the credential-routing guard fix, finish the running test groups, and confirm current-head CI and security review.
 
 ## Implemented
 
@@ -26,22 +26,23 @@ Live testing and regression review fixed historical-adapter SQL projection, buil
 ## Verification state (2026-10-07)
 
 - Workspace typecheck and token gates pass after review fixes.
-- Production build and Storybook build passed; final rebuild pending.
+- Production build and Storybook build passed after the functional review fixes.
 - Focused review regression run: 422 passed, one AgentCore test step-label fixture corrected; follow-up 66 passed including that test and the two isolated full-suite timeout cases.
 - Initial full suite: 16,209 passed, 17 failed. Failures included stale legacy expectations, environment-readiness mocks, an approval service argument and two timeouts. Addressed; full required suite rerunning.
-- Initial CI: typecheck, build, runner static/Rust/Vitest, Docker context and canary checks passed. General/serialized/e2e failures are being corrected and rerun. Greptile's four reported defects have fixes and focused coverage; re-review pending. This is not yet a green or merge-ready handoff.
+- Greptile reviewed `326e7ef56` at 5/5 with all five findings resolved. Current CI has passed the UI/CLI and browser regressions. The security scanner then found that automatic runner conversion bypassed the agent environment guard. The fix applies that guard to underlying harness identity before and after resolution, including partial native updates, while preserving the existing explicit pool-auth override. Credential-routing regression coverage and final security review are in progress.
+- The current full server run encountered two accounting-test timeouts; all 31 tests in that file passed on an isolated rerun. Remaining server, workspace and serialized groups are running. This is not yet a fully green handoff.
 
 ## Observed live acceptance
 
 - Ordinary picker: no Paperclip Runner tile; Grok selected normally and reused the saved xAI key. Native binary/provider readiness passed.
-- Native Grok `11ac687e-ca6a-4b78-a86c-41023c8b2ad4`: RUN-2 answered 17 + 25 with 42; follow-up answered 50. Both runs succeeded with native execution recorded.
+- Native Grok `11ac687e-ca6a-4b78-a86c-41023c8b2ad4`: RUN-2 answered 17 + 25 with 42; follow-up answered 50. Both runs succeeded with native execution recorded. A further follow-up after the server restart returned 51 and succeeded with `adapterType: paperclip_runner`, `runtimeMode: native`.
 - Explicit legacy Grok `8806f807-8b3a-4a9b-85f9-4cbbc55990f7`: Advanced Legacy selected, setup passed, RUN-3 answered 6 × 7 with 42 and succeeded as `grok_local`.
 - Unsupported Process agent created through the actual CLI without a runner preference; UI Run now succeeded as `process`, run `6be96bc4-128c-49cd-9aba-82f898a8d8e7`.
 - Production UI imported a local team package omitting runner choice. Agent `0fc4a759-b31d-459a-a05b-9e1c7aad4b19` persisted `paperclip_runner`, ACPX Grok, model `grok-4.7`.
 - Actual export records `adapter.runner: paperclip`. Automated round-trip coverage verifies execution preservation.
 - Unrelated title edits through the UI preserved the native and legacy Grok agents' execution after reload and API readback.
 - Cursor setup with no explicit model showed `cursor requires an explicit provider model`; Finish setup was disabled. Selecting Legacy in Advanced invalidated the stale test result.
-- Server onboarding seed selected native Grok. First-agent UI onboarding remains in progress.
+- Server onboarding seed selected native Grok. First-agent UI onboarding is blocked at its recommended Claude/Codex account setup by the missing logins below; the server seed does not substitute for that journey.
 - RUN-1 retains a historical failed run from the SQL projection defect; RUN-2 passed after the repair. Restart recovery of that old run did not pass and is not counted as successful recovery proof.
 
 ## Precise remaining dependencies
@@ -54,10 +55,12 @@ New harness qualification, existing-agent migration, legacy removal, permission-
 
 Screenshots are uploaded as attachment-backed artifact work products on RUN-2, not only workspace files.
 
-- [Ordinary harness picker](http://127.0.0.1:3108/api/attachments/2e6efe43-e49a-4d65-9a43-4e3e8da0ff38/content) — work product `575c48a4-f11f-4ea3-a876-2fe4ac0489f6`.
-- [Native Grok setup passed](http://127.0.0.1:3108/api/attachments/d82ef090-76b9-45d8-aac8-a1ba733e1ec7/content) — work product `1c544e99-0293-4e83-8c87-ebcf31a303c8`.
-- [Native Grok task and follow-up](http://127.0.0.1:3108/api/attachments/b797d434-6a4a-4859-ab3d-265ffa1a93b9/content) — work product `bd6fb0b4-37d6-40ed-875c-d8bed6517370`.
-- [Explicit legacy Grok task](http://127.0.0.1:3108/api/attachments/b3bdb8e4-dbbc-4755-be82-547075e23712/content) — work product `695fb35f-3a2a-45cd-8189-acb39cbae80c`.
-- [Automatic team import](http://127.0.0.1:3108/api/attachments/d28fcf60-7af9-42ad-b757-995eaf185d9d/content) — work product `b1353ddb-9335-4657-b2af-6a2a8149d651`.
-- [Unsupported harness stays legacy](http://127.0.0.1:3108/api/attachments/7543c47f-a8c5-400e-a9c7-4fbbadfddf34/content) — work product `845cd3d1-a91c-491f-a2e6-6b6a2a158cf4`.
-- [Actionable Cursor setup failure and runner override](http://127.0.0.1:3108/api/attachments/e7aa5c95-fed6-4472-bf57-3350d3e7bbf6/content) — work product `e71aeb0b-41d8-4da6-b154-221b158cc485`.
+- [Ordinary harness picker](http://127.0.0.1:3104/api/attachments/2e6efe43-e49a-4d65-9a43-4e3e8da0ff38/content) — work product `575c48a4-f11f-4ea3-a876-2fe4ac0489f6`.
+- [Native Grok setup passed](http://127.0.0.1:3104/api/attachments/d82ef090-76b9-45d8-aac8-a1ba733e1ec7/content) — work product `1c544e99-0293-4e83-8c87-ebcf31a303c8`.
+- [Native Grok task and follow-up](http://127.0.0.1:3104/api/attachments/b797d434-6a4a-4859-ab3d-265ffa1a93b9/content) — work product `bd6fb0b4-37d6-40ed-875c-d8bed6517370`.
+- [Explicit legacy Grok task](http://127.0.0.1:3104/api/attachments/b3bdb8e4-dbbc-4755-be82-547075e23712/content) — work product `695fb35f-3a2a-45cd-8189-acb39cbae80c`.
+- [Automatic team import](http://127.0.0.1:3104/api/attachments/d28fcf60-7af9-42ad-b757-995eaf185d9d/content) — work product `b1353ddb-9335-4657-b2af-6a2a8149d651`.
+- [Unsupported harness stays legacy](http://127.0.0.1:3104/api/attachments/7543c47f-a8c5-400e-a9c7-4fbbadfddf34/content) — work product `845cd3d1-a91c-491f-a2e6-6b6a2a158cf4`.
+- [Actionable Cursor setup failure and runner override](http://127.0.0.1:3104/api/attachments/e7aa5c95-fed6-4472-bf57-3350d3e7bbf6/content) — work product `e71aeb0b-41d8-4da6-b154-221b158cc485`.
+
+- [Native Grok follow-up after restart](http://127.0.0.1:3104/api/attachments/96941d27-7881-4f37-8eea-c772412b2f06/content) — work product `6af9e9f8-117d-4821-9de3-aebc564d4823`.

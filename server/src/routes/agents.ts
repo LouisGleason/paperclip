@@ -2982,13 +2982,17 @@ export function agentRoutes(
     adapterType: string,
     env: unknown,
     allowPlainCredentials: boolean,
+    allowNativeOpenCodeConfig = false,
   ): boolean {
     const envRecord = asRecord(env);
     if (!envRecord) return false;
     const allowedKeys = LOCAL_ADAPTER_CREDENTIAL_ENV_KEYS[adapterType] ?? [];
     return Object.entries(envRecord).every(([key, value]) =>
       (allowedKeys.includes(key) && isInheritableCredentialReference(value)) ||
-      (allowPlainCredentials && POOL_AUTH_OVERRIDE_ENV_KEYS.includes(key as typeof POOL_AUTH_OVERRIDE_ENV_KEYS[number]) && asEnvBindingString(value) !== null),
+      (allowPlainCredentials && (
+        POOL_AUTH_OVERRIDE_ENV_KEYS.includes(key as typeof POOL_AUTH_OVERRIDE_ENV_KEYS[number]) ||
+        (allowNativeOpenCodeConfig && key === "OPENCODE_CONFIG_CONTENT")
+      ) && asEnvBindingString(value) !== null),
     );
   }
 
@@ -2998,10 +3002,18 @@ export function agentRoutes(
     adapterConfig: Record<string, unknown>,
     allowPlainCredentials = false,
   ) {
-    if (req.actor.type !== "agent" || !adapterType.endsWith("_local")) return;
+    // Runner selection must not weaken the harness's agent-authored config
+    // restrictions, especially before a hire inherits provider credentials.
+    const harness = agentHarnessType(adapterType, adapterConfig);
+    if (req.actor.type !== "agent" || !harness.endsWith("_local")) return;
     const changedKeys = LOCAL_ADAPTER_HOST_COMMAND_KEYS.filter((key) =>
       adapterConfig[key] !== undefined &&
-      (key !== "env" || !containsOnlyLocalAdapterCredentialRefs(adapterType, adapterConfig.env, allowPlainCredentials)),
+      (key !== "env" || !containsOnlyLocalAdapterCredentialRefs(
+        harness,
+        adapterConfig.env,
+        allowPlainCredentials,
+        adapterType === "paperclip_runner" && harness === "opencode_local",
+      )),
     );
     if (changedKeys.length === 0) return;
     throw forbidden(
@@ -4654,6 +4666,8 @@ export function agentRoutes(
       ...hireInput
     } = req.body;
 
+    const hireAllowsPlainCredentials = await callerUsesAiConnectionPool(req, companyId);
+    assertNoAgentLocalAdapterHostCommandMutation(req, hireInput.adapterType, hireInput.adapterConfig ?? {}, hireAllowsPlainCredentials);
     if (inheritRuntimeFrom === "caller") {
       if (req.actor.type !== "agent" || !req.actor.agentId) {
         throw forbidden("Only an agent can inherit native runtime settings from the caller");
@@ -4691,7 +4705,7 @@ export function agentRoutes(
       rawHireAdapterConfig,
     );
     assertNoAgentAdapterConfigMutation(req, rawHireAdapterConfig);
-    assertNoAgentLocalAdapterHostCommandMutation(req, hireInput.adapterType, rawHireAdapterConfig, await callerUsesAiConnectionPool(req, companyId));
+    assertNoAgentLocalAdapterHostCommandMutation(req, hireInput.adapterType, rawHireAdapterConfig, hireAllowsPlainCredentials);
     assertNoAgentProcessAdapterMutation(req, hireInput.adapterType, Object.keys(rawHireAdapterConfig).length > 0);
     const hiredAgentId = randomUUID();
     const authInheritance = await applyHiringAgentAuthInheritance(
@@ -4991,6 +5005,8 @@ export function agentRoutes(
       runner: createRunner,
       ...createInput
     } = req.body;
+    const createAllowsPlainCredentials = await callerUsesAiConnectionPool(req, companyId);
+    assertNoAgentLocalAdapterHostCommandMutation(req, createInput.adapterType, createInput.adapterConfig ?? {}, createAllowsPlainCredentials);
     Object.assign(createInput, await resolveNewAgentRunnerForCompany(db, companyId, { ...createInput, runner: createRunner }));
     createInput.adapterType = await assertSelectableAdapterType(createInput.adapterType);
     const rawCreateAdapterConfig = (createInput.adapterConfig ?? {}) as Record<string, unknown>;
@@ -5005,7 +5021,7 @@ export function agentRoutes(
       rawCreateAdapterConfig,
     );
     assertNoAgentAdapterConfigMutation(req, rawCreateAdapterConfig);
-    assertNoAgentLocalAdapterHostCommandMutation(req, createInput.adapterType, rawCreateAdapterConfig, await callerUsesAiConnectionPool(req, companyId));
+    assertNoAgentLocalAdapterHostCommandMutation(req, createInput.adapterType, rawCreateAdapterConfig, createAllowsPlainCredentials);
     assertNoAgentProcessAdapterMutation(req, createInput.adapterType, Object.keys(rawCreateAdapterConfig).length > 0);
     const agentId = randomUUID();
     const requestedAdapterConfig = applyCodexLocalKeyIsolation(
@@ -5718,7 +5734,7 @@ export function agentRoutes(
       if (changingAdapterType || requestedAdapterConfig) {
         assertNoAgentLocalAdapterHostCommandMutation(
           req,
-          requestedAdapterType,
+          agentHarnessType(requestedAdapterType, rawEffectiveAdapterConfig),
           changingAdapterType ? rawEffectiveAdapterConfig : (requestedAdapterConfig ?? {}),
         );
       }

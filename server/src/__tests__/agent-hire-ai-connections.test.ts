@@ -369,20 +369,15 @@ describe("agent-created hires use managed AI connections", () => {
       ["openai", "claude_local", {}, "OPENAI_API_KEY"],
       ["anthropic", "paperclip_runner", { provider: "codex" }, "ANTHROPIC_API_KEY"],
       ["openai", "paperclip_runner", { provider: "acpx", acpxAgent: "claude" }, "OPENAI_API_KEY"],
-    ] as const)(`${endpoint}: ignores the %s auth key for a different provider in %s`, async (provider, adapterType, config, key) => {
+    ] as const)(`${endpoint}: rejects the %s plain auth key for a different provider in %s`, async (provider, adapterType, config, key) => {
       const f = await fixture(provider);
       const response = await request(f.app).post(`/api/companies/${f.companyId}/${endpoint}`).send({
         name: "Cross-provider config", role: "engineer", adapterType,
         ...(adapterType.endsWith("_local") ? { runner: "legacy" } : {}),
         adapterConfig: { ...config, env: { [key]: "leftover-parent-setting" } },
       });
-      if (adapterType.endsWith("_local")) {
-        expect(response.status).toBe(403);
-        expect(response.body.error).toContain("host-executed local adapter settings");
-        return;
-      }
-      const agent = hired(response);
-      expect(agent.runtimeConfig.aiConnection).toMatchObject({ provider: provider === "anthropic" ? "openai" : "anthropic", mode: "responsible_user" });
+      expect(response.status).toBe(403);
+      expect(response.body.error).toContain("host-executed local adapter settings");
     });
   }
 
