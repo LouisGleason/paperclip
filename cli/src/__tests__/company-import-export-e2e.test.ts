@@ -1,5 +1,5 @@
 import { execFile, spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -329,6 +329,15 @@ describeEmbeddedPostgres("paperclipai company import/export e2e", () => {
     await stopServerProcess(serverProcess);
     await tempDb?.cleanup();
     if (tempRoot) {
+      // Native imports materialize immutable instruction/skill directories.
+      // Restore write access only inside this fixture, without following links.
+      const makeWritable = (directory: string) => {
+        const stat = lstatSync(directory);
+        if (!stat.isDirectory()) return;
+        chmodSync(directory, stat.mode | 0o700);
+        for (const entry of readdirSync(directory)) makeWritable(path.join(directory, entry));
+      };
+      makeWritable(tempRoot);
       rmSync(tempRoot, { recursive: true, force: true });
     }
   });
