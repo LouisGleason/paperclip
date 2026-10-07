@@ -43,7 +43,7 @@ RUN export PNPM_WORKERS="$(node -p 'require("node:os").availableParallelism()')"
     && pnpm install --frozen-lockfile --filter '@paperclipai/paperclip-runner...'
 ARG PAPERCLIP_RUNNER_SOURCE_REVISION
 # Optional qualification assets; this never promotes candidate profiles.
-ARG PAPERCLIP_RUNNER_CANDIDATE_PROVIDERS=
+ARG PAPERCLIP_RUNNER_CANDIDATE_PROVIDERS=hermes
 RUN test -n "${PAPERCLIP_RUNNER_SOURCE_REVISION}"
 RUN case ",${PAPERCLIP_RUNNER_CANDIDATE_PROVIDERS}," in \
       *,hermes,*) apt-get update && apt-get install -y --no-install-recommends python3-venv \
