@@ -17,11 +17,15 @@ import {
   issueComments,
   issueThreadInteractions,
   issues,
+  routines,
+  routineRuns,
+  routineTriggers,
 } from "@paperclipai/db";
 import { startEmbeddedPostgresTestDatabase } from "../../__tests__/helpers/embedded-postgres.js";
 import { initializeRunIdentity, reserveSteeredIdentity, reconcileSteeredIdentity } from "../run-identity.js";
 import { documentService } from "../documents.js";
 import { issueService } from "../issues.js";
+import { routineService } from "../routines.js";
 import { PaperclipRunnerToolAuthority } from "./paperclip-runner-tool-authority.js";
 import { createAssignedMcpTools } from "./assigned-mcp-tools.js";
 import type { ToolGatewayService } from "../tool-gateway.js";
@@ -96,6 +100,44 @@ describe("PaperclipRunnerToolAuthority", () => {
     await temporary?.cleanup();
   });
 
+  it("manages self-assigned routines with durable retry and revision protection", async () => {
+    const userId = "routine-owner";
+    await db.insert(authUsers).values({ id: userId, name: "Routine owner", email: "routine-owner@example.test", createdAt: new Date(), updatedAt: new Date() });
+    await db.insert(companyMemberships).values({ companyId, principalType: "user", principalId: userId, status: "active", membershipRole: "owner" });
+    await db.update(issues).set({ responsibleUserId: userId }).where(eq(issues.id, issueId));
+    const authority = new PaperclipRunnerToolAuthority(db, { companyId, agentId, issueId, runId });
+    const input = { idempotencyKey: "routine-create", action: "create", title: "Daily research",
+      schedule: { cronExpression: "0 9 * * 1-5", timezone: "America/Chicago" } };
+    const created = await authority.execute({ tool: "manage_routine", callId: "routine-create", arguments: input }) as { routineId: string; baseRevisionId: string };
+    expect(created).toMatchObject({ status: "active", assigneeAgentId: agentId, schedules: [{ timezone: "America/Chicago" }] });
+    expect(await authority.execute({ tool: "manage_routine", callId: "retry", arguments: input })).toEqual(created);
+    expect(await db.select().from(routineTriggers).where(eq(routineTriggers.routineId, created.routineId))).toHaveLength(1);
+    const paused = await authority.execute({ tool: "manage_routine", callId: "pause", arguments: {
+      idempotencyKey: "routine-pause", action: "pause", routineId: created.routineId, baseRevisionId: created.baseRevisionId,
+    } }) as { baseRevisionId: string };
+    expect(paused).toMatchObject({ status: "paused" });
+    const scheduler = routineService(db, { runtimeEnv: {}, heartbeat: { wakeup: async () => null } });
+    const due = new Date("2026-10-07T14:00:00Z");
+    await db.update(routineTriggers).set({ nextRunAt: due }).where(eq(routineTriggers.routineId, created.routineId));
+    expect(await scheduler.tickScheduledTriggers(due)).toEqual({ triggered: 0 });
+    await expect(authority.execute({ tool: "manage_routine", callId: "stale", arguments: {
+      idempotencyKey: "routine-stale", action: "resume", routineId: created.routineId, baseRevisionId: created.baseRevisionId,
+    } })).rejects.toThrow();
+    expect(await authority.execute({ tool: "manage_routine", callId: "resume", arguments: {
+      idempotencyKey: "routine-resume", action: "resume", routineId: created.routineId, baseRevisionId: paused.baseRevisionId,
+    } })).toMatchObject({ status: "active" });
+    await db.update(routineTriggers).set({ nextRunAt: due }).where(eq(routineTriggers.routineId, created.routineId));
+    expect(await scheduler.tickScheduledTriggers(due)).toEqual({ triggered: 1 });
+    expect(await scheduler.tickScheduledTriggers(due)).toEqual({ triggered: 0 });
+    const firings = await db.select().from(routineRuns).where(eq(routineRuns.routineId, created.routineId));
+    expect(firings).toMatchObject([{ status: "issue_created", source: "schedule" }]);
+    const [scheduledIssue] = await db.select().from(issues).where(eq(issues.id, firings[0]!.linkedIssueId!));
+    expect(scheduledIssue).toMatchObject({ companyId, assigneeAgentId: agentId, responsibleUserId: userId });
+    await db.update(routines).set({ assigneeAgentId: null }).where(eq(routines.id, created.routineId));
+    await expect(authority.execute({ tool: "manage_routine", callId: "reassigned-retry", arguments: input })).rejects.toThrow("assigned to themselves");
+    await db.update(issues).set({ responsibleUserId: null }).where(eq(issues.id, issueId));
+  });
+
   it("advertises only real bindings and reads the bound task", async () => {
     const authority = new PaperclipRunnerToolAuthority(db, {
       companyId,
@@ -130,6 +172,7 @@ describe("PaperclipRunnerToolAuthority", () => {
         "submit_suggestion",
         "request_human_input",
         "create_task",
+        "manage_routine",
         "set_dependencies",
         "set_task_monitor",
         "list_documents",
@@ -860,6 +903,7 @@ describe("PaperclipRunnerToolAuthority", () => {
   });
 
   it("writes a real revisioned document and replays the mutation receipt", async () => {
+    const before = await db.select().from(documents).where(eq(documents.companyId, companyId));
     const body = credentialDocumentBody;
     const authority = new PaperclipRunnerToolAuthority(db, {
       companyId,
@@ -898,7 +942,7 @@ describe("PaperclipRunnerToolAuthority", () => {
         .select()
         .from(documents)
         .where(eq(documents.companyId, companyId)),
-    ).toHaveLength(1);
+    ).toHaveLength(before.length + 1);
     expect(await documentService(db).getIssueDocumentByKey(issueId, "plan"))
       .toMatchObject({ body: credentialDocumentBody });
     const documentActivity = await db
@@ -1028,6 +1072,7 @@ describe("PaperclipRunnerToolAuthority", () => {
   });
 
   it("creates ordinary children, preserves blockers, and deduplicates across runs", async () => {
+    const initialChildCount = (await db.select().from(issues).where(eq(issues.parentId, issueId))).length;
     const wakes: Array<{ agentId: string; options: Record<string, unknown> }> =
       [];
     const authority = new PaperclipRunnerToolAuthority(db, {
@@ -1244,7 +1289,7 @@ describe("PaperclipRunnerToolAuthority", () => {
     expect(retryWakes).toHaveLength(0);
     expect(
       await db.select().from(issues).where(eq(issues.parentId, issueId)),
-    ).toHaveLength(3);
+    ).toHaveLength(initialChildCount + 3);
   });
 
   it("rejects mutations after reassignment, run replacement, or terminalization", async () => {
