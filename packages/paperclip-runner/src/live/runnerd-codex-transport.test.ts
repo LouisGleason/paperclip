@@ -41,6 +41,7 @@ import { parsePaperclipQuestionSet } from "../contracts/question-set.js";
 import { ACPX_CREDENTIAL_BINDING_ENV, createAcpxCredentialBinding, createAcpxSidecarHostEnvironment } from "../drivers/acpx/environment.js";
 import { DurablePrpControlPlane } from "../control-plane/durable-prp-control-plane.js";
 import * as durableControlPlane from "../control-plane/durable-prp-control-plane.js";
+import * as codexCommandRuntime from "../drivers/codex/codex-command.js";
 
 import {
   NATIVE_RUNTIME_ASSET_SCHEMA,
@@ -69,6 +70,7 @@ import {
   parseAcpxTurnControlCapabilities,
   authorizedToolSetForProvider,
   createCapabilityRunnerdCodexTransport,
+  probeNativeRunnerEnvironment,
   createCapabilityRunnerdProviderEnvironment,
   createRunnerdCodexAppServerArgs,
   defaultCapabilityRunnerdBinary as qualifiedCapabilityRunnerdBinary,
@@ -1573,6 +1575,8 @@ it("preserves OpenCode runtime bindings when a durable runner is respawned", () 
       environment: {
         PATH: "/bin",
         OPENROUTER_API_KEY: "test-provider-key",
+        OPENAI_API_KEY: "test-openai-key",
+        ANTHROPIC_API_KEY: "test-anthropic-key",
         HOME: "/host/home",
         CODEX_HOME: "/host/codex-home",
         DATABASE_URL: "must-not-reach-runnerd",
@@ -1602,6 +1606,8 @@ it("preserves OpenCode runtime bindings when a durable runner is respawned", () 
     PAPERCLIP_NORMALIZED_SESSION_ID: "session-1",
     PAPERCLIP_NATIVE_RUNTIME_CONTEXT_PATH: "/isolated/runtime-context.json",
     OPENROUTER_API_KEY: "test-provider-key",
+    OPENAI_API_KEY: "test-openai-key",
+    ANTHROPIC_API_KEY: "test-anthropic-key",
   });
   expect(environment.HOME).toBeUndefined();
   expect(environment.CODEX_HOME).toBeUndefined();
@@ -1634,6 +1640,25 @@ it("preserves OpenCode runtime bindings when a durable runner is respawned", () 
     "allow",
   );
 });
+
+it.each([undefined, {}, { OPENROUTER_API_KEY: undefined, OPENAI_API_KEY: undefined, ANTHROPIC_API_KEY: undefined }, { OPENROUTER_API_KEY: "", OPENAI_API_KEY: "", ANTHROPIC_API_KEY: "" }])(
+  "does not bind ambient OpenCode credentials when explicit bindings are %j",
+  (environment) => {
+    const keys = ["OPENROUTER_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"] as const;
+    for (const key of keys) vi.stubEnv(key, `ambient-${key}-canary`);
+    try {
+      const resolved = createCapabilityRunnerdProviderEnvironment({
+        provider: "opencode",
+        options: { provider: "opencode", environment },
+        identity: { runnerInstanceId: "runner-1", environmentLeaseId: "lease-1", runId: "run-1", normalizedSessionId: "session-1", turnId: "turn-1", itemId: "item-1" },
+        codexHome: "/isolated/home", runtimeContextPath: "/isolated/context.json", hasRuntimeContext: false,
+      });
+      for (const key of keys) expect(resolved[key]).toBe(environment?.[key]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  },
+);
 
 it("passes the configured Codex API key only through the provider process environment", () => {
   const environment = createCapabilityRunnerdProviderEnvironment({
@@ -1937,6 +1962,26 @@ it("denies the isolated Codex home without denying a remote execution workspace"
   expect(serialized).not.toContain('"/workspaces/task"="none"');
   expect(serialized).not.toContain('"/workspaces/task/.codex"="none"');
   expect(serialized).toContain('\":workspace_roots\"={\".\"=\"write\"}');
+});
+
+it("rejects remote Codex without a guest executable before resolving controller dependencies", async () => {
+  const root = await mkdtemp(join(tmpdir(), "paperclip-runner-remote-codex-command-"));
+  const resolver = vi.spyOn(codexCommandRuntime, "resolvePinnedCodexCommand").mockImplementation(() => {
+    throw new Error("Controller package resolution must not authorize a guest executable");
+  });
+  const { transport } = createCapabilityRunnerdCodexTransport({
+    provider: "codex", stateDirectory: root, sourceCodexHome: "",
+    runnerFilesystemRoot: "/workspaces/task/.paperclip-runtime/session",
+  });
+  try {
+    await expect(transport.request("thread/start", { cwd: "/workspaces/task", model: "gpt-6.1-sol", dynamicTools: [] }))
+      .rejects.toThrow("runner_remote_provider_artifact_incompatible: remote Codex omitted its qualified guest executable");
+    expect(resolver).not.toHaveBeenCalled();
+  } finally {
+    resolver.mockRestore();
+    await transport.close();
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 it("rejects remote OpenCode before spawn when provider-pack paths are absent", async () => {
@@ -2418,6 +2463,75 @@ function fakeCodexArgs(stateDirectory: string, ...args: string[]): string[] {
     ...args,
   ];
 }
+
+it.each(["complete", "default-model", "mismatched-model", "model-refresh-error", "model-cleanup-error", "missing-model", "missing-runtime", "missing-completion", "late-bootstrap"] as const)("native Codex setup requires its daemon/app-server hello (%s)", async mode => {
+  const root = await mkdtemp(join(tmpdir(), "runnerd-native-setup-"));
+  const runtimeDirectory = join(root, "native-state");
+  await mkdir(runtimeDirectory, { mode: 0o700 });
+  const calls = join(root, "calls.jsonl");
+  const sourceHome = join(root, "bound-account");
+  await mkdir(sourceHome, { mode: 0o700 });
+  await writeFile(join(sourceHome, "auth.json"), JSON.stringify({ OPENAI_API_KEY: "selected-account" }), { mode: 0o600 });
+  let refreshed = false;
+  let cleanupConfirmed = false;
+  try {
+    const probe = probeNativeRunnerEnvironment({
+      runtimeDirectory, provider: "codex", model: mode === "default-model" ? null : "gpt-6.1-sol", reasoningEffort: "low",
+      environment: { PATH: process.env.PATH, OPENAI_API_KEY: "", HOME: "/unrelated/home" },
+      timeoutMs: mode === "late-bootstrap" ? 100 : mode === "missing-completion" ? 1_000 : 10_000,
+      transportOptions: {
+        runnerBinary: mode === "missing-runtime" ? join(root, "missing-runner") : resolve("runner/target/debug/paperclip-runnerd"),
+        codexCommand: fakeCodex, codexArgs: fakeCodexArgs(root, "--request-log", calls,
+          ...(mode === "missing-completion" ? ["--hold-turn"] : []),
+          ...(mode === "mismatched-model" || mode === "model-refresh-error" || mode === "model-cleanup-error" ? ["--returned-model", "another-model"] : []),
+          ...(mode === "missing-model" ? ["--returned-model", ""] : []),
+          ...(mode === "late-bootstrap" ? ["--thread-start-delay-ms", "1000"] : [])),
+        sourceCodexHome: sourceHome,
+      },
+      onCodexCredentialRefresh: async filename => {
+        expect(filename).toBe(join(runtimeDirectory, "codex-home", "auth.json"));
+        expect(JSON.parse(await readFile(filename, "utf8"))).toEqual({ OPENAI_API_KEY: "selected-account" });
+        refreshed = true;
+        if (mode === "model-refresh-error") throw new Error("credential refresh failed after the native model error");
+      },
+      onCleanupConfirmed: async () => {
+        cleanupConfirmed = true;
+        expect(refreshed || mode === "missing-runtime" || mode === "late-bootstrap").toBe(true);
+        if (mode === "model-cleanup-error") throw new Error("owned temporary state cleanup failed");
+        await rm(runtimeDirectory, { recursive: true, force: true });
+      },
+    });
+    if (mode === "complete" || mode === "default-model") {
+      const observedModel = mode === "default-model" ? "gpt-test" : "gpt-6.1-sol";
+      await expect(probe).resolves.toEqual({ provider: "codex", providerDriver: "codex_app_server", effectiveModel: observedModel, helloProbePassed: true });
+      expect(refreshed).toBe(true);
+      expect(cleanupConfirmed).toBe(true);
+      await expect(stat(runtimeDirectory)).rejects.toThrow();
+      const requests = (await readFile(calls, "utf8")).trim().split("\n").map(line => JSON.parse(line));
+      expect(requests.find(value => value.method === "thread/start").params).toMatchObject({ permissions: "paperclip-runner-workspace-read-only", dynamicTools: [] });
+      expect(requests.find(value => value.method === "turn/start").params).toMatchObject({ effort: "low", permissions: "paperclip-runner-workspace-read-only", collaborationMode: { settings: { model: observedModel, reasoning_effort: "low" } } });
+    } else {
+      await expect(probe).rejects.toThrow(mode === "missing-runtime" ? /ENOENT|unavailable|cleanup/i : mode === "mismatched-model" || mode === "model-refresh-error" || mode === "model-cleanup-error" || mode === "missing-model" ? /observed model|mismatched provider model/i : /timed out|cleanup|suspension/i);
+      if (mode === "model-refresh-error") {
+        expect(refreshed).toBe(true);
+        expect(cleanupConfirmed).toBe(false);
+        expect((await stat(runtimeDirectory)).isDirectory()).toBe(true);
+      }
+      if (mode === "model-cleanup-error") {
+        expect(cleanupConfirmed).toBe(true);
+        expect((await stat(runtimeDirectory)).isDirectory()).toBe(true);
+      }
+      if (mode === "mismatched-model" || mode === "missing-model") {
+        expect(cleanupConfirmed).toBe(true);
+        await expect(stat(runtimeDirectory)).rejects.toThrow();
+      }
+      if (mode === "mismatched-model" || mode === "model-refresh-error" || mode === "model-cleanup-error" || mode === "missing-model" || mode === "late-bootstrap") {
+        const requests = (await readFile(calls, "utf8").catch(() => "")).trim().split("\n").filter(Boolean).map(line => JSON.parse(line));
+        expect(requests.some(value => value.method === "turn/start")).toBe(false);
+      }
+    }
+  } finally { await rm(root, { recursive: true, force: true }); }
+}, 20_000);
 
 function assignedRuntimeContext(
   skillRoot: string,
@@ -7574,7 +7688,9 @@ it("preserves prepared input and completion feedback through runnerd and the rea
   const runtime = join(root, "opencode");
   const bundle = createCapabilityRunnerdCodexTransport({
     provider: "opencode",
-    runnerBinary: defaultCapabilityRunnerdBinary(),
+    // Exercise this checkout's Rust boundary, even when a previously built
+    // packaged runner remains in dist for another serving test-drive instance.
+    runnerBinary: resolve(`runner/target/debug/paperclip-runnerd${process.platform === "win32" ? ".exe" : ""}`),
     stateDirectory: join(root, "runner-state"),
     opencodeRuntimeDirectory: runtime,
     opencodeCommand: executable,
@@ -7583,7 +7699,14 @@ it("preserves prepared input and completion feedback through runnerd and the rea
     opencodeProxySha256: digest(proxy),
     providerNodeCommand: providerNode,
     providerNodeCommandSha256: digest(providerNode),
-    environment: { PATH: process.env.PATH, OPENROUTER_API_KEY: "fixture-key" },
+    environment: {
+      PATH: process.env.PATH,
+      OPENROUTER_API_KEY: "fixture-key",
+      OPENAI_API_KEY: "fixture-openai-key",
+      ANTHROPIC_API_KEY: "",
+      DATABASE_URL: "unrelated-database-canary",
+      UNRELATED_SECRET: "unrelated-key-canary",
+    },
   });
   const task = createCodexTaskEnvelope({
     objective: "Preserve the prepared task.", contractRevision: "prepared-v1",
@@ -7623,16 +7746,47 @@ it("preserves prepared input and completion feedback through runnerd and the rea
       expect(events.filter(event => event.eventType === "run.result.proposed")).toHaveLength(1);
       const sessionRoots = (await readdir(runtime, { withFileTypes: true })).filter((entry) => entry.isDirectory());
       expect(sessionRoots).toHaveLength(1);
+      const childEnvironment = JSON.parse(await readFile(join(runtime, sessionRoots[0]!.name, "data/fake-environment.json"), "utf8"));
+      expect(childEnvironment.credentialDigests).toEqual(Object.fromEntries(
+        Object.entries({ OPENROUTER_API_KEY: "fixture-key", OPENAI_API_KEY: "fixture-openai-key", ANTHROPIC_API_KEY: "" })
+          .map(([key, value]) => [key, createHash("sha256").update(value).digest("hex")]),
+      ));
+      expect(childEnvironment.keys).not.toContain("DATABASE_URL");
+      expect(childEnvironment.keys).not.toContain("UNRELATED_SECRET");
       const requests = (await readFile(join(runtime, sessionRoots[0]!.name, "data/fake-prompt-requests.ndjson"), "utf8")).trim().split("\n").map((line) => JSON.parse(line));
       expect(requests.map((request) => request.parts)).toEqual([[{ type: "text", text: prepared }]]);
       const outcomes = JSON.parse(await readFile(join(runtime, sessionRoots[0]!.name, "data/fake-completion-feedback.json"), "utf8"));
       expect(outcomes).toHaveLength(2);
       expect(outcomes[0].result).toMatchObject({ isError: true, content: [{ text: expect.stringContaining("required document link") }] });
       expect(outcomes[1].result).toMatchObject({ content: [{ text: expect.stringContaining(feedback) }] });
+      for (const mode of ["complete", "mismatched-model", "missing-model"] as const) {
+        const nativeProbeRoot = join(root, `native-hello-${mode}`);
+        await mkdir(nativeProbeRoot, { mode: 0o700 });
+        let nativeExecutable = executable;
+        if (mode !== "complete") {
+          nativeExecutable = join(root, `fake-opencode-${mode}`);
+          const flag = mode === "missing-model" ? "--native-missing-model" : "--native-model-mismatch";
+          execFileSync("cc", ["-x", "c", "-o", nativeExecutable, "-"], { input: `#include <unistd.h>\n#include <stdlib.h>\nint main(int argc, char **argv) { char **args = calloc(argc + 3, sizeof(char *)); args[0] = ${JSON.stringify(providerNode)}; args[1] = ${JSON.stringify(fixture)}; args[2] = ${JSON.stringify(flag)}; for (int i = 1; i < argc; i++) args[i + 2] = argv[i]; execv(args[0], args); return 127; }` });
+          await chmod(nativeExecutable, 0o755);
+        }
+        const nativeProbe = probeNativeRunnerEnvironment({
+          runtimeDirectory: nativeProbeRoot, provider: "opencode", model: "openrouter/deepseek/deepseek-v4-flash-0731",
+          environment: { PATH: process.env.PATH, OPENROUTER_API_KEY: "fixture-key", OPENAI_API_KEY: "fixture-openai-key", ANTHROPIC_API_KEY: "" },
+          timeoutMs: 10_000,
+          transportOptions: {
+            runnerBinary: resolve("runner/target/debug/paperclip-runnerd"),
+            opencodeCommand: nativeExecutable, opencodeCommandSha256: digest(nativeExecutable),
+            opencodeProxyPath: proxy, opencodeProxySha256: digest(proxy),
+            providerNodeCommand: providerNode, providerNodeCommandSha256: digest(providerNode),
+          },
+        });
+        if (mode === "complete") await expect(nativeProbe).resolves.toMatchObject({ provider: "opencode", providerDriver: "opencode_server", effectiveModel: "openrouter/deepseek/deepseek-v4-flash-0731", helloProbePassed: true });
+        else await expect(nativeProbe).rejects.toThrow(/missing or mismatched provider model/);
+      }
     },
     closeSession: async () => { await session?.close(); },
     closeTransport: () => bundle.transport.close(),
     removeRoot: () => rm(root, { recursive: true, force: true }),
     evidence: () => bundle.evidence(),
   });
-}, 30_000);
+}, 60_000);

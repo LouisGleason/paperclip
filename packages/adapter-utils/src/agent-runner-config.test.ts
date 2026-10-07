@@ -29,6 +29,26 @@ describe("new agent runner selection", () => {
     expect(() => resolveAgentRunnerConfig({ ...input, runner: "paperclip", nativeSupported: false })).toThrow("unavailable");
   });
 
+  it("preserves OpenCode provider models and company-secret bindings without mutating the input", () => {
+    const input = {
+      adapterType: "opencode_local",
+      adapterConfig: {
+        model: "anthropic/claude-sonnet-4-6",
+        env: Object.fromEntries(["OPENROUTER_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"].map(key => [key, {
+          type: "secret_ref", secretId: `company-secret-${key}`, version: "latest",
+        }])),
+      },
+    };
+    const original = structuredClone(input);
+    const resolved = resolveAgentRunnerConfig(input);
+    expect(resolved).toMatchObject({
+      adapterType: "paperclip_runner",
+      adapterConfig: { provider: "opencode", model: input.adapterConfig.model, env: original.adapterConfig.env },
+    });
+    expect(input).toEqual(original);
+    expect(resolveAgentRunnerConfig(resolved)).toEqual(resolved);
+  });
+
   it("does not drop custom behavior or weaken explicit permission settings", () => {
     for (const adapterConfig of [{ command: "/custom/codex" }, { extraArgs: ["--custom"] }, { dangerouslyBypassApprovalsAndSandbox: false }]) {
       expect(() => resolveAgentRunnerConfig({ adapterType: "codex_local", adapterConfig })).toThrow("legacy runner");

@@ -1,5 +1,5 @@
 import type { AdapterRuntimeCommandSpec, ServerAdapterModule } from "./types.js";
-import { assertNativeRunnerSetupReady, assertRemoteAcpxSetupReady, testNativeAcpxAuthentication } from "../services/native-runtime/setup-readiness.js";
+import { assertNativeRunnerSetupReady, assertRemoteAcpxSetupReady, testNativeAcpxAuthentication, testNativeRunnerAuthentication } from "../services/native-runtime/setup-readiness.js";
 import { parseAdapterModelsEnv } from "../services/adapter-models-env.js";
 import { stampClaudeAgentIdHeader } from "./claude-agent-id-header.js";
 import {
@@ -487,10 +487,7 @@ const paperclipRunnerAdapter: ServerAdapterModule = {
         }],
       };
     }
-    const result = profile.provider === "opencode"
-      ? await openCodeTestEnvironment(context)
-      : await codexTestEnvironment(context);
-    return { ...result, adapterType: "paperclip_runner" };
+    return testNativeRunnerAuthentication(context, profile.provider, profile.model);
   },
   listSkills: listCodexSkills,
   syncSkills: syncCodexSkills,

@@ -1,16 +1,61 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { readFileSync, realpathSync } from 'node:fs';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { GROK_PUBLIC_INSTALL_IMAGE, GROK_PUBLIC_INSTALL_LIFECYCLE, grokConsumerDockerArgs } from '../grok-public-install-sandbox.mjs';
-import { assertStandardImageIdentity, inspectInstalledUi, installedProbePaths, standardImageDockerArgs, standardImageRequest } from '../../tests/release-smoke/installed-cli-probe.mjs';
+import { GROK_PUBLIC_INSTALL_IMAGE, GROK_PUBLIC_INSTALL_LIFECYCLE, grokConsumerDockerArgs, macPublicInstallLifecyclePolicy } from '../grok-public-install-sandbox.mjs';
+import { assertStandardImageIdentity, inspectInstalledDaemon, inspectInstalledProviderReadiness, inspectInstalledUi, inspectManagedServiceInstall, installedProbePaths, standardImageDockerArgs, standardImageRequest } from '../../tests/release-smoke/installed-cli-probe.mjs';
 
 const paths = { assets: '/private/staging/assets', consumer: '/private/staging/consumer', cache: '/private/staging/cache', uid: 1001, gid: 1001 };
 const values = (args, flag) => args.flatMap((value, index) => value === flag ? [args[index + 1]] : []);
+const hash = bytes => `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
+
+async function daemonFixture(root, server) {
+  // These contract fixtures exercise the installed probe's independent checks.
+  // Hosted package qualification loads the real production modules and native
+  // executable; these shell fixtures are never used as platform evidence.
+  const installed = join(server, 'dist/vendor/paperclip-runner'), target = `${process.platform}-${process.arch}`;
+  const executable = join(installed, `bin/${target}/paperclip-runnerd`), sourceRevision = 'a'.repeat(40);
+  const metadata = { schema: 'paperclip-runner/runnerd-build-metadata/v1', binaryName: 'paperclip-runnerd',
+    packageName: '@paperclipai/paperclip-runner', packageVersion: '0.0.0', binaryContractVersion: 2,
+    nativeExecutionVersion: 1, harnessDriverVersion: 1, prp: { name: 'paperclip.runner', minimumVersion: 1, maximumVersion: 2 },
+    durableSessionCapabilities: ['unlimited_runtime', 'connection_lease_renewal'], prpTransportModes: ['dial_ws_loopback', 'dial_wss', 'listen_ws'] };
+  await mkdir(join(installed, `bin/${target}`), { recursive: true }); await mkdir(join(installed, 'live'));
+  await mkdir(join(installed, 'evals'));
+  await writeFile(join(installed, 'live/runner-binary.js'), `import fs from 'node:fs';import path from 'node:path';
+    export function resolvePackagedRunnerBinary(root) {
+      const exact=path.join(root, 'bin/${target}/paperclip-runnerd'), generic=path.join(root, 'bin/paperclip-runnerd');
+      if(fs.existsSync(${JSON.stringify(join(root, 'outside-resolver'))}))return ${JSON.stringify(join(root, 'outside'))};
+      return fs.existsSync(exact)?exact:fs.existsSync(generic)?generic:null;
+    }
+    export function runnerBinaryTarget() {return fs.existsSync(${JSON.stringify(join(root, 'wrong-architecture'))})?'wrong-platform':'${target}';}`);
+  await writeFile(join(installed, 'evals/build-metadata.js'), `export const PAPERCLIP_RUNNERD_BUILD_METADATA_SCHEMA='paperclip-runner/runnerd-build-metadata/v1';
+    export const PAPERCLIP_RUNNER_BUILD_METADATA={package:{name:'@paperclipai/paperclip-runner'},
+      contracts:{runnerdArtifact:2,nativeExecution:1,harnessDriver:1},prp:{name:'paperclip.runner',minimumVersion:1,maximumVersion:2}};`);
+  // Reuse the existing actual metadata parser, rather than a replacement grader.
+  const { stripTypeScriptTypes } = await import('node:module');
+  const parser = readFileSync(new URL('../../packages/paperclip-runner/src/evals/runnerd-artifact.ts', import.meta.url), 'utf8');
+  // Node's strip-only loader rejects constructor parameter properties. The
+  // fixture needs the parser and error messages, not its stored issue field.
+  await writeFile(join(installed, 'evals/runnerd-artifact.js'), stripTypeScriptTypes(parser.replace('readonly issue:', 'issue:')));
+  const metadataPath = join(root, 'daemon-metadata.json'), argumentsPath = join(root, 'daemon-arguments.json');
+  await writeFile(metadataPath, JSON.stringify(metadata));
+  await writeFile(executable, `#!${process.execPath}\nimport fs from 'node:fs';
+    fs.writeFileSync(${JSON.stringify(argumentsPath)}, JSON.stringify(process.argv.slice(2)));
+    if(process.argv.slice(2).join(' ')!=='--build-metadata')process.exit(9);
+    console.log(fs.readFileSync(${JSON.stringify(metadataPath)},'utf8'));`, { mode: 0o755 });
+  const manifestPath = join(installed, 'bin/release-manifest.json');
+  const manifest = { schema: 'paperclip.runner.release-binaries.v1', sourceRevision,
+    platforms: Object.fromEntries(['darwin-arm64','darwin-x64','linux-x64'].map(platform => [platform,
+      { path: `${platform}/paperclip-runnerd`, sha256: hash(readFileSync(executable)) }])) };
+  await writeFile(manifestPath, JSON.stringify(manifest));
+  await writeFile(join(server, 'dist/build-info.json'), JSON.stringify({ commit: sourceRevision }));
+  return { installed, executable, sourceRevision, metadataPath, argumentsPath, manifestPath, manifest, metadata };
+}
 
 test('lifecycle execution has no network, host credentials, checkout, or elevated privileges', () => {
   const args = grokConsumerDockerArgs({ ...paths, command: GROK_PUBLIC_INSTALL_LIFECYCLE });
@@ -32,13 +77,31 @@ test('deferred lifecycle execution rebuilds the installed graph without dependen
   assert.deepEqual(GROK_PUBLIC_INSTALL_LIFECYCLE, ['npm', 'rebuild', '--offline', '--ignore-scripts=false', '--dangerously-allow-all-scripts']);
 });
 
+test('hosted Mac lifecycle denies OS networking and writes only owned temporary state', () => {
+  const policy = macPublicInstallLifecyclePolicy({ ownedRoot: '/private/tmp/owned-qualification', npmRoot: '/Users/runner/node/npm' });
+  assert.match(policy, /\(deny default\)/);
+  assert.match(policy, /\(deny network\*\)/);
+  assert.match(policy, /\(allow file-write\* \(subpath "\/private\/tmp\/owned-qualification"\) \(literal "\/dev\/null"\)\)/);
+  assert.doesNotMatch(policy, /allow default|allow network|mach-lookup|syscall/);
+  for (const ownedRoot of ['/', '../home', '/private/tmp/../other', '/private/tmp/owned\n(allow default)']) {
+    assert.throws(() => macPublicInstallLifecyclePolicy({ ownedRoot, npmRoot: '/Users/runner/node/npm' }), /absolute owned/);
+  }
+  const source = readFileSync(new URL('../verify-grok-npm-install.mjs', import.meta.url), 'utf8');
+  const sandbox = source.indexOf("execFileSync('/usr/bin/sandbox-exec'");
+  assert.ok(sandbox > source.indexOf("npm(['install', '--ignore-scripts'"));
+  assert.ok(sandbox < source.indexOf('const listener = createServer()'));
+  assert.match(source, /sandbox-exec.*\[.*'-f', policy,[\s\S]*?GROK_PUBLIC_INSTALL_LIFECYCLE\.slice\(1\)/);
+  assert.match(source, /Hosted Mac lifecycle qualification requires OS network isolation/);
+  assert.doesNotMatch(source, /no OS egress assertion/);
+});
+
 test('a root or malformed host identity cannot run lifecycle scripts', () => {
   for (const uid of [0, -1, undefined, '1001']) {
     assert.throws(() => grokConsumerDockerArgs({ ...paths, uid, command: ['npm', 'ci'] }), /unprivileged/);
   }
 });
 
-test('only the scripts-disabled dependency download gets network access', () => {
+test('the scripts-disabled dependency download gets network access before offline lifecycle execution', () => {
   const args = grokConsumerDockerArgs({ ...paths, download: true, command: ['npm', 'install', '--ignore-scripts'] });
   assert.deepEqual(values(args, '--network'), ['bridge']);
   assert.ok(values(args, '--env').includes('npm_config_ignore_scripts=true'));
@@ -65,15 +128,18 @@ test('installed CLI startup stays offline with private state and a read-only ins
   assert.throws(() => grokConsumerDockerArgs({ ...paths, runtimeSmoke: true, download: true }), /Runtime smoke/);
 });
 
-test('only the optional browser fixture receives an owned internal network and loopback port', () => {
+test('the separate optional browser fixture receives an owned network and loopback port', () => {
   const args = grokConsumerDockerArgs({ ...paths, uid: 1000, gid: 1000, runtimeSmoke: true,
     browserNetwork: 'paperclip-public-install-fixture', containerName: 'paperclip-public-install-fixture', command: ['node', '/packages/installed-cli-probe.mjs'] });
   assert.deepEqual(values(args, '--network'), ['paperclip-public-install-fixture']);
   assert.deepEqual(values(args, '--publish'), ['127.0.0.1::3100']);
   assert.ok(args.includes('--detach'));
   for (const browserNetwork of ['bridge', 'host', 'none']) {
-    assert.throws(() => grokConsumerDockerArgs({ ...paths, uid: 1000, gid: 1000, runtimeSmoke: true, browserNetwork, containerName: 'paperclip-public-install-fixture' }), /owned internal network/);
+    assert.throws(() => grokConsumerDockerArgs({ ...paths, uid: 1000, gid: 1000, runtimeSmoke: true, browserNetwork, containerName: 'paperclip-public-install-fixture' }), /owned network/);
   }
+  const source = readFileSync(new URL('../verify-grok-npm-install.mjs', import.meta.url), 'utf8');
+  assert.ok(source.indexOf('isolated(GROK_PUBLIC_INSTALL_LIFECYCLE)') < source.indexOf("run('docker', ['network', 'create', browserOwner])"));
+  assert.doesNotMatch(source, /\['network', 'create', '--internal'/);
 });
 
 test('portable installed probe preserves Linux defaults and requires explicit owned paths and loopback', () => {
@@ -110,7 +176,7 @@ test('standard image starts its shipped command with no network, host data, or e
   assert.deepEqual(values(args, '--network'), ['none']);
   assert.deepEqual(values(args, '--user'), ['1000:1000']);
   assert.deepEqual(values(args, '--mount'), ['type=bind,src=/qa/installed-cli-probe.mjs,dst=/qa/installed-cli-probe.mjs,readonly']);
-  assert.ok(args.includes('--read-only'));
+  assert.equal(args.includes('--read-only'), false, 'The supported entrypoint must be able to prepare image-owned Postgres library aliases');
   assert.deepEqual(values(args, '--cap-drop'), ['ALL']);
   assert.deepEqual(values(args, '--security-opt'), ['no-new-privileges']);
   assert.deepEqual(values(args, '--entrypoint'), []);
@@ -160,4 +226,144 @@ test('installed UI readiness checks a real HTTP response, exact serving commit, 
     await new Promise(resolve => server.close(resolve));
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('installed provider readiness uses the production pinned Codex resolver and installed Claude verifier', async () => {
+  // Unit fixtures exercise the probe contract. Actual package qualification
+  // invokes these checks against the installed graph, never these fixtures.
+  const root = realpathSync(await mkdtemp(join(tmpdir(), 'paperclip-provider-readiness-test-')));
+  const bin = join(root, 'bin'), server = join(root, 'server');
+  const installed = join(server, 'dist/vendor/paperclip-runner/drivers/acpx');
+  try {
+    await mkdir(bin); await mkdir(installed, { recursive: true });
+    await mkdir(join(server, 'dist/vendor/paperclip-runner/drivers/codex'));
+    await writeFile(join(root, 'package.json'), JSON.stringify({ type: 'module' }));
+    await writeFile(join(bin, 'codex'), `#!${process.execPath}\nimport fs from 'node:fs';
+      fs.writeFileSync(${JSON.stringify(join(root, 'codex-arguments.json'))}, JSON.stringify(process.argv.slice(2)));
+      if (process.argv.slice(2).join(' ') !== '--version') process.exit(9);
+      console.log('codex-cli 0.160.0');\n`, { mode: 0o755 });
+    await writeFile(join(server, 'dist/vendor/paperclip-runner/drivers/codex/codex-command.js'), `import fs from 'node:fs';
+      export function resolvePinnedCodexCommand() {
+        if (fs.existsSync(${JSON.stringify(join(root, 'missing-codex'))})) throw new Error('Pinned Codex runtime unavailable: missing installed package; choose Legacy runner in Advanced');
+        return ${JSON.stringify(join(bin, 'codex'))};
+      }`);
+    await writeFile(join(installed, 'qualified-profiles.js'), `export const QUALIFIED_ACPX_PROFILES={codex:{agentRuntimeVersion:'0.160.0'}};
+      export function resolveQualifiedAcpxProfile(agent, model) {
+      if (agent !== 'claude' || model !== 'claude-sonnet-5') throw new Error('Unexpected profile');
+      return {agentServerPackage:'@agentclientprotocol/claude-agent-acp',agentServerVersion:'0.73.0',
+        agentRuntimePackage:'@anthropic-ai/claude-agent-sdk',agentRuntimeVersion:'0.3.286',commandDigest:'sha256:fixture'};
+    }`);
+    await writeFile(join(installed, 'installation-integrity.js'), `import fs from 'node:fs';
+      export async function probeAcpxClaudeInstallation(model) {
+        if (fs.existsSync(${JSON.stringify(join(root, 'bad-claude'))})) throw new Error('ACPX claude runtime version mismatch');
+        fs.writeFileSync(${JSON.stringify(join(root, 'claude-model'))}, model);
+      }`);
+    const daemon = await daemonFixture(root, server);
+    const receipt = await inspectInstalledProviderReadiness({ server, commandPath: bin });
+    assert.equal(receipt.providerCalls, 0);
+    assert.equal(receipt.codex.executable, join(bin, 'codex'));
+    assert.equal(receipt.codex.version, 'codex-cli 0.160.0');
+    assert.deepEqual(JSON.parse(readFileSync(join(root, 'codex-arguments.json'), 'utf8')), ['--version']);
+    assert.equal(readFileSync(join(root, 'claude-model'), 'utf8'), 'claude-sonnet-5');
+    assert.equal(receipt.claude.agentRuntimeVersion, '0.3.286');
+    assert.equal(receipt.claude.commandLeasePassed, true);
+    assert.equal(receipt.runnerd.manifestVerified, true);
+    assert.equal(receipt.runnerd.executable, daemon.executable);
+    assert.deepEqual(JSON.parse(readFileSync(daemon.argumentsPath, 'utf8')), ['--build-metadata']);
+
+    assert.equal((await inspectInstalledProviderReadiness({ server, commandPath: join(root, 'empty-runtime-path') })).codex.versionProbePassed, true,
+      'A pinned executable does not require a global Codex command on PATH');
+    await writeFile(join(root, 'missing-codex'), 'missing installed package');
+    await assert.rejects(inspectInstalledProviderReadiness({ server, commandPath: bin }), error => {
+      assert.match(error.message, /Pinned Codex runtime unavailable.*Legacy runner/);
+      assert.equal(error.providerReadiness.codex, undefined);
+      assert.equal(error.providerReadiness.claude.installationIntegrityPassed, true, 'Preserve independently verified Claude readiness');
+      return true;
+    });
+    await rm(join(root, 'missing-codex'));
+    await writeFile(join(root, 'bad-claude'), 'mismatched installed runtime');
+    await assert.rejects(inspectInstalledProviderReadiness({ server, commandPath: bin }), error => {
+      assert.match(error.message, /Claude: ACPX claude runtime version mismatch/);
+      assert.equal(error.providerReadiness.codex.versionProbePassed, true);
+      assert.equal(error.providerReadiness.claude, undefined, 'An incomplete Claude verifier cannot qualify installation');
+      return true;
+    });
+    await writeFile(join(bin, 'codex'), `#!${process.execPath}\nconsole.log('authentication required');\n`, { mode: 0o755 });
+    await assert.rejects(inspectInstalledProviderReadiness({ server, commandPath: bin }), /Codex did not return its CLI version/);
+    await assert.rejects(inspectInstalledProviderReadiness({ server: '../checkout' }), /Invalid installed server/);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('installed daemon proof rejects source, target, digest, capability and resolver failures without ambient fallback', async () => {
+  const root = realpathSync(await mkdtemp(join(tmpdir(), 'paperclip-installed-daemon-test-'))), server = join(root, 'server');
+  try {
+    await writeFile(join(root, 'package.json'), JSON.stringify({ type: 'module' }));
+    const fixture = await daemonFixture(root, server), target = `${process.platform}-${process.arch}`;
+    const options = { server, sourceRevision: fixture.sourceRevision };
+    const receipt = await inspectInstalledDaemon(options);
+    assert.equal(receipt.sha256, hash(readFileSync(fixture.executable)));
+    assert.equal(receipt.compatibilityPassed, true);
+    for (const change of [manifest => { manifest.sourceRevision = 'b'.repeat(40); },
+      manifest => { manifest.platforms[target].sha256 = `sha256:${'b'.repeat(64)}`; },
+      manifest => { manifest.platforms[target].path = '../outside'; }]) {
+      const manifest = structuredClone(fixture.manifest); change(manifest);
+      await writeFile(fixture.manifestPath, JSON.stringify(manifest)); await rm(fixture.argumentsPath, { force: true });
+      await assert.rejects(inspectInstalledDaemon(options), /manifest (?:source|target)|digest mismatch/);
+      assert.equal((await import('node:fs')).existsSync(fixture.argumentsPath), false, 'Reject unbound bytes before execution');
+    }
+    await writeFile(fixture.manifestPath, JSON.stringify(fixture.manifest));
+    for (const change of [metadata => { metadata.nativeExecutionVersion = 999; }, metadata => { metadata.binaryName = 'other'; },
+      metadata => { metadata.prp.maximumVersion = 1; }, metadata => { metadata.durableSessionCapabilities = []; }]) {
+      const metadata = structuredClone(fixture.metadata); change(metadata);
+      await writeFile(fixture.metadataPath, JSON.stringify(metadata));
+      await assert.rejects(inspectInstalledDaemon(options), /incompatible|unexpected binary|protocol|missing durable/);
+    }
+    await writeFile(fixture.metadataPath, JSON.stringify(fixture.metadata));
+    await writeFile(join(root, 'wrong-architecture'), 'wrong');
+    await assert.rejects(inspectInstalledDaemon(options), /architecture mismatch/); await rm(join(root, 'wrong-architecture'));
+    await writeFile(join(root, 'outside-resolver'), 'outside');
+    await assert.rejects(inspectInstalledDaemon(options), /resolver must select/); await rm(join(root, 'outside-resolver'));
+    await rm(fixture.manifestPath);
+    await assert.rejects(inspectInstalledDaemon(options), /complete daemon release manifest/);
+    const generic = join(fixture.installed, 'bin/paperclip-runnerd');
+    await (await import('node:fs/promises')).rename(fixture.executable, generic);
+    assert.equal((await inspectInstalledDaemon({ ...options, allowHostOnlyDaemon: true })).hostOnlySourceInstall, true);
+    await rm(generic);
+    await assert.rejects(inspectInstalledDaemon({ ...options, allowHostOnlyDaemon: true }), /no ambient fallback/);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('service qualification binds a real managed shim and current link to the exact source payload', async () => {
+  const root = realpathSync(await mkdtemp(join(tmpdir(), 'paperclip-service-install-test-')));
+  const sourceRevision = 'a'.repeat(40), store = join(root, 'cli');
+  const payload = join(store, 'installs/git', sourceRevision.slice(0, 12));
+  const server = join(payload, 'node_modules/@paperclipai/server');
+  const cli = join(payload, 'node_modules/paperclipai/dist/index.js');
+  const manifestPath = join(store, 'install.json'), shimPath = join(root, 'paperclipai');
+  const manifest = { schemaVersion: 1, source: 'git', repo: 'paperclipai/paperclip', sha: sourceRevision,
+    ref: sourceRevision, payloadPath: payload, version: '0.3.1' };
+  try {
+    await mkdir(join(server, 'dist'), { recursive: true });
+    await mkdir(join(payload, 'node_modules/paperclipai/dist'), { recursive: true });
+    await writeFile(cli, `if (process.argv[2] !== '--version') process.exit(9); console.log('0.3.1');\n`);
+    await writeFile(join(server, 'dist/build-info.json'), JSON.stringify({ commit: sourceRevision }));
+    await writeFile(manifestPath, JSON.stringify(manifest));
+    await symlink(payload, join(store, 'current'));
+    await writeFile(shimPath, `#!/bin/sh\n# paperclipai managed install shim v1\nexec "${process.execPath}" "${join(store, 'current/node_modules/paperclipai/dist/index.js')}" "$@"\n`, { mode: 0o755 });
+    const options = { sourceRevision, manifestPath, shimPath };
+    const receipt = inspectManagedServiceInstall(options);
+    assert.equal(receipt.managedInstallCommit, sourceRevision);
+    assert.equal(receipt.managedShimPassed, true);
+    assert.equal(receipt.cliVersion, '0.3.1');
+    for (const override of [{ source: 'npm' }, { ref: 'master' }, { sha: 'b'.repeat(40) }, { payloadPath: join(root, 'checkout') }]) {
+      await writeFile(manifestPath, JSON.stringify({ ...manifest, ...override }));
+      assert.throws(() => inspectManagedServiceInstall(options));
+    }
+    await writeFile(manifestPath, JSON.stringify(manifest));
+    await writeFile(join(server, 'dist/build-info.json'), JSON.stringify({ commit: 'b'.repeat(40) }));
+    assert.throws(() => inspectManagedServiceInstall(options));
+    await writeFile(join(server, 'dist/build-info.json'), JSON.stringify({ commit: sourceRevision }));
+    await writeFile(shimPath, '#!/bin/sh\necho 0.3.1\n', { mode: 0o755 });
+    assert.throws(() => inspectManagedServiceInstall(options), /real managed shim/);
+  } finally { await rm(root, { recursive: true, force: true }); }
 });

@@ -7,6 +7,29 @@ export const GROK_PUBLIC_INSTALL_LIFECYCLE = [
   'npm', 'rebuild', '--offline', '--ignore-scripts=false', '--dangerously-allow-all-scripts',
 ];
 
+// Only the hosted Mac deferred lifecycle uses this policy. The scripts-disabled
+// download and later loopback startup remain separate phases. Fail closed if
+// sandbox-exec is unavailable; npm's offline flag alone is not OS isolation.
+export function macPublicInstallLifecyclePolicy({ ownedRoot, npmRoot }) {
+  for (const path of [ownedRoot, npmRoot]) {
+    if (typeof path !== 'string' || !path.startsWith('/') || path === '/' || path.split('/').includes('..') ||
+      /[\n\r\0]/.test(path)) throw new Error('Lifecycle sandbox requires absolute owned/runtime paths');
+  }
+  const owned = JSON.stringify(ownedRoot), npm = JSON.stringify(npmRoot);
+  return `(version 1)
+(deny default)
+(deny network*)
+(allow process-exec)
+(allow process-fork)
+(allow sysctl-read)
+(allow file-read-metadata)
+(allow file-read-data (subpath ${owned}) (subpath ${npm})
+  (subpath "/usr") (subpath "/bin") (subpath "/System") (subpath "/Library/Apple")
+  (literal "/dev/null") (literal "/dev/urandom") (literal "/dev/random"))
+(allow file-write* (subpath ${owned}) (literal "/dev/null"))
+`;
+}
+
 export function grokConsumerDockerArgs({ assets, consumer, cache, command, uid, gid, download = false, prerequisite, temporarySizeMb = 256, runtimeSmoke = false, browserNetwork, containerName }) {
   if (!Number.isSafeInteger(uid) || uid <= 0 || !Number.isSafeInteger(gid) || gid <= 0) {
     throw new Error('Public-install verification requires an unprivileged host user');
@@ -15,7 +38,7 @@ export function grokConsumerDockerArgs({ assets, consumer, cache, command, uid, 
   if (runtimeSmoke && (download || uid !== 1000 || gid !== 1000)) throw new Error('Runtime smoke requires the pinned unprivileged node user and an installed graph');
   if (containerName && (!runtimeSmoke || !/^paperclip-public-install-[a-z0-9-]+$/.test(containerName))) throw new Error('Runtime smoke requires its owned container');
   if (browserNetwork && (!runtimeSmoke || !containerName ||
-      !/^paperclip-public-install-[a-z0-9-]+$/.test(browserNetwork))) throw new Error('Browser smoke requires its owned internal network and container');
+      !/^paperclip-public-install-[a-z0-9-]+$/.test(browserNetwork))) throw new Error('Browser smoke requires its owned network and container');
   return [
     'run', '--rm', '--platform', 'linux/amd64',
     '--user', `${uid}:${gid}`, '--read-only',

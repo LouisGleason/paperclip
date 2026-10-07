@@ -174,6 +174,7 @@ export function ConfigureBuiltInAgentModal({
             <AdapterTypeDropdown
               value={adapterType}
               onChange={(next) => {
+                if (next !== adapterType) setRunner("auto");
                 setAdapterType(next);
                 setModel("");
               }}

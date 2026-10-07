@@ -5,23 +5,28 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:net';
+import { once } from 'node:events';
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { materializePublishManifest, prepareBundledPackage } from './prepare-bundled-package.mjs';
-import { GROK_PUBLIC_INSTALL_IMAGE, GROK_PUBLIC_INSTALL_LIFECYCLE, grokConsumerDockerArgs } from './grok-public-install-sandbox.mjs';
+import { GROK_PUBLIC_INSTALL_IMAGE, GROK_PUBLIC_INSTALL_LIFECYCLE, grokConsumerDockerArgs, macPublicInstallLifecyclePolicy } from './grok-public-install-sandbox.mjs';
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const [mode, requestedOutput, ...extraArguments] = process.argv.slice(2);
-assert.ok(mode === undefined || mode === '--pack-only' && requestedOutput && !extraArguments.length,
-  'Usage: verify-grok-npm-install.mjs [--pack-only <new-absolute-output-directory>]');
+assert.ok(mode === undefined || ['--pack-only', '--consume-pack'].includes(mode) && requestedOutput && !extraArguments.length,
+  'Usage: verify-grok-npm-install.mjs [--pack-only <new-absolute-output-directory> | --consume-pack <packed-input-directory>]');
 const packOnlyOutput = mode === '--pack-only' ? requestedOutput : undefined;
-if (packOnlyOutput) {
-  assert.ok(isAbsolute(packOnlyOutput) && resolve(packOnlyOutput) === packOnlyOutput, 'Pack output must be an absolute normalized path');
-  assert.ok(relative(repo, packOnlyOutput).startsWith('..'), 'Pack output must be outside the checkout');
-  assert.equal(existsSync(packOnlyOutput), false, 'Pack output must be a new owned directory');
-} else assert.equal(process.platform, 'linux', 'Run this verification on disposable EC2 Linux, not a developer host');
-const root = mkdtempSync(join(tmpdir(), 'paperclip-grok-public-install-'));
+const consumePack = mode === '--consume-pack' ? requestedOutput : undefined;
+const packTransferOutput = packOnlyOutput ?? process.env.PAPERCLIP_PUBLIC_PACK_OUTPUT;
+if (packTransferOutput) {
+  assert.ok(isAbsolute(packTransferOutput) && resolve(packTransferOutput) === packTransferOutput, 'Pack output must be an absolute normalized path');
+  assert.ok(relative(repo, packTransferOutput).startsWith('..'), 'Pack output must be outside the checkout');
+  assert.equal(existsSync(packTransferOutput), false, 'Pack output must be a new owned directory');
+}
+if (!packOnlyOutput && !consumePack) assert.equal(process.platform, 'linux', 'Run this verification on disposable EC2 Linux, not a developer host');
+const root = realpathSync(mkdtempSync(join(tmpdir(), 'paperclip-grok-public-install-')));
 const prerequisite = join(root, 'native/grok');
 const env = { ...process.env, NODE_PATH: '', PAPERCLIP_RELEASE_REUSE_UI_DIST: '1', npm_config_ignore_scripts: 'false', npm_config_audit: 'false', npm_config_fund: 'false' };
 const run = (cmd, args, cwd = root, options = {}) => execFileSync(cmd, args, { cwd, env, stdio: 'pipe', maxBuffer: 32 * 1024 * 1024, ...options });
@@ -34,7 +39,7 @@ const offlineOwner = `${browserOwner}-offline`;
 let browserNetworkCreated = false;
 let offlineProbeStarted = false;
 const packLifecycleSentinel = destination => {
-  const sentinelSource = join(root, 'lifecycle-sentinel'); mkdirSync(sentinelSource);
+  const sentinelSource = join(root, 'lifecycle-sentinel'); if (!existsSync(sentinelSource)) mkdirSync(sentinelSource);
   writeFileSync(join(sentinelSource, 'package.json'), JSON.stringify({
     name: 'paperclip-verification-lifecycle-sentinel', version: '1.0.0', private: true,
     scripts: { postinstall: 'node -e "require(\'node:fs\').writeFileSync(\'lifecycle-ran\', \'ok\')"' },
@@ -44,8 +49,68 @@ const packLifecycleSentinel = destination => {
 };
 try {
   verification: {
+  if (consumePack) {
+    assert.equal(process.platform, 'darwin', 'Packed host consumption is only for the existing hosted macOS qualification legs');
+    assert.ok(isAbsolute(consumePack) && resolve(consumePack) === consumePack && consumePack !== '/');
+    const receipt = JSON.parse(readFileSync(join(consumePack, 'pack-receipt.json'), 'utf8'));
+    assert.equal(receipt.schema, 'paperclip.public-npm-pack.v1');
+    assert.equal(receipt.sourceRevision, sourceRevision, 'The package producer source must match this consumer');
+    assert.equal(receipt.producerPlatform, 'linux-x64', 'The macOS consumer must inspect the Linux-produced public packages');
+    const inputs = [...receipt.tarballs, receipt.lifecycleSentinel];
+    assert.equal(new Set(inputs.map(item => item.name)).size, inputs.length, 'Duplicate public package');
+    for (const input of inputs) {
+      assert.match(input.name, /^[a-zA-Z0-9_.-]+\.tgz$/);
+      assert.equal(sha256(readFileSync(join(consumePack, input.name))), input.sha256, 'Transferred public package checksum mismatch');
+    }
+    // The existing Linux producer's exact tarballs, never a host rebuild. Give
+    // npm lifecycle and the installed runtime a fresh home/cache and a PATH
+    // containing only the selected Node plus OS tools, not developer harnesses.
+    const consumer = join(root, 'consumer'), home = join(root, 'home'), cache = join(root, 'cache');
+    const bin = join(root, 'bin'), temporary = join(root, 'tmp');
+    for (const path of [consumer, home, cache, bin, temporary]) mkdirSync(path);
+    cpSync(process.execPath, join(bin, 'node')); chmodSync(join(bin, 'node'), 0o755);
+    const npmCli = join(dirname(process.execPath), '../lib/node_modules/npm/bin/npm-cli.js');
+    assert.ok(existsSync(npmCli), 'The selected hosted Node distribution must include npm');
+    const isolatedEnv = { PATH: `${bin}:/usr/bin:/bin`, HOME: home, TMPDIR: temporary,
+      NODE_PATH: '', npm_config_cache: cache, npm_config_audit: 'false', npm_config_fund: 'false',
+      PAPERCLIP_TELEMETRY_DISABLED: '1', PAPERCLIP_UPDATE_CHECK: '0', PAPERCLIP_OPEN_ON_LISTEN: 'false' };
+    const npm = args => execFileSync(join(bin, 'node'), [npmCli, ...args], { cwd: consumer, env: isolatedEnv,
+      stdio: 'pipe', maxBuffer: 32 * 1024 * 1024, timeout: 180_000 });
+    writeFileSync(join(consumer, 'package.json'), JSON.stringify({ private: true, type: 'module' }));
+    npm(['install', '--ignore-scripts', '--omit=dev', ...inputs.map(input => join(consumePack, input.name))]);
+    const sentinel = join(consumer, 'node_modules/paperclip-verification-lifecycle-sentinel/lifecycle-ran');
+    assert.equal(existsSync(sentinel), false, 'Transfer download must not run dependency hooks');
+    const lock = readFileSync(join(consumer, 'package-lock.json'));
+    assert.ok(existsSync('/usr/bin/sandbox-exec'), 'Hosted Mac lifecycle qualification requires OS network isolation; npm offline alone is insufficient');
+    const policy = join(root, 'lifecycle.sb');
+    writeFileSync(policy, macPublicInstallLifecyclePolicy({ ownedRoot: root, npmRoot: realpathSync(dirname(dirname(npmCli))) }), { mode: 0o600 });
+    execFileSync('/usr/bin/sandbox-exec', ['-f', policy, join(bin, 'node'), npmCli, ...GROK_PUBLIC_INSTALL_LIFECYCLE.slice(1)],
+      { cwd: consumer, env: isolatedEnv, stdio: 'pipe', maxBuffer: 32 * 1024 * 1024, timeout: 180_000 });
+    assert.equal(readFileSync(sentinel, 'utf8'), 'ok');
+    assert.ok(readFileSync(join(consumer, 'package-lock.json')).equals(lock), 'Host lifecycle must preserve the resolved graph');
+    const listener = createServer(); listener.listen(0, '127.0.0.1'); await once(listener, 'listening');
+    const port = listener.address().port; await new Promise(resolve => listener.close(resolve));
+    const paths = join(root, 'probe-paths.json');
+    writeFileSync(paths, JSON.stringify({ consumer, dataDirectory: join(root, 'data'), readyPath: join(root, 'ready.json'), base: `http://127.0.0.1:${port}` }));
+    const output = execFileSync(join(bin, 'node'), [join(repo, 'tests/release-smoke/installed-cli-probe.mjs'),
+      receipt.releaseVersion, sourceRevision, 'offline', paths], { cwd: consumer, env: isolatedEnv,
+      stdio: 'pipe', maxBuffer: 32 * 1024 * 1024, timeout: 135_000 }).toString().trim();
+    const installed = JSON.parse(output.split('\n').at(-1));
+    console.log(JSON.stringify({ schema: 'paperclip.hosted-macos.public-npm-install.v1', sourceRevision,
+      producerPlatform: 'linux-x64', consumerPlatform: `${process.platform}-${process.arch}`,
+      sameProducerTarballs: receipt.tarballs, isolatedHomeAndPath: true, lifecycleSentinelVerified: true,
+      consumerLockSha256: sha256(lock), consumerLockPreserved: true, lifecycleNetwork: 'macOS sandbox-exec network denied',
+      ...installed, providerCalls: 0 }));
+    break verification;
+  }
   const builtRevision = JSON.parse(readFileSync(join(repo, 'server/dist/build-info.json'), 'utf8')).commit;
   assert.equal(builtRevision, sourceRevision, 'Public packages must be built from the selected source revision');
+  if (env.PAPERCLIP_RELEASE_RUNNER_ASSETS) {
+    for (const output of ['packages/paperclip-runner/dist', 'server/dist/vendor/paperclip-runner']) {
+      run(process.execPath, [join(repo, 'scripts/release-runner-artifacts.mjs'), 'copy', sourceRevision,
+        env.PAPERCLIP_RELEASE_RUNNER_ASSETS, join(repo, output)], repo);
+    }
+  }
   const listing = run(process.execPath, [join(repo, 'scripts/release-package-map.mjs'), 'list'], repo).toString().trim().split('\n').map(line => line.split('\t'));
   const packages = new Map(listing.map(([dir, name]) => [name, { dir, manifest: JSON.parse(readFileSync(join(repo, dir, 'package.json'), 'utf8')) }]));
   const needed = new Set();
@@ -110,21 +175,22 @@ try {
   run('npm', ['pack', '--ignore-scripts', '--pack-destination', root], cliStage);
   tarballs.push(join(root, `paperclipai-${releaseVersion}.tgz`));
   assert.ok(existsSync(tarballs.at(-1)));
-  if (packOnlyOutput) {
+  if (packTransferOutput) {
     // Reuse this exact producer for a separately isolated host consumer. This
     // mode packs bytes only; no dependency lifecycle or provider is invoked.
-    mkdirSync(packOnlyOutput, { mode: 0o700 });
+    mkdirSync(packTransferOutput, { mode: 0o700 });
     const packed = tarballs.map(path => {
-      cpSync(path, join(packOnlyOutput, basename(path)));
+      cpSync(path, join(packTransferOutput, basename(path)));
       return { name: basename(path), sha256: sha256(readFileSync(path)) };
     });
-    const sentinelName = packLifecycleSentinel(packOnlyOutput);
+    const sentinelName = packLifecycleSentinel(packTransferOutput);
     const receipt = { schema: 'paperclip.public-npm-pack.v1', sourceRevision, releaseVersion,
       packageCount: needed.size + 1, tarballs: packed,
-      lifecycleSentinel: { name: sentinelName, sha256: sha256(readFileSync(join(packOnlyOutput, sentinelName))) }, providerCalls: 0 };
-    writeFileSync(join(packOnlyOutput, 'pack-receipt.json'), JSON.stringify(receipt, null, 2), { mode: 0o600 });
+      producerPlatform: `${process.platform}-${process.arch}`,
+      lifecycleSentinel: { name: sentinelName, sha256: sha256(readFileSync(join(packTransferOutput, sentinelName))) }, providerCalls: 0 };
+    writeFileSync(join(packTransferOutput, 'pack-receipt.json'), JSON.stringify(receipt, null, 2), { mode: 0o600 });
     console.log(JSON.stringify(receipt));
-    break verification;
+    if (packOnlyOutput) break verification;
   }
   const assets = join(root, 'assets'); mkdirSync(assets, { mode: 0o755 });
   const consumer = join(root, 'consumer'); mkdirSync(consumer);
@@ -186,10 +252,11 @@ try {
   const cliProbeOutput = run('docker', cliProbeArgs, root, { timeout: 135_000 }).toString().trim();
   const cliReceipt = JSON.parse(cliProbeOutput.split('\n').at(-1));
   if (browserSmoke) {
-    // The existing release-smoke browser runs on the host. Only an owned
-    // internal Docker network and a loopback port expose this finite fixture;
-    // the installed product still has no route to external providers.
-    run('docker', ['network', 'create', '--internal', browserOwner]);
+    // Lifecycle and installed CLI readiness have already passed offline. The
+    // separate browser phase uses ordinary Docker loopback publication: internal
+    // networks omit published ports on supported Docker hosts. This fixture has
+    // no provider credentials and the existing oracle stops before agent auth.
+    run('docker', ['network', 'create', browserOwner]);
     browserNetworkCreated = true;
     run('docker', grokConsumerDockerArgs({ assets, consumer, cache, uid: 1000, gid: 1000,
       command: ['node', '/packages/installed-cli-probe.mjs', releaseVersion, sourceRevision, 'browser'],
@@ -211,6 +278,7 @@ try {
       stdio: 'inherit', timeout: 120_000,
     });
     cliReceipt.installedUiFirstRunBrowserPassed = true;
+    cliReceipt.browserNetwork = 'owned bridge with loopback publication';
   }
   const tarballHashes = tarballs.map(path => ({ name: basename(path), sha256: sha256(readFileSync(path)) }));
   console.log(JSON.stringify({ schema: 'paperclip.grok.public-npm-install.v1', sourceRevision, releaseVersion, lifecycleScriptsEnabled: true, lifecycleSentinelVerified: true, lifecycleNetwork: 'none', consumerImage: GROK_PUBLIC_INSTALL_IMAGE, consumerUid, consumerLockPreserved: true, consumerLockSha256: sha256(consumerLock), cleanNpmInstall: true, packageCount: needed.size + 1, tarballs: tarballHashes, ...cliReceipt, builtinLauncherPresent: true, separateGrokPackage: false, npmProvisionedBinary: false, missingPrerequisiteRejected: true, provisionedBinaryVerified: true, commandLeaseVerified: true, providerCalls: 0 }));

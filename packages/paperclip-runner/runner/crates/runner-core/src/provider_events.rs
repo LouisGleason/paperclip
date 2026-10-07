@@ -961,6 +961,28 @@ pub fn normalize_codex_notification(method: &str, params: &Value) -> Vec<Normali
                             Value::String(bounded_text(provider_phase, 160)),
                         );
                 }
+                if item_type == "agentMessage" {
+                    if let (Some(provider), Some(model_id)) = (
+                        provider_item
+                            .pointer("/model/provider")
+                            .and_then(Value::as_str),
+                        provider_item.pointer("/model/id").and_then(Value::as_str),
+                    ) {
+                        if !provider.is_empty()
+                            && !model_id.is_empty()
+                            && provider.len() <= 240
+                            && model_id.len() <= 240
+                        {
+                            payload
+                                .as_object_mut()
+                                .expect("item payload is an object")
+                                .insert(
+                                    "model".to_owned(),
+                                    json!({ "provider": provider, "id": model_id }),
+                                );
+                        }
+                    }
+                }
                 push(
                     &mut events,
                     if completed {
@@ -1830,6 +1852,30 @@ mod tests {
             }}),
         );
         assert!(legacy[0].payload.get("providerPhase").is_none());
+    }
+
+    #[test]
+    fn final_assistant_observed_model_is_closed_and_history_compatible() {
+        for (model, expected) in [
+            (
+                json!({"provider":"openrouter","id":"actual/model","apiKey":"never-forward"}),
+                Some(json!({"provider":"openrouter","id":"actual/model"})),
+            ),
+            (json!({"provider":"openrouter","id":""}), None),
+            (json!({"provider":"openrouter","id":"x".repeat(241)}), None),
+            (Value::Null, None),
+        ] {
+            let events = normalize_codex_notification(
+                "item/completed",
+                &json!({"threadId":"s", "turnId":"t", "item":{
+                    "id":"final", "type":"agentMessage", "phase":"final_answer", "text":"hello", "model":model
+                }}),
+            );
+            assert_eq!(events[0].payload.get("model"), expected.as_ref());
+            assert_eq!(events[0].payload["channel"], "final");
+            assert_eq!(events[0].payload["text"], "hello");
+            assert!(!events[0].payload.to_string().contains("never-forward"));
+        }
     }
 
     #[test]

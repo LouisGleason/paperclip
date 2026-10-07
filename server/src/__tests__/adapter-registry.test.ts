@@ -1,8 +1,9 @@
 vi.mock("../services/native-runtime/setup-readiness.js", () => ({
   assertNativeRunnerSetupReady: vi.fn(async () => undefined), assertRemoteAcpxSetupReady: vi.fn(async () => undefined),
   testNativeAcpxAuthentication: vi.fn(async (_context: unknown, agent: string) => ({ adapterType: "paperclip_runner", status: "pass", testedAt: new Date().toISOString(), checks: [{ code: `${agent}_hello_probe_passed`, level: "info" }] })),
+  testNativeRunnerAuthentication: vi.fn(async (_context: unknown, provider: string) => ({ adapterType: "paperclip_runner", status: "pass", testedAt: new Date().toISOString(), checks: [{ code: `${provider}_hello_probe_passed`, level: "info" }] })),
 }));
-import { testNativeAcpxAuthentication } from "../services/native-runtime/setup-readiness.js";
+import { testNativeAcpxAuthentication, testNativeRunnerAuthentication } from "../services/native-runtime/setup-readiness.js";
 import { probeAcpxClaudeInstallation, probeAcpxCursorInstallation } from "@paperclipai/paperclip-runner/live";
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 import { buildSandboxNpmInstallCommand } from "@paperclipai/adapter-utils";
@@ -57,6 +58,7 @@ const externalAdapter: ServerAdapterModule = {
 describe("server adapter registry", () => {
   beforeEach(() => {
     vi.mocked(testNativeAcpxAuthentication).mockClear();
+    vi.mocked(testNativeRunnerAuthentication).mockClear();
     unregisterServerAdapter("external_test");
     unregisterServerAdapter("hermes_local");
     unregisterServerAdapter("hermes_gateway");
@@ -280,6 +282,15 @@ describe("server adapter registry", () => {
         level: "error",
       }],
     });
+  });
+
+  it.each([["codex", "gpt-6.1-sol"], ["opencode", "openrouter/example/model"]] as const)("requires selected native %s authentication without a legacy probe", async (provider, model) => {
+    const config = { provider, model, env: { OPENAI_API_KEY: "selected-account" } };
+    vi.mocked(testNativeRunnerAuthentication).mockResolvedValueOnce({ adapterType: "paperclip_runner", status: "fail", testedAt: new Date().toISOString(), checks: [{ code: `${provider}_hello_probe_failed`, level: "error", message: "Native runtime is unavailable." }] });
+    const result = await requireServerAdapter("paperclip_runner").testEnvironment({ companyId: "company-1", adapterType: "paperclip_runner", config });
+    expect(result.status).toBe("fail");
+    expect(testNativeRunnerAuthentication).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ companyId: "company-1", config }), provider, model);
+    expect(testNativeAcpxAuthentication).not.toHaveBeenCalled();
   });
 
   it.each([

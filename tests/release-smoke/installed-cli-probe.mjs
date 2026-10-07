@@ -2,13 +2,160 @@
 import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
 import { execFileSync, spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { accessSync, constants, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { once } from 'node:events';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { isAbsolute, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 
 const sha256 = value => createHash('sha256').update(value).digest('hex');
+
+/** Verify only the daemon the installed production resolver selects. */
+export async function inspectInstalledDaemon({ server, sourceRevision, commandPath = process.env.PATH, allowHostOnlyDaemon = false }) {
+  assert.ok(isAbsolute(server) && resolve(server) === server && server !== '/', 'Invalid installed server directory');
+  const installed = join(server, 'dist/vendor/paperclip-runner'), target = `${process.platform}-${process.arch}`;
+  const builtSource = JSON.parse(readFileSync(join(server, 'dist/build-info.json'), 'utf8')).commit;
+  const source = sourceRevision ?? builtSource;
+  assert.match(source ?? '', /^[a-f0-9]{40}$/, 'Installed daemon requires exact source provenance');
+  assert.equal(builtSource, source, 'Installed daemon graph source mismatch');
+  const { resolvePackagedRunnerBinary, runnerBinaryTarget } = await import(pathToFileURL(join(installed, 'live/runner-binary.js')).href);
+  const executable = resolvePackagedRunnerBinary(installed);
+  assert.ok(executable, 'The installed graph must contain its native daemon; no ambient fallback is accepted');
+  const manifestPath = join(installed, 'bin/release-manifest.json');
+  let manifest;
+  if (existsSync(manifestPath)) {
+    manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+    assert.equal(manifest.schema, 'paperclip.runner.release-binaries.v1');
+    assert.equal(manifest.sourceRevision, source, 'Installed daemon manifest source mismatch');
+    assert.deepEqual(Object.keys(manifest.platforms ?? {}).sort(), ['darwin-arm64', 'darwin-x64', 'linux-x64']);
+    const artifact = manifest.platforms[target];
+    assert.equal(artifact?.path, `${target}/paperclip-runnerd`, 'Installed daemon manifest target path mismatch');
+    assert.equal(executable, join(installed, 'bin', artifact.path), 'The production resolver must select the release-manifest artifact');
+    assert.match(artifact.sha256 ?? '', /^sha256:[a-f0-9]{64}$/);
+  } else {
+    assert.equal(allowHostOnlyDaemon, true, 'Public npm qualification requires the complete daemon release manifest');
+    assert.equal(executable, join(installed, 'bin/paperclip-runnerd'), 'Host-only source installs must use their built packaged daemon');
+  }
+  const stat = lstatSync(executable);
+  assert.ok(stat.isFile() && !stat.isSymbolicLink(), 'Installed daemon must be a regular owned package file');
+  assert.equal(realpathSync(executable), executable, 'Installed daemon cannot resolve outside its consumer graph');
+  accessSync(executable, constants.X_OK);
+  const bytes = readFileSync(executable), digest = `sha256:${sha256(bytes)}`;
+  assert.equal(runnerBinaryTarget(bytes), target, 'Installed daemon architecture mismatch');
+  if (manifest) assert.equal(manifest.platforms[target].sha256, digest, 'Installed daemon digest mismatch');
+  const raw = JSON.parse(execFileSync(executable, ['--build-metadata'], { cwd: server,
+    env: { PATH: commandPath ?? '/usr/bin:/bin', ...(process.env.HOME ? { HOME: process.env.HOME } : {}) },
+    encoding: 'utf8', timeout: 15_000, maxBuffer: 128 * 1024 }));
+  assert.equal(`sha256:${sha256(readFileSync(executable))}`, digest, 'Installed daemon changed during its metadata probe');
+  const { parsePaperclipRunnerdBuildMetadata } = await import(pathToFileURL(join(installed, 'evals/runnerd-artifact.js')).href);
+  const { PAPERCLIP_RUNNER_BUILD_METADATA: expected } = await import(pathToFileURL(join(installed, 'evals/build-metadata.js')).href);
+  const metadata = parsePaperclipRunnerdBuildMetadata(raw);
+  for (const [field, contract] of [['binaryContractVersion', 'runnerdArtifact'], ['nativeExecutionVersion', 'nativeExecution'], ['harnessDriverVersion', 'harnessDriver']]) {
+    assert.equal(metadata[field], expected.contracts[contract], `Installed daemon incompatible ${field}`);
+  }
+  assert.equal(metadata.prp.name, expected.prp.name);
+  assert.ok(metadata.prp.minimumVersion <= expected.prp.minimumVersion && metadata.prp.maximumVersion >= expected.prp.maximumVersion,
+    'Installed daemon protocol does not cover the installed package');
+  for (const [field, required] of [['durableSessionCapabilities', ['unlimited_runtime', 'connection_lease_renewal']],
+    ['prpTransportModes', ['dial_ws_loopback', 'dial_wss', 'listen_ws']]]) {
+    assert.ok(Array.isArray(raw[field]) && required.every(capability => raw[field].includes(capability)), `Installed daemon missing ${field}`);
+  }
+  return { executable, target, sourceRevision: source, sha256: digest, buildMetadata: raw,
+    resolution: 'production installed packaged resolver', manifestVerified: Boolean(manifest), hostOnlySourceInstall: !manifest,
+    architectureVerified: true, compatibilityPassed: true, metadataProbePassed: true, providerCalls: 0 };
+}
+
+/** Probe the commands this installed runtime can use, without authentication or prompts. */
+export async function inspectInstalledProviderReadiness({ server, commandPath = process.env.PATH, sourceRevision, allowHostOnlyDaemon = false }) {
+  assert.ok(isAbsolute(server) && resolve(server) === server && server !== '/', 'Invalid installed server directory');
+  const failures = [], readiness = { providerCalls: 0 };
+  try { readiness.runnerd = await inspectInstalledDaemon({ server, commandPath, sourceRevision, allowHostOnlyDaemon }); }
+  catch (error) { failures.push(`Runner daemon: ${error.message}`); }
+  try {
+    assert.ok(typeof commandPath === 'string' && commandPath.length > 0, 'Codex requires the runtime PATH');
+    const installed = join(server, 'dist/vendor/paperclip-runner');
+    const { resolvePinnedCodexCommand } = await import(pathToFileURL(join(installed, 'drivers/codex/codex-command.js')).href);
+    const { QUALIFIED_ACPX_PROFILES } = await import(pathToFileURL(join(installed, 'drivers/acpx/qualified-profiles.js')).href);
+    const executable = resolvePinnedCodexCommand();
+    const version = execFileSync(executable, ['--version'], { cwd: server,
+      env: { PATH: commandPath, ...(process.env.HOME ? { HOME: process.env.HOME } : {}) },
+      encoding: 'utf8', timeout: 30_000, maxBuffer: 16 * 1024 }).trim();
+    const versionMatch = version.match(/^codex(?:-cli)? (\d+\.\d+\.\d+(?:[-+][a-zA-Z0-9.-]+)?)$/);
+    assert.ok(versionMatch, 'Codex did not return its CLI version');
+    assert.equal(versionMatch[1], QUALIFIED_ACPX_PROFILES.codex.agentRuntimeVersion, 'Installed Codex executable must match its qualification pin');
+    readiness.codex = { command: 'codex', executable, version, resolution: 'qualified installed dependency', versionProbePassed: true };
+  } catch (error) { failures.push(`Codex: ${error.message}`); }
+  try {
+    const installed = join(server, 'dist/vendor/paperclip-runner/drivers/acpx');
+    const { probeAcpxClaudeInstallation } = await import(pathToFileURL(join(installed, 'installation-integrity.js')).href);
+    const { resolveQualifiedAcpxProfile } = await import(pathToFileURL(join(installed, 'qualified-profiles.js')).href);
+    const model = 'claude-sonnet-5';
+    const profile = resolveQualifiedAcpxProfile('claude', model);
+    // This existing verifier checks the pinned bridge, SDK, platform executable,
+    // and command lease. It never starts a provider session.
+    await probeAcpxClaudeInstallation(model);
+    readiness.claude = { agentServerPackage: profile.agentServerPackage, agentServerVersion: profile.agentServerVersion,
+      agentRuntimePackage: profile.agentRuntimePackage, agentRuntimeVersion: profile.agentRuntimeVersion,
+      commandDigest: profile.commandDigest, installationIntegrityPassed: true, commandLeasePassed: true };
+  } catch (error) { failures.push(`Claude: ${error.message}`); }
+  if (failures.length) {
+    const error = new Error(`Installed provider readiness failed: ${failures.join('; ')}`);
+    error.providerReadiness = { ...readiness, failures };
+    throw error;
+  }
+  return readiness;
+}
+
+export function inspectManagedServiceInstall({ sourceRevision, manifestPath, shimPath }) {
+  assert.match(sourceRevision ?? '', /^[a-f0-9]{40}$/, 'Service qualification requires a full source SHA');
+  for (const path of [manifestPath, shimPath]) {
+    assert.ok(typeof path === 'string' && isAbsolute(path) && resolve(path) === path && path !== '/', 'Service qualification requires absolute managed paths');
+  }
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+  assert.equal(manifest.schemaVersion, 1);
+  assert.equal(manifest.source, 'git', 'Service qualification must use the supported git installer');
+  assert.equal(manifest.repo, 'paperclipai/paperclip');
+  assert.equal(manifest.sha, sourceRevision, 'The managed install must record the requested source');
+  assert.equal(manifest.ref, sourceRevision, 'The managed install must use an immutable ref');
+  const payload = join(dirname(manifestPath), 'installs/git', sourceRevision.slice(0, 12));
+  assert.equal(manifest.payloadPath, payload, 'The managed payload must belong to this exact install store');
+  assert.equal(realpathSync(payload), payload, 'The managed payload cannot resolve into a checkout');
+  assert.equal(realpathSync(join(dirname(manifestPath), 'current')), payload, 'The managed current link must activate the requested payload');
+  accessSync(shimPath, constants.X_OK);
+  const shim = readFileSync(shimPath, 'utf8');
+  assert.ok(shim.includes('# paperclipai managed install shim v1'), 'The service must use a real managed shim');
+  assert.ok(shim.includes(join(dirname(manifestPath), 'current/node_modules/paperclipai/dist/index.js')), 'The shim must execute this managed store');
+  const cli = join(payload, 'node_modules/paperclipai/dist/index.js');
+  const server = join(payload, 'node_modules/@paperclipai/server');
+  assert.equal(realpathSync(cli), cli);
+  assert.equal(realpathSync(server), server);
+  assert.equal(JSON.parse(readFileSync(join(server, 'dist/build-info.json'), 'utf8')).commit, sourceRevision);
+  assert.equal(execFileSync(shimPath, ['--version'], { encoding: 'utf8', timeout: 30_000 }).trim(), manifest.version);
+  return { cli, server, cliVersion: manifest.version, cliSha256: sha256(readFileSync(cli)),
+    managedShimPassed: true, managedInstallSource: manifest.source, managedInstallCommit: manifest.sha };
+}
+
+async function inspectManagedService(sourceRevision, manifestPath, shimPath, runtimeInfoPath, pid, base) {
+  const installed = inspectManagedServiceInstall({ sourceRevision, manifestPath, shimPath });
+  installedProbePaths({ base });
+  assert.match(pid ?? '', /^[1-9]\d*$/, 'Service qualification requires the actual systemd MainPID');
+  const servicePid = Number(pid);
+  assert.ok(Number.isSafeInteger(servicePid));
+  const runtime = JSON.parse(readFileSync(runtimeInfoPath, 'utf8'));
+  assert.equal(runtime.schemaVersion, 1);
+  assert.equal(runtime.instanceId, 'default');
+  assert.equal(runtime.pid, servicePid, 'The runtime must belong to the active systemd service');
+  assert.equal(runtime.port, Number(new URL(base).port));
+  assert.equal(runtime.host, '127.0.0.1');
+  // Only PATH is extracted from this owned, credential-free fixture process;
+  // checking the invoking shell's PATH could conceal a broken service setup.
+  const commandPath = readFileSync(`/proc/${servicePid}/environ`, 'utf8').split('\0').find(entry => entry.startsWith('PATH='))?.slice(5);
+  const ui = await inspectInstalledUi({ base, server: installed.server, sourceRevision });
+  const providerReadiness = await inspectInstalledProviderReadiness({ server: installed.server, commandPath, sourceRevision, allowHostOnlyDaemon: true });
+  return { schema: 'paperclip.managed-service.startup.v1', ...installed, ...ui, providerReadiness,
+    activeServicePidBound: true, providerCalls: 0,
+    scope: 'Supported exact git install, real managed shim, systemd startup, UI bytes, and provider-free dependency readiness; authentication and tasks remain separate.' };
+}
 
 export function installedProbePaths(input = {}) {
   const paths = { consumer: '/consumer', dataDirectory: '/tmp/paperclip-installed-smoke',
@@ -82,8 +229,10 @@ export function standardImageDockerArgs({ sourceRevision, image, owner, probePat
   assert.ok(isAbsolute(probePath) && resolve(probePath) === probePath && probePath !== '/');
   assert.match(authSecret ?? '', /^[a-f0-9]{64}$/);
   // No command or entrypoint override: start the image exactly as shipped.
+  // The supported entrypoint prepares embedded Postgres library aliases in its
+  // image filesystem. Preserve that normal writable layer without host mounts.
   return ['run', '--detach', '--name', owner,
-    '--network', 'none', '--user', '1000:1000', '--read-only', '--cap-drop', 'ALL',
+    '--network', 'none', '--user', '1000:1000', '--cap-drop', 'ALL',
     '--security-opt', 'no-new-privileges', '--pids-limit', '256', '--memory', '3g',
     '--tmpfs', '/paperclip:rw,nosuid,nodev,size=1024m,mode=700,uid=1000,gid=1000',
     '--tmpfs', '/tmp:rw,nosuid,nodev,size=256m,mode=1777',
@@ -135,7 +284,13 @@ function runStandardImageSmoke(sourceRevision, image) {
 }
 
 async function run() {
-  const [version, sourceRevision, mode, pathsFile, ...extraArguments] = process.argv.slice(2);
+  const arguments_ = process.argv.slice(2);
+  if (arguments_[0] === '--inspect-service') {
+    assert.equal(arguments_.length, 7, 'Invalid managed service probe arguments');
+    console.log(JSON.stringify(await inspectManagedService(...arguments_.slice(1))));
+    return;
+  }
+  const [version, sourceRevision, mode, pathsFile, ...extraArguments] = arguments_;
   if (version === '--standard-image' || version === '--inspect-standard-image') {
     assert.ok(!pathsFile && !extraArguments.length, 'Invalid image probe arguments');
     standardImageRequest(sourceRevision, mode);
@@ -144,7 +299,9 @@ async function run() {
     assert.equal(JSON.parse(readFileSync(`${server}/dist/build-info.json`, 'utf8')).commit, sourceRevision);
     const uiDirectory = ['/app/server/ui-dist', '/app/ui/dist'].find(path => existsSync(join(path, 'index.html')));
     assert.ok(uiDirectory, 'The standard image must contain its production UI');
-    console.log(JSON.stringify(await inspectInstalledUi({ base: 'http://127.0.0.1:3100', server, uiDirectory, sourceRevision })));
+    const ui = await inspectInstalledUi({ base: 'http://127.0.0.1:3100', server, uiDirectory, sourceRevision });
+    const providerReadiness = await inspectInstalledProviderReadiness({ server, sourceRevision, allowHostOnlyDaemon: true });
+    console.log(JSON.stringify({ ...ui, providerReadiness }));
     return;
   }
   assert.ok((mode === undefined || mode === 'offline' || mode === 'browser') && !extraArguments.length, 'Invalid installed probe arguments');
@@ -177,7 +334,8 @@ async function run() {
   try {
     const ui = await inspectInstalledUi({ base: paths.base, server, sourceRevision,
       assertRunning: () => { if (child.exitCode !== null || child.signalCode !== null) throw new Error('Installed CLI exited before its server became ready'); } });
-    receipt = { cliVersion: version, cliSha256: sha256(readFileSync(cli)), installedCliStartupPassed: true, ...ui, providerCalls: 0 };
+    const providerReadiness = await inspectInstalledProviderReadiness({ server, sourceRevision });
+    receipt = { cliVersion: version, cliSha256: sha256(readFileSync(cli)), installedCliStartupPassed: true, ...ui, providerReadiness, providerCalls: 0 };
     if (browser) {
       const invitePath = output.match(/\/invite\/(pcp_bootstrap_[a-zA-Z0-9]+)/)?.[0];
       assert.ok(invitePath, 'The ordinary installed CLI must offer its bootstrap invite');
@@ -205,4 +363,10 @@ async function run() {
   console.log(JSON.stringify(receipt));
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) await run();
+if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
+  try { await run(); }
+  catch (error) {
+    if (error.providerReadiness) console.error(JSON.stringify({ providerReadiness: error.providerReadiness }));
+    throw error;
+  }
+}

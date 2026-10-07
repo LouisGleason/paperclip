@@ -266,10 +266,10 @@ export class OpenCodeServerDriver implements HarnessDriver {
     } catch (error) {
       return {
         recovered: false,
-        reason: redact(String(error), [
-          this.#options.environment?.OPENROUTER_API_KEY,
-          this.#options.environment?.PAPERCLIP_AI_PROVIDER_KEY,
-        ]),
+        reason: redact(
+          String(error),
+          providerCredentialValues(this.#options.environment),
+        ),
       };
     }
   }
@@ -366,11 +366,14 @@ export class OpenCodeServerDriver implements HarnessDriver {
         session.startEventPump();
         return session;
       } catch (error) {
-        lastError = error;
+        lastError = new Error(redact(
+          error instanceof Error ? error.message : String(error),
+          runtime?.sensitiveValues ?? providerCredentialValues(this.#options.environment),
+        ));
         await runtime?.close({ finalizeTrace: false });
         if (attempt === 3 || !retryableOpenCodeStartupError(error)) {
           await trace?.finish({ reason: "opencode_session_start_failed" });
-          throw error;
+          throw lastError;
         }
         this.#options.onDiagnostic?.(
           `OpenCode session startup attempt ${attempt} failed; retrying.`,
@@ -409,6 +412,7 @@ class OpenCodeHarnessSession implements HarnessSession {
   // which turn a message's content belongs to.
   readonly #messageTurnIds = new Map<string, string>();
   readonly #messageRoles = new Map<string, string>();
+  readonly #messageModels = new Map<string, { turnId: string; provider: string; id: string }>();
   readonly #pendingMessageParts = new Map<
     string,
     Array<Record<string, unknown>>
@@ -1030,7 +1034,7 @@ class OpenCodeHarnessSession implements HarnessSession {
         this.#emit("item.completed", {
           kind: "dynamicToolCall",
           item: { type: "tool_result", id: call.callId, tool_use_id: call.callId,
-            is_error: true, error: error instanceof Error ? error.message : String(error) },
+            is_error: true, error: redact(error instanceof Error ? error.message : String(error), this.#runtime.sensitiveValues) },
         }, { turnId, itemId: call.callId });
         throw error;
       } finally {
@@ -1073,7 +1077,7 @@ class OpenCodeHarnessSession implements HarnessSession {
             type: "tool_result",
             id: call.callId,
             tool_use_id: call.callId,
-            error: redact(String(error)),
+            error: redact(String(error), this.#runtime.sensitiveValues),
             is_error: true,
           },
         },
@@ -1285,7 +1289,7 @@ class OpenCodeHarnessSession implements HarnessSession {
           const frameId =
             this.#runtime.trace?.frame({
               direction: "provider_to_client",
-              raw: frame.raw,
+              raw: redactCredentials(frame.raw, this.#runtime.sensitiveValues),
               transport: "http_sse",
               nativeMethod: "SSE /event",
             }) ?? null;
@@ -1317,7 +1321,7 @@ class OpenCodeHarnessSession implements HarnessSession {
                 stage: "typescript_opencode_sse_parse",
                 ruleId: "opencode.sse.invalid_json",
                 disposition: "rejected",
-                reason: `OpenCode SSE data was not valid JSON: ${String(error).slice(0, 400)}`,
+                reason: `OpenCode SSE data was not valid JSON: ${redact(String(error), this.#runtime.sensitiveValues).slice(0, 400)}`,
               });
             }
             throw error;
@@ -1347,7 +1351,7 @@ class OpenCodeHarnessSession implements HarnessSession {
             code: "opencode_sse_failed",
             message: redact(String(error), this.#runtime.sensitiveValues),
           });
-          this.#events.fail(error);
+          this.#events.fail(new Error(redact(String(error), this.#runtime.sensitiveValues)));
           return;
         }
         await new Promise((resolve) => setTimeout(resolve, 50 * attempts));
@@ -1390,7 +1394,7 @@ class OpenCodeHarnessSession implements HarnessSession {
                 ]
               : [],
           reason: rejected
-            ? `OpenCode event normalization failed: ${String(rejected).slice(0, 400)}`
+            ? `OpenCode event normalization failed: ${redact(String(rejected), this.#runtime.sensitiveValues).slice(0, 400)}`
             : this.#activeTraceEmittedEventIds.length > 0
               ? "OpenCode event emitted one or more canonical PRP events"
               : "OpenCode event was observed but produced no canonical PRP event",
@@ -1536,6 +1540,10 @@ class OpenCodeHarnessSession implements HarnessSession {
       if (!owningTurnId) return;
       if (messageId && role) {
         this.#messageRoles.set(messageId, role);
+        if (role === "assistant" && typeof info.providerID === "string" && typeof info.modelID === "string"
+          && info.providerID.trim() && info.modelID.trim() && info.providerID.length <= 240 && info.modelID.length <= 240) {
+          this.#messageModels.set(messageId, { turnId: owningTurnId, provider: info.providerID, id: info.modelID });
+        }
         const pending = this.#pendingMessageParts.get(messageId) ?? [];
         this.#pendingMessageParts.delete(messageId);
         if (role === "assistant")
@@ -1907,6 +1915,7 @@ class OpenCodeHarnessSession implements HarnessSession {
       afterResult[0]?.part ??
       null;
     if (!selected) return;
+    const observedModel = selected.messageId ? this.#messageModels.get(selected.messageId) : undefined;
     this.#emit(
       "item.completed",
       {
@@ -1914,7 +1923,7 @@ class OpenCodeHarnessSession implements HarnessSession {
         channel: "final",
         providerPhase: "final_answer",
         text: selected.text,
-        item: selected.item,
+        item: { ...selected.item, ...(observedModel?.turnId === turnId ? { model: { provider: observedModel.provider, id: observedModel.id } } : {}) },
       },
       { turnId, itemId: selected.partId },
     );
@@ -2139,8 +2148,7 @@ async function startRuntime(input: {
     authHeader,
     bridge.secret,
     assignedMcp?.token,
-    input.options.environment?.OPENROUTER_API_KEY,
-    input.options.environment?.PAPERCLIP_AI_PROVIDER_KEY,
+    ...providerCredentialValues(input.options.environment),
   ].filter((value): value is string => Boolean(value));
   input.trace?.addSensitiveValues(sensitiveValues);
   const instructionRoot =
@@ -2246,6 +2254,7 @@ async function startRuntime(input: {
         OPENCODE_SERVER_PASSWORD: password,
         ...(providerProxy ? { NO_PROXY: [input.options.environment?.no_proxy ?? input.options.environment?.NO_PROXY, "127.0.0.1", "localhost"].filter(Boolean).join(",") } : {}),
       },
+      input.options.environment,
     );
     const isolateProcessGroup = input.options.isolateProcessGroup ?? true;
     const stdio: Array<"ignore" | "pipe" | number> = ["ignore", "ignore", "pipe"];
@@ -2275,11 +2284,12 @@ async function startRuntime(input: {
     let diagnostics = "";
     child.stderr?.on("data", (chunk) => {
       const raw = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
-      const redactedDiagnostic = redact(raw.toString("utf8"), sensitiveValues);
+      const redactedRaw = redactCredentials(raw.toString("utf8"), sensitiveValues);
+      const redactedDiagnostic = redactedRaw.slice(0, 8_192);
       diagnostics = `${diagnostics}${redactedDiagnostic}`.slice(-8_192);
       const frameId = input.trace?.frame({
         direction: "provider_stderr",
-        raw,
+        raw: redactedRaw,
         transport: "process_stderr",
         nativeMethod: "opencode serve stderr",
       });
@@ -2540,7 +2550,7 @@ async function api(
   const responseRaw = await response.text();
   const responseFrameId = runtime.trace?.frame({
     direction: "provider_to_client",
-    raw: responseRaw,
+    raw: redactCredentials(responseRaw, runtime.sensitiveValues),
     transport: "http_json",
     nativeMethod: `${method} ${path} ${response.status}`,
   });
@@ -2597,10 +2607,10 @@ async function api(
         stage: "typescript_opencode_http_parse",
         ruleId: "opencode.http.invalid_json",
         disposition: "rejected",
-        reason: `OpenCode response was not valid JSON: ${String(error).slice(0, 400)}`,
+        reason: `OpenCode response was not valid JSON: ${redact(String(error), runtime.sensitiveValues).slice(0, 400)}`,
       });
     }
-    throw error;
+    throw new Error(redact(String(error), runtime.sensitiveValues));
   }
 }
 
@@ -2658,7 +2668,7 @@ async function waitForHealth(
       const raw = await response.text();
       const responseFrameId = trace?.frame({
         direction: "provider_to_client",
-        raw,
+        raw: redactCredentials(raw),
         transport: "http_json",
         nativeMethod: `GET /global/health ${response.status}`,
       });
@@ -2738,6 +2748,7 @@ async function* parseSse(
 function sanitizedEnvironment(
   source: NodeJS.ProcessEnv,
   overrides: Record<string, string>,
+  assignedEnvironment: NodeJS.ProcessEnv | undefined,
 ): NodeJS.ProcessEnv {
   const allowed = [
     "PAPERCLIP_AGENT_KEY_ID", "PAPERCLIP_AGENT_PUBLIC_KEY", "PAPERCLIP_AGENT_PRIVATE_KEY",
@@ -2752,11 +2763,13 @@ function sanitizedEnvironment(
     "ALL_PROXY",
     "SSL_CERT_FILE",
     "SSL_CERT_DIR",
-    "OPENROUTER_API_KEY",
   ];
   const result: NodeJS.ProcessEnv = {};
   for (const key of allowed)
     if (source[key] !== undefined) result[key] = source[key];
+  for (const key of OPENCODE_PROVIDER_CREDENTIAL_KEYS)
+    if (assignedEnvironment?.[key] !== undefined)
+      result[key] = assignedEnvironment[key];
   return { ...result, ...overrides };
 }
 
@@ -2774,6 +2787,8 @@ function sanitizedEnvironmentKeys(): string[] {
     "SSL_CERT_FILE",
     "SSL_CERT_DIR",
     "OPENROUTER_API_KEY",
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
   ];
 }
 
@@ -2840,21 +2855,42 @@ function safeTraceRulePath(value: string): string {
     .replaceAll("/", "_")
     .slice(0, 120);
 }
+const OPENCODE_PROVIDER_CREDENTIAL_KEYS = [
+  "OPENROUTER_API_KEY",
+  "OPENAI_API_KEY",
+  "ANTHROPIC_API_KEY",
+] as const;
+
+function providerCredentialValues(
+  environment: NodeJS.ProcessEnv | undefined,
+): Array<string | undefined> {
+  return [
+    ...OPENCODE_PROVIDER_CREDENTIAL_KEYS.map(key => environment?.[key]),
+    environment?.PAPERCLIP_AI_PROVIDER_KEY,
+  ];
+}
+
 function redact(
+  value: string,
+  sensitiveValues: readonly (string | undefined)[] = [],
+): string {
+  return redactCredentials(value, sensitiveValues).slice(0, 8_192);
+}
+
+function redactCredentials(
   value: string,
   sensitiveValues: readonly (string | undefined)[] = [],
 ): string {
   let redacted = value;
   for (const sensitive of sensitiveValues) {
-    if (sensitive && sensitive.length >= 4)
+    if (sensitive)
       redacted = redacted.split(sensitive).join("[REDACTED]");
   }
   return redacted
     .replace(
-      /(OPENROUTER_API_KEY|authorization|password|token|secret)\s*[:=]\s*[^\s,}\]]+/gi,
+      /(OPENROUTER_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY|authorization|password|token|secret)["']?\s*[:=]\s*["']?[^\s,}\]]+/gi,
       "$1=[REDACTED]",
-    )
-    .slice(0, 8_192);
+    );
 }
 function canonicalJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;

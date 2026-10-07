@@ -4,9 +4,10 @@ import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, posix } from "node:path";
 import { copyBackGrokAuth, resolveManagedGrokHomeDir } from "@paperclipai/adapter-grok-local/server";
+import { copyBackCodexAuth } from "@paperclipai/adapter-codex-local/server";
 import type { AdapterEnvironmentTestContext, AdapterEnvironmentTestResult } from "@paperclipai/adapter-utils";
 import { runAdapterExecutionTargetShellCommand } from "@paperclipai/adapter-utils/execution-target";
-import { QUALIFIED_ACPX_PROFILES, acpxRuntimeSessionDirectoryName, probeQualifiedAcpxEnvironment } from "../../vendor/paperclip-runner/index.js";
+import { QUALIFIED_ACPX_PROFILES, acpxRuntimeSessionDirectoryName, probeQualifiedAcpxEnvironment, probeNativeRunnerEnvironment, bundledRemoteRunnerBinary, readRunnerdArtifactBinding } from "../../vendor/paperclip-runner/index.js";
 import { resolvePaperclipRunnerBinary } from "./native-codex-runner.js";
 import { prepareGrokRunnerCredentials } from "./grok-runner-credentials.js";
 import { readLocalAiCredentialFile } from "../local-ai-credential-file.js";
@@ -79,6 +80,151 @@ function redactNativeProbeMessage(message: string, environment: Record<string, s
     try { redact(JSON.parse(value)); } catch { /* Most credentials are plain strings. */ }
   }
   return message.slice(0, 2000);
+}
+
+/** Codex/OpenCode readiness requires their selected native daemon and provider turn. */
+export async function testNativeRunnerAuthentication(context: AdapterEnvironmentTestContext, provider: "codex" | "opencode", model: string | null): Promise<AdapterEnvironmentTestResult> {
+  const remote = context.executionTarget?.kind === "remote";
+  const configured = context.config.env;
+  const environment: Record<string, string> = Object.fromEntries([
+    ...(remote ? [] : PROBE_TRANSPORT_ENV_KEYS.flatMap(key => typeof process.env[key] === "string" ? [[key, process.env[key]!]] : [])),
+    ...Object.entries(configured && typeof configured === "object" && !Array.isArray(configured) ? configured : {})
+      .filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+  ]);
+  const authKey = "_PAPERCLIP_NATIVE_SETUP_CODEX_AUTH_JSON_SECRET";
+  const configKey = "_PAPERCLIP_NATIVE_SETUP_CODEX_CONFIG_TOML_SECRET";
+  delete environment[authKey];
+  delete environment[configKey];
+  const sourceCodexHome = provider === "codex" ? context.managedAiCredentialHome ?? environment.CODEX_HOME?.trim() : undefined;
+  const effort = context.config.modelReasoningEffort ?? context.config.reasoningEffort ?? context.config.effort;
+  const timeoutMs = remote ? 90_000 : 45_000;
+  let runtimeDirectory: string | undefined;
+  try {
+    let receipt: Awaited<ReturnType<typeof probeNativeRunnerEnvironment>>;
+    if (context.executionTarget?.kind === "remote") {
+      const target = context.executionTarget;
+      // Authorize precisely the Linux pack/daemon from this controller's
+      // distribution. Image-installed bytes must verify before their import.
+      const { readBundledRemoteProviderPackManifest, readRemoteProviderPackManifest, remoteProviderPackVerificationScript } = await import("./native-session-executor.js");
+      // Standard Linux images provide their qualified pack directly. Assembled
+      // npm controllers instead ship the image manifest and Linux daemon.
+      const configuredPack = process.env.PAPERCLIP_RUNNER_REMOTE_PROVIDER_PACK_PATH?.trim();
+      const expectedPack = configuredPack ? readRemoteProviderPackManifest(configuredPack) : readBundledRemoteProviderPackManifest();
+      const controllerRunnerBinary = configuredPack
+        ? process.env.PAPERCLIP_RUNNER_REMOTE_BINARY_PATH?.trim() || resolvePaperclipRunnerBinary()
+        : bundledRemoteRunnerBinary();
+      const expectedRunner = readRunnerdArtifactBinding(controllerRunnerBinary);
+      const canonical = (value: unknown): string => Array.isArray(value) ? "[" + value.map(canonical).join(",") + "]"
+        : value && typeof value === "object" ? "{" + Object.keys(value).sort().map(key => JSON.stringify(key) + ":" + canonical((value as Record<string, unknown>)[key])).join(",") + "}" : JSON.stringify(value);
+      const expectedManifest = Buffer.from(canonical(expectedPack)).toString("base64");
+      // Native runs stage the controller's explicitly bound Codex home. The
+      // probe does the same, using bounded private-file reads and env transport.
+      if (sourceCodexHome) {
+        const canonicalHome = await realpath(sourceCodexHome);
+        const optionalCredential = async (name: string) => readLocalAiCredentialFile(join(canonicalHome, name))
+          .catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return undefined; throw error; });
+        const auth = await optionalCredential("auth.json");
+        const config = await optionalCredential("config.toml");
+        if (auth !== undefined) environment[authKey] = auth;
+        if (config !== undefined) environment[configKey] = config;
+      }
+      for (const key of ["HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "CODEX_HOME", "PAPERCLIP_RUNNER_EXTERNAL_SANDBOX"]) delete environment[key];
+      const script = `
+        const { pathToFileURL } = await import('node:url');
+        const { mkdtemp, mkdir, writeFile, rm } = await import('node:fs/promises');
+        const { tmpdir } = await import('node:os');
+        const { join } = await import('node:path');
+        const { readFileSync } = await import('node:fs');
+        const { createHash } = await import('node:crypto');
+        const { createRequire } = await import('node:module');
+        // Reuse the production execution verifier without evaluating the pack.
+        new Function('require', 'process', ${JSON.stringify(remoteProviderPackVerificationScript())})(createRequire(import.meta.url), { argv: ['', process.argv[1], process.argv[6]], versions: process.versions, platform: process.platform, arch: process.arch });
+        if ('sha256:' + createHash('sha256').update(readFileSync(process.argv[4])).digest('hex') !== process.argv[5]) throw new Error('runner_remote_artifact_incompatible: selected daemon digest mismatch');
+        const { probeNativeRunnerEnvironment } = await import(pathToFileURL(process.argv[1] + '/dist/index.js'));
+        const redactNativeProbeMessage = ${redactNativeProbeMessage.toString()};
+        const input = JSON.parse(process.argv[2]);
+        const environment = Object.fromEntries([...new Set([...JSON.parse(process.argv[3]), ...${JSON.stringify(PROBE_TRANSPORT_ENV_KEYS)}])].filter(name => typeof process.env[name] === 'string').map(name => [name, process.env[name]]));
+        const sensitiveEnvironment = { ...environment };
+        const runtimeDirectory = await mkdtemp(join(tmpdir(), 'paperclip-native-setup-'));
+        let codexCredentialRefreshPath;
+        let cleanupConfirmed = false;
+        try {
+          let sourceCodexHome;
+          if (input.provider === 'codex' && (environment.${authKey} !== undefined || environment.${configKey} !== undefined)) {
+            sourceCodexHome = join(runtimeDirectory, 'source-codex-home');
+            await mkdir(sourceCodexHome, { mode: 448 });
+            if (environment.${authKey} !== undefined) await writeFile(join(sourceCodexHome, 'auth.json'), environment.${authKey}, { mode: 384 });
+            if (environment.${configKey} !== undefined) await writeFile(join(sourceCodexHome, 'config.toml'), environment.${configKey}, { mode: 384 });
+          }
+          delete environment.${authKey}; delete environment.${configKey};
+          const result = await probeNativeRunnerEnvironment({ ...input, runtimeDirectory, environment, timeoutMs: ${timeoutMs}, transportOptions: { runnerBinary: process.argv[4], sourceCodexHome: sourceCodexHome ?? '' },
+            onCleanupConfirmed: async () => { if (!codexCredentialRefreshPath) await rm(runtimeDirectory, { recursive: true, force: true }); cleanupConfirmed = true; },
+            ...(input.copyBack ? { onCodexCredentialRefresh: async path => { codexCredentialRefreshPath = path; } } : {}) });
+          console.log(JSON.stringify({ ...result, cleanupConfirmed, ...(codexCredentialRefreshPath ? { runtimeDirectory, codexCredentialRefreshPath } : {}) }));
+        } catch (error) {
+          const message = redactNativeProbeMessage(error instanceof Error ? error.message : 'The selected native runtime could not verify this account.', sensitiveEnvironment);
+          if (codexCredentialRefreshPath) console.log(JSON.stringify({ nativeProbeError: message, cleanupConfirmed, runtimeDirectory, codexCredentialRefreshPath }));
+          else { console.error(message); process.exitCode = 1; }
+        }
+      `;
+      const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
+      const input = { provider, model, ...(provider === "codex" && typeof effort === "string" && effort ? { reasoningEffort: effort } : {}), copyBack: Boolean(context.managedAiCredentialHome && provider === "codex") };
+      const command = 'runner=""; for candidate in /opt/paperclip-runner/bin/paperclip-runnerd "$HOME/.local/bin/paperclip-runnerd"; do if [ -x "$candidate" ]; then runner="$candidate"; break; fi; done; if [ -z "$runner" ]; then echo "Qualified Paperclip Runner is missing" >&2; exit 1; fi; for pack in /opt/paperclip-runner/provider-pack "$HOME/.local/share/paperclip-runner/provider-pack"; do if [ -f "$pack/provider-pack.json" ]; then exec "$pack/' + expectedPack.payload.artifacts.nodeCommand.path + '" --input-type=module -e '
+        + quote(script) + ' "$pack" ' + [JSON.stringify(input), JSON.stringify(Object.keys(environment))].map(quote).join(' ') + ' "$runner" ' + [expectedRunner.digest, expectedManifest].map(quote).join(' ') + '; fi; done; echo "Qualified provider pack is missing" >&2; exit 1';
+      const probe = await runAdapterExecutionTargetShellCommand(`native-hello-${crypto.randomUUID()}`, target, command,
+        { cwd: target.remoteCwd, env: environment, timeoutSec: 110 });
+      if (probe.timedOut) throw new Error("Native provider hello probe timed out.");
+      if (probe.exitCode !== 0) throw new Error(probe.stderr.trim() || "The selected native runtime could not verify this account.");
+      const result = JSON.parse(probe.stdout.trim());
+      if (result.codexCredentialRefreshPath) {
+        try {
+          if (!context.managedAiCredentialHome || provider !== "codex" || typeof result.runtimeDirectory !== "string"
+            || !posix.isAbsolute(result.runtimeDirectory) || result.runtimeDirectory !== posix.normalize(result.runtimeDirectory)
+            || !/^paperclip-native-setup-[A-Za-z0-9]+$/.test(posix.basename(result.runtimeDirectory))
+            || result.codexCredentialRefreshPath !== posix.join(result.runtimeDirectory, "codex-home", "auth.json")) throw new Error("The native Codex credential refresh handoff is invalid.");
+          const readScript = `const fs=require('node:fs'),path=require('node:path');let fd;try{let parent=path.dirname(process.argv[1]);while(true){if(!fs.lstatSync(parent).isDirectory())throw Error('directory');const next=path.dirname(parent);if(next===parent)break;parent=next;}fd=fs.openSync(process.argv[1],fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);const st=fs.fstatSync(fd);if(!st.isFile()||st.uid!==process.getuid()||(st.mode&511)!==384||st.size>65536)throw Error('credential');const b=Buffer.alloc(65537);let n=0;while(n<b.length){const k=fs.readSync(fd,b,n,b.length-n,n);if(!k)break;n+=k;}if(n>65536)throw Error('size');process.stdout.write(b.subarray(0,n).toString('base64'));b.fill(0);}catch(e){process.exitCode=e.code==='ENOENT'?66:1;}finally{if(fd!==undefined)fs.closeSync(fd);}`;
+          await copyBackCodexAuth({ hostAuthPath: join(context.managedAiCredentialHome, "auth.json"), log: () => {}, readSandboxAuth: async () => {
+            const readCommand = 'for pack in /opt/paperclip-runner/provider-pack "$HOME/.local/share/paperclip-runner/provider-pack"; do if [ -f "$pack/provider-pack.json" ]; then exec "$pack/' + expectedPack.payload.artifacts.nodeCommand.path + '" -e ' + quote(readScript) + ' ' + quote(result.codexCredentialRefreshPath) + '; fi; done; exit 1';
+            const read = await runAdapterExecutionTargetShellCommand(`native-refresh-${crypto.randomUUID()}`, target, readCommand, { cwd: target.remoteCwd, env: {}, timeoutSec: 10 });
+            if (read.timedOut || read.exitCode !== 0) throw Object.assign(new Error("Native Codex credential refresh handoff unavailable."), { code: read.exitCode === 66 ? "ENOENT" : "INVALID_CREDENTIAL" });
+            return Buffer.from(read.stdout, "base64");
+          } });
+          if (result.cleanupConfirmed === true) {
+            const cleaned = await runAdapterExecutionTargetShellCommand(`native-cleanup-${crypto.randomUUID()}`, target, 'rm -rf -- ' + quote(result.runtimeDirectory), { cwd: target.remoteCwd, env: {}, timeoutSec: 10 });
+            if (cleaned.timedOut || cleaned.exitCode !== 0) throw new Error("Native Codex setup credential cleanup failed.");
+          }
+        } catch (error) {
+          if (typeof result.nativeProbeError === "string" && result.nativeProbeError) {
+            const original = new Error(result.nativeProbeError);
+            throw new AggregateError([original, error], original.message + "; " + (error instanceof Error ? error.message : "Native Codex credential cleanup failed."), { cause: original });
+          }
+          throw error;
+        }
+      }
+      if (result.nativeProbeError) throw new Error(result.nativeProbeError);
+      if (result.cleanupConfirmed !== true) throw new Error("Native setup cleanup is incomplete; private recovery state was retained.");
+      receipt = result;
+    } else {
+      runtimeDirectory = await mkdtemp(join(tmpdir(), "paperclip-native-setup-"));
+      receipt = await probeNativeRunnerEnvironment({ runtimeDirectory, provider, model, environment, timeoutMs,
+        ...(provider === "codex" && typeof effort === "string" && effort ? { reasoningEffort: effort } : {}),
+        onCleanupConfirmed: async () => { await rm(runtimeDirectory!, { recursive: true, force: true }); },
+        transportOptions: { runnerBinary: resolvePaperclipRunnerBinary(), sourceCodexHome: sourceCodexHome ?? "" },
+        ...(context.managedAiCredentialHome && provider === "codex" ? { onCodexCredentialRefresh: async (filename: string) => {
+          await copyBackCodexAuth({ hostAuthPath: join(context.managedAiCredentialHome!, "auth.json"), log: () => {}, readSandboxAuth: async () => Buffer.from(await readLocalAiCredentialFile(filename)) });
+        } } : {}),
+      });
+    }
+    if (receipt.helloProbePassed !== true || receipt.provider !== provider || typeof receipt.effectiveModel !== "string" || !receipt.effectiveModel.trim() || (model !== null && receipt.effectiveModel !== model)
+      || receipt.providerDriver !== (provider === "opencode" ? "opencode_server" : "codex_app_server")) throw new Error("The selected native runtime returned an incompatible account or model verification receipt.");
+    return { adapterType: "paperclip_runner", status: "pass", testedAt: new Date().toISOString(), checks: [{ code: `${provider}_hello_probe_passed`, level: "info",
+      message: `The native ${provider} runtime verified the selected account and model in ${remote ? "the selected environment" : "the Paperclip host"}.` }] };
+  } catch (error) {
+    const message = redactNativeProbeMessage(error instanceof Error ? error.message : "The selected native runtime could not verify this account.", environment);
+    const authentication = /(?:invalid (?:api[- ]?key|auth(?:entication)? token)|authentication (?:failed|required)|unauthenticated|unauthorized|not authenticated|please (?:log|sign) in|not logged in|\b(?:401|403)\b)/i.test(message);
+    return { adapterType: "paperclip_runner", status: "fail", testedAt: new Date().toISOString(), checks: [{ code: `${provider}_hello_probe_${authentication ? "auth_required" : /timed out/i.test(message) ? "timeout" : "failed"}`, level: "error", message,
+      hint: "Check the selected account, model access, and native runtime prerequisites, then retry. Legacy runner is available explicitly in Advanced." }] };
+  }
 }
 
 /** Use the qualified native host and bound account, without borrowing a legacy CLI or ambient login. */

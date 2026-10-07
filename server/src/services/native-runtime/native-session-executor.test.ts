@@ -21,6 +21,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { inspect } from "node:util";
 import { join } from "node:path";
@@ -338,6 +339,7 @@ import {
   verifyRemoteRunnerReattachment,
   readRemoteProviderPackManifest,
   readBundledRemoteProviderPackManifest,
+  remoteProviderPackVerificationScript,
   providerSessionIdentityFromDurableProviderState,
   durableProviderCheckpointFailureReason,
   providerSessionIdentityTransitionIsAllowed,
@@ -1221,6 +1223,22 @@ describe("remote provider pack manifest", () => {
     expect(readRemoteProviderPackManifest(root).payload.pins.opencode).toBe(
       "1.18.34",
     );
+    // Execute the same immutable-pack verifier reused by selected-native setup
+    // against this existing assembled filesystem fixture. It never runs providers.
+    for (const [name, version] of Object.entries({ acpx: payload.pins.acpx, "@agentclientprotocol/claude-agent-acp": payload.pins.claudeAcp,
+      "@agentclientprotocol/codex-acp": payload.pins.codexAcp, "opencode-ai": payload.pins.opencode })) {
+      const directory = join(root, "node_modules", name);
+      await mkdir(directory, { recursive: true });
+      await writeFile(join(directory, "package.json"), JSON.stringify({ version }));
+    }
+    const expected = Buffer.from(canonical(JSON.parse(await readFile(join(root, "provider-pack.json"), "utf8")))).toString("base64");
+    const verify = new Function("require", "process", remoteProviderPackVerificationScript());
+    const verifierProcess = { argv: ["", root, expected], platform: payload.target.platform, arch: payload.target.architecture, versions: process.versions };
+    expect(() => verify(createRequire(import.meta.url), verifierProcess)).not.toThrow();
+    expect(() => verify(createRequire(import.meta.url), { ...verifierProcess, argv: ["", root, Buffer.from("{}").toString("base64")] })).toThrow("manifest mismatch");
+    await writeFile(join(root, "pnpm-lock.yaml"), "substituted-lockfile");
+    expect(() => verify(createRequire(import.meta.url), verifierProcess)).toThrow("productionLock digest mismatch");
+    await writeFile(join(root, "pnpm-lock.yaml"), lockfile);
     const cursorPath = "provider-assets/cursor/linux-x64";
     await mkdir(join(root, cursorPath), { recursive: true });
     await writeFile(join(root, cursorPath, "runtime"), "pinned Cursor runtime");

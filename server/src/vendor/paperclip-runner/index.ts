@@ -124,6 +124,16 @@ export const parsePaperclipQuestionResponse =
   runner.parsePaperclipQuestionResponse;
 export const resolveQualifiedAcpxProfile = runner.resolveQualifiedAcpxProfile;
 export const probeQualifiedAcpxEnvironment = runner.probeQualifiedAcpxEnvironment;
+// Keep the source-mode shim typed while a serving checkout's previous dist
+// declarations remain intact. The server build replaces this shim entirely.
+type NativeRunnerProbe = (options: {
+  runtimeDirectory: string; provider: "codex" | "opencode"; model: string | null;
+  reasoningEffort?: string; environment: NodeJS.ProcessEnv; timeoutMs?: number;
+  transportOptions?: import("@paperclipai/paperclip-runner").RunnerdCodexTransportOptions;
+  onCodexCredentialRefresh?: (filename: string) => Promise<void>;
+  onCleanupConfirmed?: () => Promise<void>;
+}) => Promise<{ provider: "codex" | "opencode"; providerDriver: string; effectiveModel: string; helloProbePassed: true }>;
+export const probeNativeRunnerEnvironment: NativeRunnerProbe = (runner as RunnerModule & { probeNativeRunnerEnvironment: NativeRunnerProbe }).probeNativeRunnerEnvironment;
 export const QUALIFIED_ACPX_PROFILES = runner.QUALIFIED_ACPX_PROFILES;
 export const QUALIFIED_ACPX_VERSION = runner.QUALIFIED_ACPX_VERSION;
 export const CURSOR_DISTRIBUTION_PINS = runner.CURSOR_DISTRIBUTION_PINS;
