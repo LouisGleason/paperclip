@@ -14,8 +14,8 @@ One owner carries implementation, verification and relevant review fixes through
 - PR: https://github.com/paperclipai/paperclip/pull/15422
 - Preview: http://127.0.0.1:3104/RUN/agents
 - Evidence task: http://127.0.0.1:3104/RUN/issues/RUN-2
-- Last live server source: `326e7ef56c8100f7f89e16f226a4206a14bb90d2`; the test-drive will be restarted after the final security review fix.
-- Next action: verify and push the credential-routing guard fix, finish the running test groups, and confirm current-head CI and security review.
+- Test-drive: the production source includes security fix `204740b27`; `/api/health` exposes the running checkout commit. The final handoff records the tested PR head.
+- Next action: confirm the final browser-fixture commit in CI, finish remaining local verification, and obtain the missing credentials/managed target for the unresolved live matrix below.
 
 ## Implemented
 
@@ -25,12 +25,12 @@ Live testing and regression review fixed historical-adapter SQL projection, buil
 
 ## Verification state (2026-10-07)
 
-- Workspace typecheck and token gates pass after review fixes.
-- Production build and Storybook build passed after the functional review fixes.
-- Focused review regression run: 422 passed, one AgentCore test step-label fixture corrected; follow-up 66 passed including that test and the two isolated full-suite timeout cases.
-- Initial full suite: 16,209 passed, 17 failed. Failures included stale legacy expectations, environment-readiness mocks, an approval service argument and two timeouts. Addressed; full required suite rerunning.
-- Greptile reviewed `326e7ef56` at 5/5 with all five findings resolved. Current CI has passed the UI/CLI and browser regressions. The security scanner then found that automatic runner conversion bypassed the agent environment guard. The fix applies that guard to underlying harness identity before and after resolution, including partial native updates, while preserving the existing explicit pool-auth override. Credential-routing regression coverage and final security review are in progress.
-- The current full server run encountered two accounting-test timeouts; all 31 tests in that file passed on an isolated rerun. Remaining server, workspace and serialized groups are running. This is not yet a fully green handoff.
+- Workspace typecheck, production build, Storybook build and token gates passed after the functional review fixes. Server typecheck passed after the credential-routing guard fix.
+- Focused review regressions: 422 passed, then 66 passed after correcting the AgentCore test's step label. Credential inheritance, connection pools and permission suites: 183 passed after the security fix. Session/revision tests: 9 passed. Pinned Grok setup probes: 6 passed.
+- Complete local UI suite: 7,688 passed. Shared: 874 passed; skills catalog: 20 passed. CLI: 517 passed and one database-fixture failure, then its complete worktree suite passed 63 tests using canonical temporary paths.
+- The full local server run and source-only workspace follow-up are still running. Local failures so far include two accounting timeouts (31 tests passed in isolation), cold route-import timeouts and embedded PostgreSQL startup failures. A run that overlapped the security edit also loaded four stale permission expectations; the corrected credential/pool/permission suites subsequently passed all 183 tests. These failures are not represented as a green full local invocation.
+- CI on `204740b27`: every typecheck, build, general test, serialized server, runner, Docker, and canary job passed. One browser shard failed because its inbox-retry fixture navigated away before the wakeup request reached the server. The fixture now waits for the app's navigation; the focused real browser test passed locally (1 test, 34.8 seconds). Final current-head CI is pending.
+- Greptile reviewed `204740b27` at 5/5, with no actionable findings. The security scanner acknowledged the credential-routing fix and passed. All six review/security threads are resolved. Final head confirmation is pending.
 
 ## Observed live acceptance
 
