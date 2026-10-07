@@ -164,7 +164,8 @@ jobs:
     needs: [plan_preview, package_preview]
     if: github.ref == 'refs/heads/master' && needs.plan_preview.outputs.packages == 'true' && needs.package_preview.result == 'success'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Allow the bounded 30-minute registry visibility check plus setup/publish.
+    timeout-minutes: 45
     # A manual preview and a merge-triggered migrator may compile in parallel.
     # Serialize only publication so they cannot race an immutable npm version,
     # without making the migrator wait for a preview's separate image build.

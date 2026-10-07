@@ -242,6 +242,9 @@ test("manual migrator and branch preview retain their npm publisher and concurre
   const release = readFileSync(new URL("../.github/workflows/release.yml", import.meta.url), "utf8");
   assert.match(release, /\(inputs.channel == 'preview' \|\| inputs.channel == 'cloud-migrator'\) && format\('\{0\}-\{1\}', inputs.channel, inputs.source_ref\)/);
   const publisher = release.split("  publish_preview:")[1].split("  image_preview:")[0];
+  const publisherTimeoutMinutes = Number(publisher.match(/timeout-minutes: (\d+)/)?.[1]);
+  assert.ok(publisherTimeoutMinutes >= 45, "Allow the 30-minute visibility deadline plus setup and publication overhead");
+  assert.ok(publisherTimeoutMinutes <= 60, "Keep preview publication bounded to at most one hour");
   assert.match(publisher, /group: preview-package-publish-\$\{\{ inputs.source_ref \}\}/);
   assert.match(publisher, /cancel-in-progress: false/);
   assert.match(release, /PLAN_COMMAND: \$\{\{ inputs.channel == 'cloud-migrator' && 'plan-migrator' \|\| 'plan' \}\}/);
