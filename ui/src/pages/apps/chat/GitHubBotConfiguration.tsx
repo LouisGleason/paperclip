@@ -633,8 +633,7 @@ export function GitHubAccessEditor({
                 </DropdownMenu>
               </div>
               <GitHubToggle
-                label="Run automatically"
-                ariaLabel={`Run automatically for @${person.login}`}
+                label={`Run automatically for @${person.login}`}
                 help="Lets PRs and issues authored by this person start work without mentioning the bot. Only events enabled in Settings run. Turn this off to keep this person’s use mention-only."
                 checked={person.automaticReviews}
                 onChange={(value) =>
