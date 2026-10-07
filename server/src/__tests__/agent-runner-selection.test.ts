@@ -1,4 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+const ssh = vi.hoisted(() => ({ run: vi.fn() }));
+vi.mock("@paperclipai/adapter-utils/ssh", () => ({ runSshCommand: ssh.run }));
+vi.mock("../services/environment-config.js", () => ({ resolveEnvironmentDriverConfigForRuntime: async () => ({ driver: "ssh", config: { host: "qa-host" } }) }));
 const state = vi.hoisted(() => ({ disabled: [] as string[], overrides: new Set<string>(), settings: {} as Record<string, unknown>, environment: null as { id: string; driver: string } | null, managed: null as { id: string; driver: string } | null }));
 vi.mock("../adapters/registry.js", () => ({
   findActiveServerAdapter: (type: string) => type === "missing" ? null : { type },
@@ -11,7 +14,7 @@ vi.mock("../services/environments.js", () => ({ environmentService: () => ({ get
 import { agentRunnerAvailability, resolveNewAgentRunner, resolveNewAgentRunnerForCompany } from "../services/agent-runner-selection.js";
 
 describe("server-owned agent runner selection", () => {
-  beforeEach(() => { state.disabled = []; state.overrides.clear(); state.settings = {}; state.environment = null; state.managed = null; });
+  beforeEach(() => { state.disabled = []; state.overrides.clear(); state.settings = {}; state.environment = null; state.managed = null; ssh.run.mockReset(); });
   it.each([
     ["codex_local", { provider: "codex" }], ["claude_local", { provider: "acpx", acpxAgent: "claude" }],
     ["opencode_local", { provider: "opencode" }], ["grok_local", { provider: "acpx", acpxAgent: "grok" }],
@@ -58,5 +61,26 @@ describe("server-owned agent runner selection", () => {
   });
   it("never guesses an unknown provider", () => {
     expect(() => resolveNewAgentRunner({ adapterType: "paperclip_runner", adapterConfig: { provider: "unknown" } })).toThrow(/provider/);
+  });
+  it.each([
+    ["codex_local", "Linux\nx86_64\n", "paperclip_runner"],
+    ["codex_local", "Linux\naarch64\n", "codex_local"],
+    ["grok_local", "Darwin\nx86_64\n", "grok_local"],
+    ["grok_local", "Darwin\narm64\n", "paperclip_runner"],
+  ])("checks the SSH platform before resolving %s (%s)", async (adapterType, stdout, expected) => {
+    state.environment = { id: "ssh-target", driver: "ssh" };
+    ssh.run.mockResolvedValue({ stdout });
+    const input = { adapterType, defaultEnvironmentId: "ssh-target" };
+    await expect(resolveNewAgentRunnerForCompany({} as never, "company", input)).resolves.toMatchObject({ adapterType: expected });
+    expect(ssh.run).toHaveBeenCalledWith({ host: "qa-host" }, "uname -s; uname -m", { timeoutMs: 10_000, maxBuffer: 1024 });
+    if (expected !== "paperclip_runner") await expect(resolveNewAgentRunnerForCompany({} as never, "company", { ...input, runner: "paperclip" })).rejects.toThrow(/unavailable/);
+  });
+  it("reports an unreachable SSH target without silently changing runners", async () => {
+    state.environment = { id: "ssh-target", driver: "ssh" };
+    ssh.run.mockRejectedValue(new Error("connection failed"));
+    await expect(resolveNewAgentRunnerForCompany({} as never, "company", { adapterType: "codex_local", defaultEnvironmentId: "ssh-target" })).rejects.toThrow(/Check its connection/);
+    ssh.run.mockClear();
+    await expect(resolveNewAgentRunnerForCompany({} as never, "company", { adapterType: "codex_local", defaultEnvironmentId: "ssh-target", runner: "legacy" })).resolves.toMatchObject({ adapterType: "codex_local" });
+    expect(ssh.run).not.toHaveBeenCalled();
   });
 });

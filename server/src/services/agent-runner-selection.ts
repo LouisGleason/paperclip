@@ -6,6 +6,8 @@ import { findActiveServerAdapter, hasActiveAdapterOverride, listEnabledServerAda
 import { getDisabledAdapterTypes } from "./adapter-plugin-store.js";
 import { unprocessable } from "../errors.js";
 import { PaperclipRunnerProviderProfileError, resolvePaperclipRunnerProviderProfile } from "./native-runtime/provider-profile.js";
+import { runSshCommand } from "@paperclipai/adapter-utils/ssh";
+import { resolveEnvironmentDriverConfigForRuntime } from "./environment-config.js";
 
 export function agentRunnerAvailability(harness: string, target?: { driver: string; platform?: string; architecture?: string }): AgentRunnerAvailability {
   const profile = paperclipRunnerProfileForHarness(harness);
@@ -80,7 +82,20 @@ export async function resolveNewAgentRunnerForCompany(db: Db, companyId: string,
     if (!environment) throw unprocessable("The required Kubernetes environment is unavailable.", { code: "kubernetes_environment_unavailable" });
   }
   const driver = environment?.driver ?? "local";
-  const target = driver === "local" ? { driver, platform: process.platform, architecture: process.arch }
+  let target = driver === "local" ? { driver, platform: process.platform, architecture: process.arch }
     : { driver, ...(driver === "sandbox" ? { platform: "linux", architecture: "x64" } : {}) };
+  if (driver === "ssh" && environment && agentRunnerAvailability(harness, target).defaultRunner === "paperclip") {
+    const parsed = await resolveEnvironmentDriverConfigForRuntime(db, companyId, environment);
+    if (parsed.driver !== "ssh") throw unprocessable("The selected SSH environment is unavailable.", { code: "agent_runner_target_unavailable" });
+    let output: string;
+    try {
+      // Probe only OS/CPU identity: no provider credentials or workspace writes.
+      output = (await runSshCommand(parsed.config, "uname -s; uname -m", { timeoutMs: 10_000, maxBuffer: 1024 })).stdout;
+    } catch {
+      throw unprocessable("Could not check the SSH host's platform. Check its connection and retry, or explicitly select the legacy runner.", { code: "agent_runner_platform_probe_failed" });
+    }
+    const [os = "", architecture = ""] = output.trim().split(/\r?\n/);
+    target = { driver, platform: os === "Linux" ? "linux" : os === "Darwin" ? "darwin" : "unknown", architecture: architecture === "x86_64" ? "x64" : ["aarch64", "arm64"].includes(architecture) ? "arm64" : architecture };
+  }
   return resolveNewAgentRunner({ ...input, target });
 }
