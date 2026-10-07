@@ -3,11 +3,12 @@
 // credentials, inference, or changes to release versions. Native provisioning is
 // explicit and separate from npm installation, and is removed in finally.
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { materializePublishManifest, prepareBundledPackage } from './prepare-bundled-package.mjs';
 import { GROK_PUBLIC_INSTALL_IMAGE, GROK_PUBLIC_INSTALL_LIFECYCLE, grokConsumerDockerArgs } from './grok-public-install-sandbox.mjs';
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -15,9 +16,15 @@ assert.equal(process.platform, 'linux', 'Run this verification on disposable EC2
 const root = mkdtempSync(join(tmpdir(), 'paperclip-grok-public-install-'));
 const prerequisite = join(root, 'native/grok');
 const env = { ...process.env, NODE_PATH: '', PAPERCLIP_RELEASE_REUSE_UI_DIST: '1', npm_config_ignore_scripts: 'false', npm_config_audit: 'false', npm_config_fund: 'false' };
-const run = (cmd, args, cwd = root) => execFileSync(cmd, args, { cwd, env, stdio: 'pipe', maxBuffer: 32 * 1024 * 1024 });
+const run = (cmd, args, cwd = root, options = {}) => execFileSync(cmd, args, { cwd, env, stdio: 'pipe', maxBuffer: 32 * 1024 * 1024, ...options });
 const sourceRevision = run('git', ['rev-parse', 'HEAD'], repo).toString().trim();
 const releaseVersion = `0.0.0-grok-verify.${sourceRevision.slice(0, 12)}`;
+const sha256 = value => createHash('sha256').update(value).digest('hex');
+const browserSmoke = process.env.PAPERCLIP_PUBLIC_INSTALL_BROWSER_SMOKE === '1';
+const browserOwner = `paperclip-public-install-${process.pid}-${Date.now()}`;
+const offlineOwner = `${browserOwner}-offline`;
+let browserNetworkCreated = false;
+let offlineProbeStarted = false;
 try {
   const listing = run(process.execPath, [join(repo, 'scripts/release-package-map.mjs'), 'list'], repo).toString().trim().split('\n').map(line => line.split('\t'));
   const packages = new Map(listing.map(([dir, name]) => [name, { dir, manifest: JSON.parse(readFileSync(join(repo, dir, 'package.json'), 'utf8')) }]));
@@ -30,6 +37,18 @@ try {
     }
   }
   visit('@paperclipai/server');
+  // Use the release CLI generator and bundle configuration without rewriting
+  // cli/package.json or resolving product code through this checkout at runtime.
+  const cliStage = join(root, 'cli'); mkdirSync(cliStage);
+  const cliManifestPath = join(cliStage, 'package.json');
+  run(process.execPath, [join(repo, 'scripts/generate-npm-package-json.mjs'), '--output', cliManifestPath], repo);
+  const cliManifest = JSON.parse(readFileSync(cliManifestPath, 'utf8'));
+  cliManifest.version = releaseVersion;
+  cliManifest.dependencies['@paperclipai/server'] = releaseVersion;
+  writeFileSync(cliManifestPath, JSON.stringify(cliManifest));
+  run(process.execPath, ['--input-type=module', '-e', `import esbuild from 'esbuild'; import config from ${JSON.stringify(pathToFileURL(join(repo, 'cli/esbuild.config.mjs')).href)}; await esbuild.build({ ...config, absWorkingDir: ${JSON.stringify(join(repo, 'cli'))}, outfile: ${JSON.stringify(join(cliStage, 'dist/index.js'))} });`], join(repo, 'cli'));
+  chmodSync(join(cliStage, 'dist/index.js'), 0o755);
+  run(process.execPath, ['--check', join(cliStage, 'dist/index.js')]);
   // Match release.sh's unified versioning in temporary staging directories.
   // Source manifests remain untouched, including independently versioned SDKs.
   run(process.execPath, [join(repo, 'scripts/build-standalone-public-packages.mjs')], repo);
@@ -59,6 +78,9 @@ try {
     const packed = readdirSync(root).filter(f => f.endsWith('.tgz') && !tarballs.includes(join(root, f)));
     assert.equal(packed.length, 1); tarballs.push(join(root, packed[0]));
   }
+  run('npm', ['pack', '--ignore-scripts', '--pack-destination', root], cliStage);
+  tarballs.push(join(root, `paperclipai-${releaseVersion}.tgz`));
+  assert.ok(existsSync(tarballs.at(-1)));
   const assets = join(root, 'assets'); mkdirSync(assets, { mode: 0o755 });
   const consumer = join(root, 'consumer'); mkdirSync(consumer);
   const cache = join(root, 'cache'); mkdirSync(cache);
@@ -91,6 +113,7 @@ try {
     const installedManifest = JSON.parse(readFileSync(join(consumer, 'node_modules', name, 'package.json'), 'utf8'));
     assert.equal(installedManifest.version, releaseVersion, `Installed release version for ${name}`);
   }
+  assert.equal(JSON.parse(readFileSync(join(consumer, 'node_modules/paperclipai/package.json'), 'utf8')).version, releaseVersion);
   assert.equal(existsSync(prerequisite), false, 'npm must not provision Grok');
   const server = join(consumer, 'node_modules/@paperclipai/server');
   const installed = join(server, 'dist/vendor/paperclip-runner');
@@ -114,7 +137,54 @@ try {
   // Only the positive probe sees this file at the canonical sandbox path.
   run(process.execPath, [join(repo, 'packages/paperclip-runner/scripts/provision-grok.mjs'), prerequisite]);
   isolated(['node', '/packages/probe.mjs', 'present'], { prerequisite });
-  console.log(JSON.stringify({ schema: 'paperclip.grok.public-npm-install.v1', sourceRevision, releaseVersion, lifecycleScriptsEnabled: true, lifecycleSentinelVerified: true, lifecycleNetwork: 'none', consumerImage: GROK_PUBLIC_INSTALL_IMAGE, consumerUid, consumerLockPreserved: true, cleanNpmInstall: true, packageCount: needed.size, builtinLauncherPresent: true, separateGrokPackage: false, npmProvisionedBinary: false, missingPrerequisiteRejected: true, provisionedBinaryVerified: true, commandLeaseVerified: true, providerCalls: 0 }));
+  cpSync(join(repo, 'tests/release-smoke/installed-cli-probe.mjs'), join(assets, 'installed-cli-probe.mjs'));
+  // The pinned image's node user has a passwd entry required by initdb. Only
+  // its private tmpfs holds instance state; the installed consumer is read-only.
+  const cliProbeArgs = grokConsumerDockerArgs({ assets, consumer, cache, uid: 1000, gid: 1000,
+    command: ['node', '/packages/installed-cli-probe.mjs', releaseVersion, sourceRevision], temporarySizeMb: 1024, runtimeSmoke: true, containerName: offlineOwner });
+  offlineProbeStarted = true;
+  const cliProbeOutput = run('docker', cliProbeArgs, root, { timeout: 135_000 }).toString().trim();
+  const cliReceipt = JSON.parse(cliProbeOutput.split('\n').at(-1));
+  if (browserSmoke) {
+    // The existing release-smoke browser runs on the host. Only an owned
+    // internal Docker network and a loopback port expose this finite fixture;
+    // the installed product still has no route to external providers.
+    run('docker', ['network', 'create', '--internal', browserOwner]);
+    browserNetworkCreated = true;
+    run('docker', grokConsumerDockerArgs({ assets, consumer, cache, uid: 1000, gid: 1000,
+      command: ['node', '/packages/installed-cli-probe.mjs', releaseVersion, sourceRevision, 'browser'],
+      temporarySizeMb: 1024, runtimeSmoke: true, browserNetwork: browserOwner, containerName: browserOwner }));
+    let ready;
+    const deadline = Date.now() + 100_000;
+    while (Date.now() < deadline) {
+      try { ready = JSON.parse(run('docker', ['exec', browserOwner, 'cat', '/tmp/paperclip-installed-smoke-ready.json']).toString()); break; }
+      catch { if (run('docker', ['inspect', '--format', '{{.State.Running}}', browserOwner]).toString().trim() !== 'true') throw new Error('Installed CLI browser fixture exited before readiness'); }
+      await new Promise(resolve => setTimeout(resolve, 250));
+    }
+    assert.ok(ready, 'Installed CLI browser fixture did not become ready');
+    const port = run('docker', ['port', browserOwner, '3100/tcp']).toString().trim();
+    assert.match(port, /^127\.0\.0\.1:\d+$/);
+    execFileSync(process.execPath, [join(repo, 'node_modules/@playwright/test/cli.js'), 'test', '--config', 'tests/release-smoke/playwright.config.ts',
+      '--grep', 'installed artifact first-run entry', '--workers', '1', '--retries', '0'], {
+      cwd: repo, env: { ...env, PAPERCLIP_RELEASE_SMOKE_BASE_URL: `http://${port}`,
+        PAPERCLIP_RELEASE_SMOKE_BOOTSTRAP_PATH: ready.invitePath, PAPERCLIP_RELEASE_SMOKE_SOURCE_REVISION: sourceRevision },
+      stdio: 'inherit', timeout: 120_000,
+    });
+    cliReceipt.installedUiFirstRunBrowserPassed = true;
+  }
+  const tarballHashes = tarballs.map(path => ({ name: basename(path), sha256: sha256(readFileSync(path)) }));
+  console.log(JSON.stringify({ schema: 'paperclip.grok.public-npm-install.v1', sourceRevision, releaseVersion, lifecycleScriptsEnabled: true, lifecycleSentinelVerified: true, lifecycleNetwork: 'none', consumerImage: GROK_PUBLIC_INSTALL_IMAGE, consumerUid, consumerLockPreserved: true, consumerLockSha256: sha256(consumerLock), cleanNpmInstall: true, packageCount: needed.size + 1, tarballs: tarballHashes, ...cliReceipt, builtinLauncherPresent: true, separateGrokPackage: false, npmProvisionedBinary: false, missingPrerequisiteRejected: true, provisionedBinaryVerified: true, commandLeaseVerified: true, providerCalls: 0 }));
 } finally {
-  rmSync(root, { recursive: true, force: true });
+  const cleanupErrors = [];
+  for (const owner of [offlineProbeStarted && offlineOwner, browserNetworkCreated && browserOwner].filter(Boolean)) {
+    try { run('docker', ['rm', '--force', owner], root, { timeout: 30_000 }); }
+    catch (error) { if (!String(error.stderr).includes('No such container')) cleanupErrors.push(error); }
+  }
+  if (browserNetworkCreated) {
+    try { run('docker', ['network', 'rm', browserOwner], root, { timeout: 30_000 }); }
+    catch (error) { cleanupErrors.push(error); }
+  }
+  try { rmSync(root, { recursive: true, force: true }); }
+  catch (error) { cleanupErrors.push(error); }
+  if (cleanupErrors.length) throw new AggregateError(cleanupErrors, 'Public-install fixture cleanup could not be confirmed');
 }

@@ -39,26 +39,34 @@ export function parseGrokPromptUsage(value: unknown): Receipt | null {
  */
 export function createGrokUsageCapture(activeTurn: () => ActiveTurn | null) {
   let latest: AcpSessionRecord | undefined;
-  let scope: { owner: ActiveTurn; beforeUserIds: Set<string>; baselineTicks: number | null; receipt: Receipt | null; invalid: boolean } | null = null;
+  let scope: { owner: ActiveTurn; beforeUserIds: Set<string>; baselineTicks: number | null; sent: boolean; receipt: Receipt | null; invalid: boolean } | null = null;
   const usedPromptIds = new Set<string>();
   const userIds = (record: AcpSessionRecord | undefined): string[] => (record?.messages ?? [])
     .flatMap(message => typeof message === "object" && message !== null && "User" in message ? [message.User.id] : []);
   return {
     remember(record: AcpSessionRecord) { latest = record; },
+    admit() {
+      const active = activeTurn();
+      if (!active || active.signal.aborted) { scope = null; return; }
+      const cost = object(latest?.cumulative_cost);
+      const rawTicks = typeof cost.amount === "number" && cost.currency === "USD" ? Math.round(cost.amount * USD_TICKS_PER_USD) : null;
+      const hasPriorWork = Object.keys(latest?.request_token_usage ?? {}).length > 0 || (latest?.messages ?? [])
+        .some(message => typeof message === "object" && message !== null && "Agent" in message);
+      const baselineTicks = count(rawTicks) ? rawTicks : hasPriorWork ? null : 0;
+      // ACPX persists the new User message during preparation, before sending
+      // session/prompt. Freeze the prior record at runner turn admission instead.
+      scope = { owner: active, beforeUserIds: new Set(userIds(latest)), baselineTicks, sent: false, receipt: null, invalid: false };
+    },
     observe(direction: "inbound" | "outbound", value: unknown) {
       const message = object(value), params = object(message.params), active = activeTurn();
       if (direction === "outbound" && message.method === "session/prompt") {
-        if (!active || active.signal.aborted || params.sessionId !== active.sessionId) { scope = null; return; }
-        const cost = object(latest?.cumulative_cost);
-        const rawTicks = typeof cost.amount === "number" && cost.currency === "USD" ? Math.round(cost.amount * USD_TICKS_PER_USD) : null;
-        const hasPriorWork = Object.keys(latest?.request_token_usage ?? {}).length > 0 || (latest?.messages ?? [])
-          .some(message => typeof message === "object" && message !== null && "Agent" in message);
-        const baselineTicks = count(rawTicks) ? rawTicks : hasPriorWork ? null : 0;
-        scope = { owner: active, beforeUserIds: new Set(userIds(latest)), baselineTicks, receipt: null, invalid: false };
+        if (!scope || active !== scope.owner || active.signal.aborted || params.sessionId !== active.sessionId) { scope = null; return; }
+        if (scope.sent) scope.invalid = true;
+        scope.sent = true;
         return;
       }
       if (direction !== "inbound" || message.method !== "_x.ai/session/update" || Object.hasOwn(message, "id")
-        || !scope || active !== scope.owner || active.signal.aborted || params.sessionId !== active.sessionId) return;
+        || !scope?.sent || active !== scope.owner || active.signal.aborted || params.sessionId !== active.sessionId) return;
       const update = object(params.update);
       if (update.sessionUpdate !== "turn_completed") return;
       const receipt = parseGrokPromptUsage(update);
@@ -71,7 +79,7 @@ export function createGrokUsageCapture(activeTurn: () => ActiveTurn | null) {
       const retained = { ...previous?.request_token_usage, ...record.request_token_usage };
       const projected = { ...record, request_token_usage: retained,
         cumulative_cost: record.cumulative_cost ?? previous?.cumulative_cost };
-      if (scope && record.lastRequestId === scope.owner.requestId && record.acpSessionId === scope.owner.sessionId) {
+      if (scope?.sent && record.lastRequestId === scope.owner.requestId && record.acpSessionId === scope.owner.sessionId) {
         const promptMessageId = userIds(record).at(-1);
         if (scope.receipt && !scope.invalid && promptMessageId && !scope.beforeUserIds.has(promptMessageId)) {
           retained[promptMessageId] = scope.receipt.tokens;

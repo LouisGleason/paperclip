@@ -1169,7 +1169,11 @@ export function isOverridePaused(type: string): boolean {
 }
 
 export function hasActiveAdapterOverride(type: string): boolean {
-  return builtinFallbacks.has(type) && !pausedOverrides.has(type);
+  const registered = adaptersByType.get(type);
+  return builtinFallbacks.has(type)
+    && registered !== undefined
+    && registered !== builtinFallbacks.get(type)
+    && !pausedOverrides.has(type);
 }
 
 /** Get the set of types whose overrides are currently paused. */

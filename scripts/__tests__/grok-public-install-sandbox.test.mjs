@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 import { GROK_PUBLIC_INSTALL_IMAGE, GROK_PUBLIC_INSTALL_LIFECYCLE, grokConsumerDockerArgs } from '../grok-public-install-sandbox.mjs';
+import { inspectInstalledUi } from '../../tests/release-smoke/installed-cli-probe.mjs';
 
 const paths = { assets: '/private/staging/assets', consumer: '/private/staging/consumer', cache: '/private/staging/cache', uid: 1001, gid: 1001 };
 const values = (args, flag) => args.flatMap((value, index) => value === flag ? [args[index + 1]] : []);
@@ -49,4 +55,53 @@ test('verification never elevates PR-controlled provisioning or cleanup on the h
   const source = readFileSync(new URL('../verify-grok-npm-install.mjs', import.meta.url), 'utf8');
   assert.doesNotMatch(source, /\bsudo\b/);
   assert.ok(source.includes("const prerequisite = join(root, 'native/grok')"));
+});
+
+test('installed CLI startup stays offline with private state and a read-only installed graph', () => {
+  const args = grokConsumerDockerArgs({ ...paths, uid: 1000, gid: 1000, runtimeSmoke: true, command: ['node', '/packages/installed-cli-probe.mjs'] });
+  assert.deepEqual(values(args, '--network'), ['none']);
+  assert.ok(values(args, '--mount').includes('type=bind,src=/private/staging/consumer,dst=/consumer,readonly'));
+  assert.ok(values(args, '--env').includes('PAPERCLIP_TELEMETRY_DISABLED=1'));
+  assert.throws(() => grokConsumerDockerArgs({ ...paths, runtimeSmoke: true, download: true }), /Runtime smoke/);
+});
+
+test('only the optional browser fixture receives an owned internal network and loopback port', () => {
+  const args = grokConsumerDockerArgs({ ...paths, uid: 1000, gid: 1000, runtimeSmoke: true,
+    browserNetwork: 'paperclip-public-install-fixture', containerName: 'paperclip-public-install-fixture', command: ['node', '/packages/installed-cli-probe.mjs'] });
+  assert.deepEqual(values(args, '--network'), ['paperclip-public-install-fixture']);
+  assert.deepEqual(values(args, '--publish'), ['127.0.0.1::3100']);
+  assert.ok(args.includes('--detach'));
+  for (const browserNetwork of ['bridge', 'host', 'none']) {
+    assert.throws(() => grokConsumerDockerArgs({ ...paths, uid: 1000, gid: 1000, runtimeSmoke: true, browserNetwork, containerName: 'paperclip-public-install-fixture' }), /owned internal network/);
+  }
+});
+
+test('installed UI readiness checks a real HTTP response, exact serving commit, and installed asset bytes', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'paperclip-install-ui-test-'));
+  const sourceRevision = 'a'.repeat(40), script = 'export const installed = true;';
+  let commit = sourceRevision, servedScript = script;
+  const server = createServer((request, response) => {
+    if (request.url === '/api/health') response.end(JSON.stringify({ status: 'ok', commit }));
+    else if (request.url === '/onboarding') { response.setHeader('Content-Type', 'text/html'); response.end('<div id="root"></div><script src="/assets/installed.js"></script>'); }
+    else if (request.url === '/assets/installed.js') response.end(servedScript);
+    else { response.statusCode = 404; response.end(); }
+  });
+  try {
+    await mkdir(join(root, 'ui-dist/assets'), { recursive: true });
+    await writeFile(join(root, 'ui-dist/assets/installed.js'), script);
+    server.listen(0, '127.0.0.1'); await once(server, 'listening');
+    const options = { base: `http://127.0.0.1:${server.address().port}`, server: root, sourceRevision, timeoutMs: 500 };
+    const receipt = await inspectInstalledUi(options);
+    assert.equal(receipt.servingCommit, sourceRevision);
+    assert.equal(receipt.installedUiAssetsPassed, true);
+    assert.equal(receipt.assets[0].bytes, Buffer.byteLength(script));
+    commit = 'b'.repeat(40);
+    await assert.rejects(inspectInstalledUi(options), /serving commit/);
+    commit = sourceRevision; servedScript = 'export const substituted = true;';
+    await assert.rejects(inspectInstalledUi(options), /must be the installed file/);
+  } finally {
+    server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve));
+    await rm(root, { recursive: true, force: true });
+  }
 });

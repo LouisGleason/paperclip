@@ -27,7 +27,7 @@ import {
   awaitVerifiedAcpxProviderExit,
   awaitVerifiedAcpxProviderOwnership,
 } from "./installation-integrity.js";
-import type { AcpxModelStatus } from "./model-verification.js";
+import { needsAdvertisedCursorModel, resolveAdvertisedAcpxModel, type AcpxModelStatus } from "./model-verification.js";
 import { AcpxApprovalRequiredError, decideAcpxPermission } from "./permission-policy.js";
 import { ACPX_CAPABILITY_PROFILES } from "./capability-profiles.js";
 import { admitCursorInstructions, createCursorInstructionAdmission } from "./cursor-instructions.js";
@@ -467,9 +467,11 @@ export async function openQualifiedAcpxRuntime(
         mode: "persistent",
         cwd: options.cwd,
         sessionOptions: {
-          // Forward the requested model unchanged; verify the provider's
-          // reported selection before admitting a billable prompt.
-          model: options.profile.reportedModelId,
+          // Cursor's short CLI model name must first resolve against the ACP
+          // catalog. Explicit selectors and other providers stay unchanged.
+          ...(!needsAdvertisedCursorModel(options.profile)
+            ? { model: options.profile.reportedModelId }
+            : {}),
           ...(options.systemInstructions
             ? { systemPrompt: { append: options.systemInstructions } }
             : {}),
@@ -489,9 +491,9 @@ export async function openQualifiedAcpxRuntime(
             if (!runtime.setConfigOption) {
               throw new Error("Cursor cold admission requires exact model configuration");
             }
-            await runtime.setConfigOption({
-              handle: ensuredHandle, key: "model", value: options.profile.reportedModelId,
-            });
+            const providerModel = resolveAdvertisedAcpxModel(options.profile,
+              await persistedRuntimeStatus(baseStore, ensuredHandle, requireIdentity(ensuredHandle)));
+            await runtime.setConfigOption({ handle: ensuredHandle, key: "model", value: providerModel });
             // Match runtimePort.setModel: settle ownership of the temporary
             // control connection before retiring its consumed command lease.
             await children.verifyLifetimeOwnership();
@@ -588,6 +590,7 @@ export async function openQualifiedAcpxRuntime(
       commandLaunches,
       permissionBoundary,
       extensionBoundary,
+      grokUsage ? () => grokUsage.admit() : undefined,
     );
   } catch (error) {
     const cleanupReason = "ACPX runtime identity validation failed";
@@ -1017,6 +1020,7 @@ function runtimePort(
   commandLaunches: { count: number; refreshConsumedCommand?: () => Promise<void> },
   permissionBoundary: { active: AbortController | null; hasAdmittedTurn: boolean; handler?: AcpRuntimeOptions["onPermissionRequest"] },
   extensionBoundary: AcpxRuntimeExtensionBoundary,
+  admitUsageTurn?: () => void,
 ): AcpxRuntimePort {
   extensionBoundary.sessionIds = new Set([identity.backendSessionId]);
   let extensionControls: Promise<void> = Promise.resolve();
@@ -1384,6 +1388,7 @@ function runtimePort(
         onRequest: input.onExtensionRequest, onNotification: input.onExtensionNotification,
       };
       extensionBoundary.active = extensionTurn;
+      admitUsageTurn?.();
       const releaseExtensionTurn = (): void => {
         controller.abort(new Error("ACPX extension turn expired"));
         if (extensionBoundary.active === extensionTurn) extensionBoundary.active = null;

@@ -18,6 +18,7 @@ import {
   unregisterServerAdapter,
 } from "../adapters/index.js";
 import {
+  hasActiveAdapterOverride,
   resolveExternalAdapterRegistration,
   setOverridePaused,
 } from "../adapters/registry.js";
@@ -97,6 +98,7 @@ describe("server adapter registry", () => {
     // claude_local is always built-in
     const builtIn = findServerAdapter("claude_local");
     expect(builtIn).not.toBeNull();
+    expect(hasActiveAdapterOverride("claude_local")).toBe(false);
 
     const plugin: ServerAdapterModule = {
       type: "claude_local",
@@ -116,6 +118,7 @@ describe("server adapter registry", () => {
     };
 
     registerServerAdapter(plugin);
+    expect(hasActiveAdapterOverride("claude_local")).toBe(true);
 
     // Plugin wins
     const resolved = requireServerAdapter("claude_local");
@@ -123,6 +126,13 @@ describe("server adapter registry", () => {
     expect(resolved.models).toEqual([
       { id: "plugin-model", label: "Plugin Override" },
     ]);
+    setOverridePaused("claude_local", true);
+    expect(hasActiveAdapterOverride("claude_local")).toBe(false);
+    setOverridePaused("claude_local", false);
+    expect(hasActiveAdapterOverride("claude_local")).toBe(true);
+    unregisterServerAdapter("claude_local");
+    expect(requireServerAdapter("claude_local")).toBe(builtIn);
+    expect(hasActiveAdapterOverride("claude_local")).toBe(false);
   });
 
   it("ships Hermes adapters as built-ins and still accepts external overrides", () => {

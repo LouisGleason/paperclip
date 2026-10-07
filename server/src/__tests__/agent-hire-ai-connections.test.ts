@@ -308,8 +308,8 @@ describe("agent-created hires use managed AI connections", () => {
         return { adapterType: "paperclip_runner", status: "pass" as const, testedAt: new Date().toISOString(), checks: [{ code: "claude_hello_probe_passed", level: "info" as const, message: "Native account and model verified." }] };
       });
       const legacyProbe = vi.fn(async () => ({ adapterType: "claude_local", status: "fail" as const, testedAt: new Date().toISOString(), checks: [{ code: "claude_cli_not_found", level: "error" as const, message: "No legacy CLI installed." }] }));
-      registerServerAdapter({ ...native, testEnvironment: probe });
-      registerServerAdapter({ ...legacy, testEnvironment: legacyProbe });
+      const nativeSpy = vi.spyOn(native, "testEnvironment").mockImplementation(probe);
+      const legacySpy = vi.spyOn(legacy, "testEnvironment").mockImplementation(legacyProbe);
       try {
         const response = operation === "test"
           ? await request(f.app).post(`/api/companies/${f.companyId}/adapters/paperclip_runner/test-environment`).send({ agentId: f.agentId, aiConnection: f.binding, adapterConfig: { provider: "acpx", acpxAgent: "claude", model: "claude-sonnet-5" } })
@@ -320,7 +320,7 @@ describe("agent-created hires use managed AI connections", () => {
         expect(probe).toHaveBeenCalledOnce();
         expect(legacyProbe).not.toHaveBeenCalled();
         expect(await aiConnectionService(db).list(f.companyId, f.userId)).toEqual([expect.objectContaining({ status: "connected" })]);
-      } finally { unregisterServerAdapter("paperclip_runner"); unregisterServerAdapter("claude_local"); }
+      } finally { nativeSpy.mockRestore(); legacySpy.mockRestore(); }
     });
 
     it(`${operation}: installation-only native readiness cannot adopt an account or silently use a legacy CLI`, async () => {
@@ -330,8 +330,8 @@ describe("agent-created hires use managed AI connections", () => {
       const native = getServerAdapter("paperclip_runner");
       const legacy = getServerAdapter("claude_local");
       const legacyProbe = vi.fn(async () => ({ adapterType: "claude_local", status: "pass" as const, testedAt: new Date().toISOString(), checks: [{ code: "claude_hello_probe_passed", level: "info" as const, message: "Legacy hello" }] }));
-      registerServerAdapter({ ...native, testEnvironment: async () => ({ adapterType: "paperclip_runner", status: "pass", testedAt: new Date().toISOString(), checks: [{ code: "acpx_runtime_ready", level: "info", message: "Installed" }] }) });
-      registerServerAdapter({ ...legacy, testEnvironment: legacyProbe });
+      const nativeSpy = vi.spyOn(native, "testEnvironment").mockResolvedValue({ adapterType: "paperclip_runner", status: "pass", testedAt: new Date().toISOString(), checks: [{ code: "acpx_runtime_ready", level: "info", message: "Installed" }] });
+      const legacySpy = vi.spyOn(legacy, "testEnvironment").mockImplementation(legacyProbe);
       try {
         const response = operation === "test"
           ? await request(f.app).post(`/api/companies/${f.companyId}/adapters/paperclip_runner/test-environment`).send({ agentId: f.agentId, aiConnection: f.binding, adapterConfig: { provider: "acpx", acpxAgent: "claude", model: "claude-sonnet-5" } })
@@ -341,7 +341,7 @@ describe("agent-created hires use managed AI connections", () => {
         expect(checks).toEqual(expect.arrayContaining([expect.objectContaining({ code: "native_hello_probe_missing", level: "error" })]));
         expect(legacyProbe).not.toHaveBeenCalled();
         expect(await aiConnectionService(db).list(f.companyId, f.userId)).toEqual([expect.objectContaining({ status: "connected" })]);
-      } finally { unregisterServerAdapter("paperclip_runner"); unregisterServerAdapter("claude_local"); }
+      } finally { nativeSpy.mockRestore(); legacySpy.mockRestore(); }
     });
   }
 
@@ -521,7 +521,7 @@ describe("agent-created hires use managed AI connections", () => {
 describe("hired agents sharing a subscription", () => {
   it("keeps a credential-lock timeout on automatic retry without blocking the task or starting a provider", async () => {
     const f = await fixture("openai", "subscription");
-    const agent = hired(await request(f.app).post(`/api/companies/${f.companyId}/agent-hires`).send({ name: "Waiting teammate", role: "engineer", adapterType: f.adapterType, reportsTo: f.agentId, adapterConfig: { engine: "cli" }, runtimeConfig: { heartbeat: { enabled: false } } }));
+    const agent = hired(await request(f.app).post(`/api/companies/${f.companyId}/agent-hires`).send({ name: "Waiting teammate", role: "engineer", adapterType: f.adapterType, runner: "legacy", reportsTo: f.agentId, adapterConfig: { engine: "cli" }, runtimeConfig: { heartbeat: { enabled: false } } }));
     // Only an operator may set host execution paths after the agent is hired.
     await db.update(agents).set({ adapterConfig: { ...agent.adapterConfig, cwd: home } }).where(eq(agents.id, agent.id));
     const [issue] = await db.insert(issues).values({ companyId: f.companyId, title: "Wait for credential rotation", status: "todo", assigneeAgentId: agent.id, responsibleUserId: f.userId, createdByUserId: f.userId }).returning();
@@ -553,7 +553,7 @@ describe("hired agents sharing a subscription", () => {
 
   it.each(["openai", "anthropic"] as const)("runs the %s child alongside a live parent and inherits its connection", async (provider) => {
     const f = await fixture(provider, "subscription");
-    const agent = hired(await request(f.app).post(`/api/companies/${f.companyId}/agent-hires`).send({ name: "Concurrent teammate", role: "engineer", adapterType: f.adapterType, reportsTo: f.agentId, adapterConfig: { engine: "cli" }, runtimeConfig: { heartbeat: { enabled: false } } }));
+    const agent = hired(await request(f.app).post(`/api/companies/${f.companyId}/agent-hires`).send({ name: "Concurrent teammate", role: "engineer", adapterType: f.adapterType, runner: "legacy", reportsTo: f.agentId, adapterConfig: { engine: "cli" }, runtimeConfig: { heartbeat: { enabled: false } } }));
     // Host working directories are configured by an operator, not an agent key.
     await db.update(agents).set({ adapterConfig: { ...agent.adapterConfig, cwd: home } }).where(eq(agents.id, agent.id));
     const [issue] = await db.insert(issues).values({ companyId: f.companyId, title: "Subscription child task", status: "todo", assigneeAgentId: agent.id, responsibleUserId: f.userId, createdByUserId: f.userId }).returning();

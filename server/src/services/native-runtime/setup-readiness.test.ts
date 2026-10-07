@@ -5,8 +5,9 @@ import { join, posix } from "node:path";
 const { execute, probe } = vi.hoisted(() => ({ execute: vi.fn(), probe: vi.fn() }));
 vi.mock("@paperclipai/adapter-utils/execution-target", () => ({ runAdapterExecutionTargetShellCommand: execute }));
 vi.mock("../../vendor/paperclip-runner/index.js", async (original) => ({ ...await original<typeof import("../../vendor/paperclip-runner/index.js")>(), probeQualifiedAcpxEnvironment: probe }));
-import { QUALIFIED_ACPX_PROFILES, acpxRuntimeSessionDirectoryName } from "../../vendor/paperclip-runner/index.js";
+import { QUALIFIED_ACPX_PROFILES, acpxRuntimeSessionDirectoryName, resolveQualifiedAcpxProfile } from "../../vendor/paperclip-runner/index.js";
 import { assertNativeRunnerSetupReady, assertRemoteAcpxSetupReady, testNativeAcpxAuthentication } from "./setup-readiness.js";
+import { requireVerifiedAcpxModel } from "../../vendor/paperclip-runner/testing.js";
 const context = {
   companyId: "company", adapterType: "paperclip_runner", config: {},
   executionTarget: { kind: "remote" as const, transport: "sandbox" as const, providerKey: "test", remoteCwd: "/workspace", runner: { execute: vi.fn() } },
@@ -93,6 +94,28 @@ describe("selected native account verification", () => {
     expect(result.status, JSON.stringify(result)).toBe("pass");
     expect(probe).toHaveBeenCalledWith(expect.objectContaining({ agent, model, hello: true, environment: expect.objectContaining({ [key]: "selected-account" }) }));
     expect(result.checks[0].code).toBe(`${agent}_hello_probe_passed`);
+  });
+
+  it("accepts Cursor's normalized hello identity only after verifying its advertised full model", async () => {
+    const model = "gpt-5.6-sol", selector = `${model}[context=272k,reasoning=medium,fast=false]`;
+    let currentModelId = "default";
+    const setModel = vi.fn(async selected => { currentModelId = selected; });
+    probe.mockImplementation(async input => {
+      const verified = await requireVerifiedAcpxModel({
+        getStatus: async () => ({ models: { currentModelId, availableModelIds: [selector] } }), setModel,
+      }, resolveQualifiedAcpxProfile(input.agent, input.model));
+      return { effectiveModel: verified.models!.currentModelId, commandDigest: QUALIFIED_ACPX_PROFILES.cursor.commandDigest, helloProbePassed: true };
+    });
+    const selectedContext = { ...localContext, config: { env: { CURSOR_AUTH_TOKEN: "selected-account" } } };
+    expect((await testNativeAcpxAuthentication(selectedContext, "cursor", model)).status).toBe("pass");
+    expect(setModel).toHaveBeenCalledExactlyOnceWith(selector);
+    // A custom full ID is still passed unchanged to the provider and may fail;
+    // it never borrows the successful base-model selection above.
+    setModel.mockRejectedValue(new Error("Model is not available for this account"));
+    const rejected = await testNativeAcpxAuthentication(selectedContext, "cursor", "custom/model[context=272k]");
+    expect(rejected.status).toBe("fail");
+    expect(rejected.checks[0].code).toBe("cursor_hello_probe_failed");
+    expect(setModel).toHaveBeenLastCalledWith("custom/model[context=272k]");
   });
 
   const grokReceipt = { ...receipt, effectiveModel: "grok-4.7", commandDigest: QUALIFIED_ACPX_PROFILES.grok.commandDigest };

@@ -11,6 +11,7 @@ import {
   startEmbeddedPostgresTestDatabase,
 } from "./helpers/embedded-postgres.js";
 import { createStoredZipArchive } from "./helpers/zip.js";
+import { readRuntimeInfo } from "../runtime-info.js";
 
 const execFileAsync = promisify(execFile);
 type ServerProcess = ReturnType<typeof spawn>;
@@ -197,15 +198,28 @@ function collectTextFiles(root: string, current: string, files: Record<string, s
 }
 
 async function stopServerProcess(child: ServerProcess | null) {
-  if (!child || child.exitCode !== null) return;
-  child.kill("SIGTERM");
-  await new Promise<void>((resolve) => {
-    child.once("exit", () => resolve());
-    setTimeout(() => {
-      if (child.exitCode === null) {
-        child.kill("SIGKILL");
-      }
+  if (!child || child.exitCode !== null || child.signalCode !== null) return;
+  await new Promise<void>((resolve, reject) => {
+    const cleanup = () => {
+      clearTimeout(forceKill);
+      clearTimeout(deadline);
+      child.removeListener("exit", exited);
+      child.removeListener("error", failed);
+    };
+    const exited = () => { cleanup(); resolve(); };
+    const failed = (error: Error) => { cleanup(); reject(error); };
+    // The child is the actual CLI/server process, so both signals target only
+    // the owned fixture PID, without relying on wrapper signal forwarding.
+    const forceKill = setTimeout(() => {
+      if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
     }, 5_000);
+    const deadline = setTimeout(() => {
+      cleanup();
+      reject(new Error(`The fixture server PID ${child.pid} did not exit after SIGKILL`));
+    }, 6_000);
+    child.once("exit", exited);
+    child.once("error", failed);
+    child.kill("SIGTERM");
   });
 }
 
@@ -257,10 +271,11 @@ async function waitForServer(
   apiBase: string,
   child: ServerProcess,
   output: { stdout: string[]; stderr: string[] },
+  runtimeInfoPath: string,
 ) {
   const startedAt = Date.now();
   while (Date.now() - startedAt < 30_000) {
-    if (child.exitCode !== null) {
+    if (child.exitCode !== null || child.signalCode !== null) {
       throw new Error(
         `paperclipai run exited before healthcheck succeeded.\nstdout:\n${output.stdout.join("")}\nstderr:\n${output.stderr.join("")}`,
       );
@@ -268,7 +283,7 @@ async function waitForServer(
 
     try {
       const res = await fetch(`${apiBase}/api/health`);
-      if (res.ok) return;
+      if (res.ok && readRuntimeInfo(undefined, runtimeInfoPath)?.pid === child.pid) return;
     } catch {
       // Server is still starting.
     }
@@ -314,7 +329,12 @@ describeEmbeddedPostgres("paperclipai company import/export e2e", () => {
     if (!tempDb) throw new Error("The fixture database is not initialized");
     const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
     const output = { stdout: [] as string[], stderr: [] as string[] };
-    const child = spawn("pnpm", ["paperclipai", "run", "--config", configPath], {
+    // Match the production CLI entrypoint without pnpm/tsx CLI wrappers: the
+    // spawned PID owns the HTTP listener and receives the shutdown signal.
+    const child = spawn(process.execPath, [
+      "--import", path.join(repoRoot, "cli/node_modules/tsx/dist/loader.mjs"),
+      path.join(repoRoot, "cli/src/index.ts"), "run", "--config", configPath,
+    ], {
       cwd: repoRoot,
       env: createServerEnv(configPath, serverPort, tempDb.connectionString, {
         paperclipHome,
@@ -326,7 +346,8 @@ describeEmbeddedPostgres("paperclipai company import/export e2e", () => {
     serverProcess = child;
     child.stdout?.on("data", (chunk) => output.stdout.push(String(chunk)));
     child.stderr?.on("data", (chunk) => output.stderr.push(String(chunk)));
-    await waitForServer(apiBase, child, output);
+    await waitForServer(apiBase, child, output,
+      path.join(paperclipHome, "instances", paperclipInstanceId, "runtime-info.json"));
   }
 
   beforeAll(async () => {
@@ -349,6 +370,7 @@ describeEmbeddedPostgres("paperclipai company import/export e2e", () => {
 
   afterAll(async () => {
     await stopServerProcess(serverProcess);
+    if (apiBase) await waitForServerPortClosed(apiBase);
     await tempDb?.cleanup();
     if (tempRoot) {
       // Native imports materialize immutable instruction/skill directories.

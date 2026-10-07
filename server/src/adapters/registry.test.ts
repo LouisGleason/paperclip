@@ -4,15 +4,17 @@ import { listServerAdapters, requireServerAdapter } from "./registry.js";
 import * as executionTarget from "@paperclipai/adapter-utils/execution-target";
 import { BUILTIN_ADAPTER_TYPES } from "./builtin-adapter-types.js";
 
-const { probeInstallation, probeGrokInstallation, probeRunner, probeRemoteProvider } = vi.hoisted(() => ({
+const { probeInstallation, probeGrokInstallation, probeRunner, probeRemoteProvider, probeAuthentication } = vi.hoisted(() => ({
   probeInstallation: vi.fn(),
   probeGrokInstallation: vi.fn(),
   probeRunner: vi.fn(),
   probeRemoteProvider: vi.fn(),
+  probeAuthentication: vi.fn(),
 }));
 vi.mock("../services/native-runtime/setup-readiness.js", () => ({
   assertNativeRunnerSetupReady: probeRunner,
   assertRemoteAcpxSetupReady: probeRemoteProvider,
+  testNativeAcpxAuthentication: probeAuthentication,
 }));
 vi.mock("@paperclipai/paperclip-runner/live", () => ({
   probeAcpxClaudeInstallation: probeInstallation,
@@ -104,6 +106,10 @@ describe("native ACPX environment checks", () => {
     probeGrokInstallation.mockReset().mockResolvedValue(undefined);
     probeRunner.mockReset().mockResolvedValue(undefined);
     probeRemoteProvider.mockReset().mockResolvedValue(undefined);
+    probeAuthentication.mockReset().mockImplementation(async (_context: unknown, agent: string) => ({
+      adapterType: "paperclip_runner", status: "pass", testedAt: new Date(0).toISOString(),
+      checks: [{ code: `${agent}_hello_probe_passed`, level: "info", message: "Selected native account verified" }],
+    }));
   });
   afterEach(() => vi.restoreAllMocks());
 
@@ -123,10 +129,22 @@ describe("native ACPX environment checks", () => {
     })]);
   });
 
-  it("requires a successful installed runtime probe", async () => {
+  it("requires installed runtime and selected native authentication probes", async () => {
     const result = await requireServerAdapter("paperclip_runner").testEnvironment!(context);
     expect(result.status).toBe("pass");
     expect(probeInstallation).toHaveBeenCalledWith(context.config.model);
+    expect(probeAuthentication).toHaveBeenCalledWith(context, "claude", context.config.model);
+    expect(result.checks).toContainEqual(expect.objectContaining({ code: "claude_hello_probe_passed" }));
+  });
+
+  it("does not report installation success as authentication success", async () => {
+    probeAuthentication.mockResolvedValueOnce({
+      adapterType: "paperclip_runner", status: "fail", testedAt: new Date(0).toISOString(),
+      checks: [{ code: "claude_hello_probe_auth_required", level: "error", message: "Select a valid Claude account" }],
+    });
+    const result = await requireServerAdapter("paperclip_runner").testEnvironment!(context);
+    expect(result.status).toBe("fail");
+    expect(result.checks).toContainEqual(expect.objectContaining({ code: "claude_hello_probe_auth_required", level: "error" }));
   });
 
   it.each([true, false])("checks Grok's own installation readiness (%s)", async (ready) => {

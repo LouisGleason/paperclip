@@ -43,7 +43,7 @@ describe("Grok admitted receipt persistence", () => {
   it("persists the prompt receipt once and sums costs across follow-ups", () => {
     let active = { requestId: "turn-1", sessionId: "session", signal: new AbortController().signal };
     const capture = createGrokUsageCapture(() => active);
-    const before = state("previous", ["previous"]); capture.remember(before);
+    const before = state("previous", ["previous"]); capture.remember(before); capture.admit();
     capture.observe("outbound", prompt); capture.observe("inbound", envelope());
     const first = capture.project(state("turn-1", ["previous", "first"]), before);
     const repeated = capture.project(state("turn-1", ["previous", "first"]), first);
@@ -53,6 +53,7 @@ describe("Grok admitted receipt persistence", () => {
       cost: { amount: 0.271714, currency: "USD" }, breakdown: { inputTokens: 87177,
         outputTokens: 2668, cachedReadTokens: 151424, cachedWriteTokens: 0, thoughtTokens: 0 } });
     active = { ...active, requestId: "turn-2" };
+    capture.admit();
     capture.observe("outbound", prompt);
     capture.observe("inbound", envelope({ ...terminal, prompt_id: "22222222-2222-2222-2222-222222222222" }));
     const second = capture.project(state("turn-2", ["previous", "first", "second"]), first);
@@ -60,17 +61,34 @@ describe("Grok admitted receipt persistence", () => {
     expect(Object.keys(second.request_token_usage ?? {})).toEqual(["first", "second"]);
     expect(persistedAcpxTurnUsage(status(first), status(second), "turn-2", "grok")).not.toBeNull();
   });
-  it.each(["no_prompt", "foreign_session", "cancelled", "expired", "replayed", "duplicate", "old_message"])("does not authorize %s receipts", kind => {
+  it("freezes prior message IDs before ACPX saves its prepared prompt", () => {
+    const active = { requestId: "turn", sessionId: "session", signal: new AbortController().signal };
+    const capture = createGrokUsageCapture(() => active);
+    const before = state("previous", ["previous"]); capture.remember(before); capture.admit();
+    // ACPX 0.13.1 prepareRuntimeTurnState saves User before session/prompt.
+    // resolveRuntimeTurnReady then checkpoints its current request identity.
+    const prepared = capture.project(state("previous", ["previous", "current"]), before);
+    const ready = capture.project({ ...prepared, lastRequestId: "turn" }, prepared);
+    capture.observe("outbound", prompt); capture.observe("inbound", envelope());
+    const after = capture.project(ready, ready);
+    expect(after.request_token_usage?.current).toEqual(parseGrokPromptUsage(terminal)?.tokens);
+    expect(after.cumulative_cost).toEqual({ amount: 0.271714, currency: "USD" });
+    expect(persistedAcpxTurnUsage(status(before), status(after), "turn", "grok")).toMatchObject({
+      cost: { amount: 0.271714, currency: "USD" },
+    });
+  });
+  it.each(["no_admission", "no_prompt", "foreign_session", "cancelled", "expired", "replayed", "duplicate", "old_message"])("does not authorize %s receipts", kind => {
     const controller = new AbortController();
     let active = { requestId: "turn", sessionId: "session", signal: controller.signal };
     const capture = createGrokUsageCapture(() => active);
     const before = state("previous", ["previous"]); capture.remember(before);
+    if (kind !== "no_admission") capture.admit();
     if (kind !== "no_prompt") capture.observe("outbound", prompt);
     if (kind === "cancelled") controller.abort();
     if (kind === "expired") active = { ...active, requestId: "other" };
     capture.observe("inbound", envelope(terminal, kind === "foreign_session" ? "other" : "session"));
     if (kind === "duplicate") capture.observe("inbound", envelope());
-    if (kind === "replayed") { active = { ...active, requestId: "turn" }; capture.observe("outbound", prompt); capture.observe("inbound", envelope()); }
+    if (kind === "replayed") { active = { ...active, requestId: "turn" }; capture.admit(); capture.observe("outbound", prompt); capture.observe("inbound", envelope()); }
     const after = capture.project(state("turn", kind === "old_message" ? ["previous"] : ["previous", "current"]), before);
     expect(after.request_token_usage).toEqual({});
     expect(after.cumulative_cost).toBeUndefined();
@@ -79,7 +97,7 @@ describe("Grok admitted receipt persistence", () => {
     const active = { requestId: "turn", sessionId: "session", signal: new AbortController().signal };
     const capture = createGrokUsageCapture(() => active);
     const before = { ...state("previous", ["previous"]), cumulative_cost: { amount: 1, currency: "USD" } };
-    capture.remember(before); capture.observe("outbound", prompt);
+    capture.remember(before); capture.admit(); capture.observe("outbound", prompt);
     capture.observe("inbound", envelope({ ...terminal, usage: { ...terminal.usage, costUsdTicks: 0 } }));
     const after = capture.project(state("turn", ["previous", "current"]), before);
     expect(after.request_token_usage?.current).toMatchObject({ input_tokens: 87177 });
@@ -90,7 +108,7 @@ describe("Grok admitted receipt persistence", () => {
     const active = { requestId: "turn", sessionId: "session", signal: new AbortController().signal };
     const capture = createGrokUsageCapture(() => active);
     const before = { ...state("previous", ["previous"]), request_token_usage: { previous: { input_tokens: 1 } } };
-    capture.remember(before); capture.observe("outbound", prompt); capture.observe("inbound", envelope());
+    capture.remember(before); capture.admit(); capture.observe("outbound", prompt); capture.observe("inbound", envelope());
     const after = capture.project(state("turn", ["previous", "current"]), before);
     expect(after.request_token_usage?.current).toMatchObject({ input_tokens: 87177 });
     expect(after.cumulative_cost).toBeUndefined();
