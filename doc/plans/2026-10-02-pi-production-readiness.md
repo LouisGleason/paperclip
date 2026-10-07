@@ -8,7 +8,7 @@ widgets, images, Cursor or Copilot qualification. The existing draft stack must 
 ## Production qualification state — 2026-10-07
 
 The candidate now uses Pi profile 18. Its production cancellation fix requires a
-new frozen source revision, normal Linux packages, cloud image and all 33 accepted
+frozen source including historical profile-17 decoding, normal Linux packages, cloud image and all 33 accepted
 live cases. Historical profile-17 passes do not transfer. Mac qualification stays
 deferred. The caller chooses the production model; the accepted model and low
 thinking remain fixture inputs.
@@ -29,7 +29,7 @@ model support, native Pi 1.0.0 distributions and Node pins remain unchanged.
 | Release gate | Current evidence |
 | --- | --- |
 | Offline cancellation proof | New unit and actual subprocess regressions fail on profile-17 bytes and pass on the corrected wrapper. All 49 actual Pi ACP protocol tests pass; 99 focused Runner tests pass, one skipped. |
-| Free harness checks | All 2,480 Product E2E unit tests pass; Runner TypeScript typecheck and generated TypeScript/Rust profile parity pass. The broad Runner suite records 3,379 passes and three failures: two timeouts pass on isolated recheck; the warm Pi case passes against the current rebuilt daemon. The first Rust run exposed a stale fixture in the external test checkout; current-source verification is pending. |
+| Free harness checks | All 2,480 Product E2E unit tests pass; Runner TypeScript typecheck and generated TypeScript/Rust profile parity pass. The broad Runner suite records 3,379 passes and three failures: two timeouts pass on isolated recheck; the warm Pi case passes against the current rebuilt daemon. The first Rust run exposed a stale fixture in the external test checkout; a rebuilt exact-source run passes 689 Rust tests, two ignored. |
 | Normal native Linux build and public installation | Historical profile-17 workspace/public builds, normal npm lifecycle hooks, strict installed graph, Pi setup and actual server/UI admission pass. New profile-18 artifacts require rebuilding and full admission. |
 | Final Product acceptance | 0/26 on profile 18. Historical profile 17 has one file-edit pass and two retained Stop failures: creation-title lookup, then the production cancellation defect. Resume with one changed Stop attempt after fresh artifact admission; no automatic retries. |
 | Final Runner acceptance | 0/7 on profile 18. The seven cases and their assertions stay frozen; roster identity must match the new production profile and source. |
@@ -1058,30 +1058,27 @@ local tests and release review are still required.
 
 - Pi: `@earendil-works/pi-coding-agent@1.0.0`.
 - Wrapper: `pi-acp@0.0.33`; ACPX: `0.13.1`; Node: `24.21.0`.
-- Candidate Pi profile: 17. Historical runtime profiles: 14, 15 and 16.
-  Accepted fixture model: `openrouter/deepseek/deepseek-v4-flash-0731`.
-- Pi profile 17, Copilot profile 16 and Cursor profile 15 bind the current shared ACPX patch.
-  Earlier profiles remain historical evidence. Cursor and Copilot receive no
-  new paid qualification in this work.
-- Reasoning: native-confirmed `low`. No silent model or thinking fallback.
-- Exact source, suite definition, installed package integrity, runner digest,
-  environment and cost evidence must accompany each attempt.
+- Current candidate: Pi profile 18. Historical profiles through 17 remain
+  decodable; only the exact current profile can launch.
+- Current wrapper cancellation preserves partial usage and suppresses service
+  failure metadata for an acknowledged cancelled terminal. Ordinary failures
+  remain failures. Copilot profile 16 and Cursor profile 15 remain unchanged.
+- Fixture model: `openrouter/deepseek/deepseek-v4-flash-0731`, native-confirmed
+  low thinking. Production models remain caller-selected, without fallback.
+- Record exact source, definitions, installed package graph, daemon, image,
+  environment, cleanup and cost evidence for each attempt.
 
 ## Release gates
 
-These gates describe the final corrected source. Source pins and artifact hashes
-must be recorded before live attempts. Earlier detailed results are retained in
-the dated history above and below.
-
-| Gate | Acceptance evidence | Current result |
-| --- | --- | --- |
-| Runtime identity and admission | Exact runtime/profile/model; native thinking; startup below 60 seconds; unsupported configuration fails before prompting | Profile 17. Final corrected source needs normal installed Linux admission. Admission on `efd4` is historical. |
-| Live lifecycle | Restart preserves the original pending request and process; stale answer rejected; Stop retires owned processes; three warm turns retain identity | Pending on the final artifact set. Preserve original failures; no unchanged paid retries. |
-| Product workflows | All 26 accepted cells, 13 local and 13 Daytona; public state, artifacts, terminal and cleanup evidence | Final set 0/26. The first `efd4` file-edit attempt failed before prompting with cleanup confirmed; the completed-cache disk correction is independently demonstrated. |
-| Runner protocol | All seven accepted cases through the normal packaged native Runner and authenticated mock control plane | Final set 0/7. Historical 5/7 belongs to the older profile-15 set. Definition source must bind the corrected shipping revision. |
-| Installed distribution | Normal public Linux CLI/server install, Pi setup, package graph integrity and immutable final Daytona image | Final credential-contract correction needs rebuilt packages. The owned native Linux build host is available; final image publication is held on the explicitly requested workflow exception. Mac coverage is deferred. |
-| Governance and spend | Isolation, human permissions, stale/duplicate answers, Stop and hard budget stop; estimated cost stays distinct from billing | Final behavioral evidence pending. The $5 lifetime qualification key and $100 total token ceiling remain. Read-only snapshot at 2026-10-07 14:02 UTC: $0.460818195 usage, $4.539181805 remaining, no reset or BYOK usage. Delayed settlement or other key use may contribute. All 72 BYOK rows were unconfigured. |
-| Integration and rollout | Final-head typecheck/tests/build/CI, current review, exact artifacts, rollback | `aa67de311` passed the Linux CI lanes but its Greptile review found the credential-name mismatch corrected here. New-head review and checks remain required. Full Rust validation on `aa67` passed 687 tests with two ignored; final contract unit and 15 process tests pass. Local full database integration remains blocked by host shared-memory exhaustion. No merge or deployment is authorized. |
+The qualification table at the top of this document is authoritative. The
+profile-18 candidate requires new normal Linux installation, all 26 Product
+cells and seven Runner cases, exact-head CI/review and a matching cloud image.
+Retained older results are historical. They do not authorize launching or
+qualifying an older profile. Read-only key usage at 2026-10-07 17:44 UTC is
+$0.471827388 of $5, with no reset or BYOK usage; snapshots remain provisional.
+All 73 visible BYOK provider rows are unconfigured. No merge, release or rollout
+is authorized. The cloud builds use GitHub hosted Linux and an isolated Linux
+package-build sandbox; Docker does not run on the developer Mac.
 
 ## Bounded execution
 
@@ -2124,7 +2121,7 @@ and receipts throughout that operation.
    paperclipai runtime import-remote "$PI_RELEASE_COMPANION" --sha256 "$PI_RELEASE_COMPANION_SHA256"
    ```
 
-4. After all release gates pass, begin with one operator-owned Linux Pi company using profile 17,
+4. After all release gates pass, begin with one operator-owned Linux Pi company using profile 18,
    `openrouter/deepseek/deepseek-v4-flash-0731` and explicit low thinking.
    Check normal startup, one question and answer, Stop, three warm turns,
    terminal task state and usage visibility before expanding. Preserve the

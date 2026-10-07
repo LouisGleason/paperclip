@@ -312,6 +312,18 @@ describe("NativeExecutionInputV1", () => {
     })).toThrow("eventExpiryDays");
   });
 
+  it("decodes a persisted Pi profile-17 run without rewriting its identity", () => {
+    const { permissionPolicy: _permissionPolicy, ...nativeProfile } = QUALIFIED_ACPX_PROFILES.pi;
+    const profile = { ...nativeProfile, agentProfileVersion: 17,
+      commandDigest: "sha256:a1d976c437cb736c9cce8ebe8b8baf59e571761a8d00e8b1885e72dd906d8f21" };
+    const persisted = { ...input, session: { ...input.session, driverKind: "acpx_runtime" },
+      provider: { kind: "acpx", agent: "pi", model: "openrouter/deepseek/deepseek-v4-flash-0731",
+        piThinkingLevel: "low", permissionPolicy: "interactive", profile } };
+    const parsed = parseNativeExecutionInput(persisted);
+    expect(parsed.provider).toEqual(persisted.provider);
+    expect(parseNativeExecutionInput(parsed)).toEqual(parsed);
+  });
+
   it.each([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] as const)("accepts only a closed ACPX profile matching the driver and agent at profile version %s", (agentProfileVersion) => {
     const provider = {
       kind: "acpx",
