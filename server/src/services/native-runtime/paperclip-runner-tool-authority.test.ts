@@ -1,7 +1,7 @@
 import * as cloudIdentity from "../cloud-runtime-identity.js";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import {
   activityLog,
   agents,
@@ -186,6 +186,75 @@ describe("PaperclipRunnerToolAuthority", () => {
       expect(receipts).not.toHaveProperty("routine-edit-stale");
       expect(receipts).not.toHaveProperty("routine-edit-invalid");
       expect(receipts).toHaveProperty("routine-edit-update");
+    } finally {
+      await db.update(issues).set({ responsibleUserId: null }).where(eq(issues.id, issueId));
+    }
+  });
+
+  it("rejects a contended routine edit, lets its scheduled firing finish, and retries exactly once", async () => {
+    const userId = "routine-concurrent-owner";
+    await db.insert(authUsers).values({ id: userId, name: "Routine concurrency owner", email: "routine-concurrent@example.test", createdAt: new Date(), updatedAt: new Date() });
+    await db.insert(companyMemberships).values({ companyId, principalType: "user", principalId: userId, status: "active", membershipRole: "owner" });
+    await db.update(issues).set({ responsibleUserId: userId }).where(eq(issues.id, issueId));
+    try {
+      const authority = new PaperclipRunnerToolAuthority(db, { companyId, agentId, issueId, runId });
+      const created = await authority.execute({ tool: "manage_routine", callId: "concurrent-create", arguments: {
+        idempotencyKey: "concurrent-create", action: "create", title: "Concurrent routine",
+        schedule: { cronExpression: "0 9 * * 1-5", timezone: "America/Chicago" },
+      } }) as { routineId: string; baseRevisionId: string };
+      // A routine can outlive its original task. Avoid the parent's foreign-key
+      // lock so this exercises the agent/routine cycle independently.
+      await db.update(routines).set({ parentIssueId: null }).where(eq(routines.id, created.routineId));
+      const due = new Date("2026-10-07T14:00:00Z");
+      await db.update(routineTriggers).set({ nextRunAt: due }).where(eq(routineTriggers.routineId, created.routineId));
+      let enteredWake = false;
+      let releaseWake!: () => void;
+      const wakeGate = new Promise<void>(resolve => { releaseWake = resolve; });
+      const scheduler = routineService(db, { runtimeEnv: {}, heartbeat: { wakeup: async () => {
+        enteredWake = true;
+        await wakeGate;
+        // The real assignment path needs this agent row while holding the routine.
+        await db.update(agents).set({ status: "active" }).where(eq(agents.id, agentId));
+        return null;
+      } } });
+      const firing = scheduler.tickScheduledTriggers(due);
+      void firing.catch(() => undefined);
+      const guardedDb = new Proxy(db, { get(target, key, receiver) {
+        if (key !== "transaction") return Reflect.get(target, key, receiver);
+        return (effect: (tx: unknown) => Promise<unknown>) => target.transaction(async tx => {
+          // Bound failure cleanup even on the old blocking implementation. The
+          // shorter race below must succeed before this diagnostic limit fires.
+          await tx.execute(sql`set local lock_timeout = '3000ms'`);
+          return effect(tx);
+        });
+      } });
+      const editingAuthority = new PaperclipRunnerToolAuthority(guardedDb, { companyId, agentId, issueId, runId });
+      const input = { idempotencyKey: "concurrent-edit", action: "update", routineId: created.routineId,
+        baseRevisionId: created.baseRevisionId, title: "After concurrent firing" };
+      let edit: Promise<unknown> | undefined;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await vi.waitFor(() => expect(enteredWake).toBe(true), { timeout: 5000 });
+        edit = editingAuthority.execute({ tool: "manage_routine", callId: "concurrent-edit", arguments: input });
+        const outcome = await Promise.race([
+          edit.then(value => ({ kind: "applied", value }), error => ({ kind: "rejected", error })),
+          new Promise<{ kind: "timeout" }>(resolve => { timer = setTimeout(() => resolve({ kind: "timeout" }), 2000); }),
+        ]);
+        expect(outcome).toMatchObject({ kind: "rejected", error: { status: 409, details: { code: "routine_busy", retryable: true } } });
+        const [run] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, runId));
+        expect((run!.resultJson as { semanticToolReceipts: object }).semanticToolReceipts).not.toHaveProperty(input.idempotencyKey);
+      } finally {
+        clearTimeout(timer);
+        releaseWake();
+        await Promise.allSettled([firing, ...(edit ? [edit] : [])]);
+      }
+      expect(await firing).toEqual({ triggered: 1 });
+      const updated = await authority.execute({ tool: "manage_routine", callId: "concurrent-retry", arguments: input });
+      expect(updated).toMatchObject({ title: input.title });
+      expect(await authority.execute({ tool: "manage_routine", callId: "concurrent-replay", arguments: input })).toEqual(updated);
+      expect(await db.select().from(routineRuns).where(eq(routineRuns.routineId, created.routineId))).toMatchObject([
+        { status: "issue_created", source: "schedule" },
+      ]);
     } finally {
       await db.update(issues).set({ responsibleUserId: null }).where(eq(issues.id, issueId));
     }
