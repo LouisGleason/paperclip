@@ -101,7 +101,7 @@ describe("inline enrollment completion", () => {
     const html = cloudConnectorEnrollmentOutcomeHtml("GMA", "/apps/connect?source=gmail&intent=request-1&enrollment_host=dialog");
     expect(html).toContain("window.close()");
     expect(html).not.toContain("window.location");
-    expect(html).toContain("/GMA/apps/connect?source=gmail&intent=request-1");
+    expect(html).toContain("/GMA/apps/connect?source=gmail&amp;intent=request-1");
     expect(html).toContain("cloud_connector=enrolled");
   });
 
