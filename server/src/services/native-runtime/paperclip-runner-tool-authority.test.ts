@@ -10,6 +10,7 @@ import {
   companies,
   companyMemberships,
   createDb,
+  documentAnnotationThreads,
   documents,
   heartbeatRuns,
   issueApprovals,
@@ -23,6 +24,7 @@ import {
 import { startEmbeddedPostgresTestDatabase } from "../../__tests__/helpers/embedded-postgres.js";
 import { initializeRunIdentity, reserveSteeredIdentity, reconcileSteeredIdentity } from "../run-identity.js";
 import { documentService } from "../documents.js";
+import { documentAnnotationService } from "../document-annotations.js";
 import { issueService } from "../issues.js";
 import { routineService } from "../routines.js";
 import { PaperclipRunnerToolAuthority } from "./paperclip-runner-tool-authority.js";
@@ -135,6 +137,58 @@ describe("PaperclipRunnerToolAuthority", () => {
     await db.update(routines).set({ assigneeAgentId: null }).where(eq(routines.id, created.routineId));
     await expect(authority.execute({ tool: "manage_routine", callId: "reassigned-retry", arguments: input })).rejects.toThrow("assigned to themselves");
     await db.update(issues).set({ responsibleUserId: null }).where(eq(issues.id, issueId));
+  });
+
+  it("updates descriptions and schedules atomically, remaps annotations, and rejects stale retries", async () => {
+    const userId = "routine-edit-owner";
+    await db.insert(authUsers).values({ id: userId, name: "Routine edit owner", email: "routine-edit-owner@example.test", createdAt: new Date(), updatedAt: new Date() });
+    await db.insert(companyMemberships).values({ companyId, principalType: "user", principalId: userId, status: "active", membershipRole: "owner" });
+    await db.update(issues).set({ responsibleUserId: userId }).where(eq(issues.id, issueId));
+    try {
+      const authority = new PaperclipRunnerToolAuthority(db, { companyId, agentId, issueId, runId });
+      const execute = (input: Record<string, unknown>) => authority.execute({ tool: "manage_routine", callId: String(input.idempotencyKey), arguments: input });
+      const created = await execute({ idempotencyKey: "routine-edit-create", action: "create", title: "Before edit", description: "Alpha selected text omega",
+        schedule: { cronExpression: "0 9 * * 1-5", timezone: "America/Chicago" } }) as { routineId: string; baseRevisionId: string; schedules: { triggerId: string }[] };
+      const service = routineService(db);
+      const originalDoc = (await service.getDescriptionDocument(created.routineId))!;
+      const thread = await documentAnnotationService(db).createRoutineThread(created.routineId, "description", {
+        baseRevisionId: originalDoc.latestRevisionId!, baseRevisionNumber: originalDoc.latestRevisionNumber,
+        selector: { quote: { exact: "selected text", prefix: "Alpha ", suffix: " omega" },
+          position: { normalizedStart: 6, normalizedEnd: 19, markdownStart: 6, markdownEnd: 19 } },
+        body: "Keep this selection anchored",
+      }, { actorType: "user", actorId: userId, userId });
+      const update = { idempotencyKey: "routine-edit-update", action: "update", routineId: created.routineId, baseRevisionId: created.baseRevisionId,
+        title: "After edit", description: "Intro.\n\nAlpha selected text omega",
+        schedule: { triggerId: created.schedules[0]!.triggerId, cronExpression: "30 10 * * 1-5", timezone: "Europe/London" } };
+      const updated = await execute(update) as { baseRevisionId: string };
+      expect(updated).toMatchObject({ title: "After edit", schedules: [{ cronExpression: "30 10 * * 1-5", timezone: "Europe/London" }] });
+      const nextDoc = (await service.getDescriptionDocument(created.routineId))!;
+      expect(nextDoc.body).toBe(update.description);
+      const [remapped] = await db.select().from(documentAnnotationThreads).where(eq(documentAnnotationThreads.id, thread.id));
+      expect(remapped).toMatchObject({ currentRevisionId: nextDoc.latestRevisionId, currentRevisionNumber: nextDoc.latestRevisionNumber, anchorState: "active", selectedText: "selected text" });
+      expect(remapped!.normalizedStart).toBeGreaterThan(6);
+      const activities = () => db.select().from(activityLog).where(eq(activityLog.entityId, created.routineId));
+      expect(await activities()).toEqual(expect.arrayContaining([expect.objectContaining({ action: "routine.document_annotation_remapped", details: expect.objectContaining({ threadId: thread.id, documentId: nextDoc.id }) })]));
+      const before = await service.getDetail(created.routineId);
+      const beforeActivities = await activities();
+      expect(await execute(update)).toEqual(updated);
+      expect(await service.getDetail(created.routineId)).toEqual(before);
+      expect(await activities()).toEqual(beforeActivities);
+      await expect(execute({ ...update, idempotencyKey: "routine-edit-stale", title: "Stale description" })).rejects.toThrow();
+      await expect(execute({ ...update, idempotencyKey: "routine-edit-invalid", baseRevisionId: updated.baseRevisionId,
+        title: "Must roll back", description: "Changed selection", schedule: { ...update.schedule, cronExpression: "not a cron", timezone: "Europe/London" } })).rejects.toThrow();
+      expect(await service.getDetail(created.routineId)).toEqual(before);
+      expect(await service.getDescriptionDocument(created.routineId)).toEqual(nextDoc);
+      expect(await db.select().from(documentAnnotationThreads).where(eq(documentAnnotationThreads.id, thread.id))).toEqual([remapped]);
+      expect(await activities()).toEqual(beforeActivities);
+      const [run] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, runId));
+      const receipts = (run!.resultJson as { semanticToolReceipts: Record<string, unknown> }).semanticToolReceipts;
+      expect(receipts).not.toHaveProperty("routine-edit-stale");
+      expect(receipts).not.toHaveProperty("routine-edit-invalid");
+      expect(receipts).toHaveProperty("routine-edit-update");
+    } finally {
+      await db.update(issues).set({ responsibleUserId: null }).where(eq(issues.id, issueId));
+    }
   });
 
   it("advertises only real bindings and reads the bound task", async () => {
