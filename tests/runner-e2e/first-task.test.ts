@@ -8,6 +8,8 @@ import { renderInteractionCard } from "./interaction-report.js";
 import { main as judgeCommand } from "./first-task-judge.js";
 import {
   assertFirstTaskRuntime,
+  boundFirstTaskBudget,
+  FIRST_TASK_BUDGET_CENTS,
   provisionFirstTaskFixtures,
 } from "./first-task-fixtures.js";
 import { describe, expect, it, vi } from "vitest";
@@ -391,6 +393,16 @@ describe("first-task question presentation grading", () => {
 });
 
 describe("first-task fixtures and state grading", () => {
+  it("bounds both paid identities before work and rejects an unsaved hard stop", async () => {
+    const patch = vi.fn().mockResolvedValue({ budgetMonthlyCents: FIRST_TASK_BUDGET_CENTS });
+    await boundFirstTaskBudget({ api: { patch }, companyId: "company", agentId: "agent" });
+    expect(patch.mock.calls).toEqual([
+      ["/api/companies/company/budgets", { budgetMonthlyCents: 500 }],
+      ["/api/agents/agent/budgets", { budgetMonthlyCents: 500 }],
+    ]);
+    patch.mockResolvedValue({ budgetMonthlyCents: 0 });
+    await expect(boundFirstTaskBudget({ api: { patch }, companyId: "company", agentId: "agent" })).rejects.toThrow("budget hard stop");
+  });
   it("waits past optimistic submission until a new user acceptance is persisted", async () => {
     vi.useFakeTimers();
     try {

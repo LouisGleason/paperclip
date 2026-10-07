@@ -345,8 +345,6 @@ export async function runConnectionFlow(input: ConnectionFlowInput) {
     const deadline = Date.now() + config.turnTimeoutMs;
     while (Date.now() < deadline) {
     input.assertActive();
-      const companyState = await api.get<Row>(`/api/companies/${company.id}`);
-      if (companyState.status !== "active") throw new ConnectionFailure(companyState.pauseReason === "budget" ? "company_budget_stopped_execution" : "company_inactive_during_task");
       const summaries = await api.get<Row[]>(`/api/issues/${issue!.id}/runs`);
       for (const row of summaries) {
         const id = row.runId ?? row.id;
@@ -356,6 +354,12 @@ export async function runConnectionFlow(input: ConnectionFlowInput) {
       }
       if (runs.size > config.maxRuns) throw new ConnectionFailure("provider_run_limit_exceeded");
       const next = [...runs.values()].filter(run => !after.has(run.id));
+      // Pending accounting may temporarily pause a scope while its admitted
+      // run is still completing. Preserve that run and its final receipt.
+      if (!next.some(run => ["queued", "running"].includes(run.status))) {
+        const companyState = await api.get<Row>(`/api/companies/${company.id}`);
+        if (companyState.status !== "active") throw new ConnectionFailure(companyState.pauseReason === "budget" ? "company_budget_stopped_execution" : "company_inactive_during_task");
+      }
       if (next.some(run => ["failed", "cancelled", "interrupted", "timed_out"].includes(run.status))) throw new ConnectionFailure("agent_run_failed");
       const complete = next.find(run => verifyConnectionRun(run, { agentId: agent!.id, connectionId: connection.id, method: connection.method, runtimeMode: execution.profile.generation, environmentId: environment.id }));
       if (complete) {

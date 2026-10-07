@@ -3,6 +3,27 @@ import type { RunnerApi } from "./api.js";
 import type { LiveFixtureValues } from "./live-fixtures.js";
 import type { CredentialName, MatrixExecution } from "./types.js";
 
+export const FIRST_TASK_BUDGET_CENTS = 500;
+
+/** Bound paid onboarding work without changing the wizard's execution choice. */
+export async function boundFirstTaskBudget(input: {
+  api: Pick<RunnerApi, "patch">;
+  companyId: string;
+  agentId: string;
+}) {
+  const paths = [
+    `/api/companies/${input.companyId}/budgets`,
+    `/api/agents/${input.agentId}/budgets`,
+  ];
+  const saved = await Promise.all(paths.map(path => input.api.patch<{ budgetMonthlyCents: number }>(
+    path,
+    { budgetMonthlyCents: FIRST_TASK_BUDGET_CENTS },
+  )));
+  if (saved.some(record => record.budgetMonthlyCents !== FIRST_TASK_BUDGET_CENTS)) {
+    throw new Error("Onboarding fixture budget hard stop was not saved");
+  }
+}
+
 /** Provision only credentials for the UI-created company. The production wizard
  * remains the sole creator/configurer of its first agent and onboarding task. */
 export async function provisionFirstTaskFixtures(input: {

@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { agentHarnessType, agentRunner } from "../../packages/shared/src/agent-runner.js";
 
 const ADMIN_EMAIL =
   process.env.PAPERCLIP_RELEASE_SMOKE_EMAIL ??
@@ -208,12 +209,14 @@ test.describe("Docker authenticated onboarding smoke", () => {
     expect(company).toBeTruthy();
 
     const agents = await getJson<
-      Array<{ id: string; name: string; role: string; adapterType: string }>
+      Array<{ id: string; name: string; role: string; adapterType: string; adapterConfig: Record<string, unknown> }>
     >(page, `${baseUrl}/api/companies/${company!.id}/agents`);
     const leadAgent = agents.find((entry) => entry.name === AGENT_NAME);
     expect(leadAgent).toBeTruthy();
     expect(leadAgent!.role).toBe(AGENT_ROLE);
-    expect(leadAgent!.adapterType).not.toBe("process");
+    expect(agentRunner(leadAgent!.adapterType)).toBe("paperclip");
+    expect(agentHarnessType(leadAgent!.adapterType, leadAgent!.adapterConfig)).toBe("claude_local");
+    expect(leadAgent!.adapterConfig).toMatchObject({ provider: "acpx", acpxAgent: "claude" });
 
     // Onboarding deliberately writes no goal: the mission is collected later in
     // the app, so a fresh company must come out of the wizard with an empty
@@ -242,6 +245,16 @@ test.describe("Docker authenticated onboarding smoke", () => {
     expect(new URL(page.url()).pathname.endsWith(`/issues/${seededRef}`)).toBe(
       true
     );
+
+    // Exercise persistence through the real installed UI. The wizard selects
+    // the default once; reload must not replace the reviewed execution choice.
+    await page.reload();
+    const reloadedAgent = await getJson<{ adapterType: string; adapterConfig: Record<string, unknown> }>(
+      page,
+      `${baseUrl}/api/agents/${leadAgent!.id}`
+    );
+    expect(reloadedAgent.adapterType).toBe(leadAgent!.adapterType);
+    expect(reloadedAgent.adapterConfig).toEqual(leadAgent!.adapterConfig);
 
     // #13068 rebuilt the seeded first task as a chat with the lead: launch
     // posts a deterministic, server-owned greeting plus an opening question

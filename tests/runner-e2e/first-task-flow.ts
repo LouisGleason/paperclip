@@ -9,6 +9,7 @@ import { waitForFirstTaskReply } from "./first-task-replies.js";
 import { observeCompletionUpdate } from "./completion-update-flow.js";
 import {
   assertFirstTaskRuntime,
+  boundFirstTaskBudget,
   provisionFirstTaskFixtures,
 } from "./first-task-fixtures.js";
 import { execFileSync } from "node:child_process";
@@ -33,7 +34,7 @@ import {
   type Row,
 } from "./first-task-scoring.js";
 
-/** The wizard creates the agent/task. Only credential provisioning uses Node fetch,
+/** The wizard creates the agent/task. Credential provisioning and QA budgets use Node fetch,
  * keeping plaintext keys out of Playwright's trace and recorded form values. */
 export async function setupFirstTaskFixtures(input: {
   page: Page;
@@ -120,6 +121,7 @@ export async function setupFirstTaskFixtures(input: {
     name: agents[0].name,
   };
   input.observe(fixtures);
+  await boundFirstTaskBudget({ api, companyId: company.id, agentId: fixtures.agent.id });
   await page.getByRole("button", { name: "Get started", exact: true }).click();
   return fixtures;
 }

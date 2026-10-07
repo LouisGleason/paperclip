@@ -116,6 +116,11 @@ To use an existing local server or staging, replace `target` with:
 
 For local attach use `http://127.0.0.1:PORT` and `local_trusted`. Health must
 match the expected revision and deployment mode before credentials are read.
+Authenticated targets check `/api/health` through the dedicated QA browser's
+real board session. Reuse a signed-in QA profile for headless API-key cases;
+an absent session requires attended board sign-in before qualification can
+continue. Redirects and the Cloud harness's `/healthz` never establish the
+tenant app revision.
 The target is never reset, restarted, or given instance-setting changes.
 Sign in to Paperclip in the QA browser if needed; that session supplies the
 same public API permissions as the browser. The operator needs company/agent
@@ -126,9 +131,11 @@ the agent runs in the target's local environment, including a staging server's
 local environment. `.daytona.` requires an already configured active Daytona
 environment on the selected target; this suite does not provision one. Use
 `target.companyId` and `target.environmentId` to select an empty dedicated
-company named `Connection QA…` with that environment. For a new QA company the
-harness uses the matching visible instance environment. Missing environments
-or a disabled native runner are explicit target blockers.
+company named `Connection QA…` with that environment. Cloud-managed targets
+must use their existing dedicated QA company because Cloud owns company
+creation. For a new QA company the harness uses the matching visible instance
+environment. Missing environments are explicit target blockers. Native cases
+exercise the graduated runner without changing deprecated experimental flags.
 
 Each cell creates a separate QA company unless one was supplied. Teardown
 pauses its agents, cancels active runs, revokes its test connections, and

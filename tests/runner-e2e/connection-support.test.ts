@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import type { APIRequestContext } from "@playwright/test";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -165,6 +166,33 @@ describe("target and selected credential boundaries", () => {
       fetch.mockResolvedValue(new Response(JSON.stringify({ commit: "a".repeat(40), deploymentMode: "authenticated" })));
       await expect(verifyConnectionTarget("https://staging.example.test", config)).resolves.toMatchObject({ commit: "a".repeat(40) });
     } finally { fetch.mockRestore(); }
+  });
+  it("checks the actual Core health through the QA tenant session without following redirects", async () => {
+    const config = parseConnectionConfig({ target: { mode: "attach", baseURL: "https://staging.example.test", expectedCommit: "a".repeat(40), deploymentMode: "authenticated" } });
+    const get = vi.fn(async () => ({ status: () => 200, ok: () => true, json: async () => ({ commit: "a".repeat(40), deploymentMode: "authenticated" }) }));
+    const request = { get } as unknown as Pick<APIRequestContext, "get">;
+    const unauthenticated = vi.spyOn(globalThis, "fetch");
+    try {
+      await expect(verifyConnectionTarget("https://staging.example.test", config, request)).resolves.toEqual({ commit: "a".repeat(40), deploymentMode: "authenticated" });
+      expect(get).toHaveBeenCalledWith("https://staging.example.test/api/health", { maxRedirects: 0, timeout: 15_000 });
+      expect(unauthenticated).not.toHaveBeenCalled();
+      get.mockResolvedValue({ status: () => 200, ok: () => true, json: async () => ({ commit: "b".repeat(40), deploymentMode: "authenticated" }) });
+      await expect(verifyConnectionTarget("https://staging.example.test", config, request)).rejects.toThrow("target_identity_mismatch");
+    } finally { unauthenticated.mockRestore(); }
+  });
+  it.each([401, 403])("requires board login for authenticated health HTTP %s instead of inspecting another endpoint", async status => {
+    const config = parseConnectionConfig({ target: { mode: "attach", baseURL: "https://staging.example.test", expectedCommit: "a".repeat(40), deploymentMode: "authenticated" } });
+    const json = vi.fn();
+    const get = vi.fn(async () => ({ status: () => status, ok: () => false, json }));
+    await expect(verifyConnectionTarget("https://staging.example.test", config, { get } as unknown as Pick<APIRequestContext, "get">)).rejects.toThrow("board_login_required");
+    expect(get).toHaveBeenCalledOnce();
+    expect(json).not.toHaveBeenCalled();
+  });
+  it.each([302, 503])("rejects authenticated health HTTP %s without treating an interstitial as Core readiness", async status => {
+    const config = parseConnectionConfig({ target: { mode: "attach", baseURL: "https://staging.example.test", expectedCommit: "a".repeat(40), deploymentMode: "authenticated" } });
+    const get = vi.fn(async () => ({ status: () => status, ok: () => false }));
+    await expect(verifyConnectionTarget("https://staging.example.test", config, { get } as unknown as Pick<APIRequestContext, "get">)).rejects.toThrow("target_health_unavailable_or_redirected");
+    expect(get).toHaveBeenCalledOnce();
   });
   it("reads literal selected keys without sourcing shell commands or returning unrelated secrets", async () => {
     expect(selectedSecret("UNRELATED=do-not-read\nexport OPENAI_API_KEY='chosen-value'\n", "OPENAI_API_KEY")).toBe("chosen-value");
