@@ -432,6 +432,10 @@ editor's Markdown paste path; filling the editor directly produces escaped
 paragraph text instead of a code block. The issue API preserves literal escapes
 in real multiline bodies and only recovers self-escaped line breaks in legacy
 single-line bodies. Code fences and JSON escapes must survive both boundaries.
+The prompt explicitly states that native write never adds a newline and that
+complete native read preserves one when present. A credential-free probe of the
+installed Pi 1.0.0 tools checks both a 32-byte value and the 33-byte value with a
+final line feed; both write and read retain the exact supplied bytes.
 The prompt orders one memory write, one complete native read, a separate expected
 cross-root write denial, and then completion. Native paths use the exact current
 absolute agent directory; shell-variable expansion is not assumed. An incorrect

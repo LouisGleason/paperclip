@@ -94,6 +94,46 @@ $4.508407789 remaining. Billing snapshots are provisional. Reclaim only inspecte
 quiescent resources from the owned qualification host after retaining their evidence;
 require disk headroom and zero leaked native snapshots before subsequent paid cases.
 
+## Exact shutdown source qualification — 2026-10-07
+
+Production and installed packages are frozen at
+`06a3d9739f402baa7f8be7aaa29dda6db7354bfb`; protocol definitions are frozen at
+`d38ebc674d9138b941908d5128321e91db05a3a8`. Normal workspace/public builds,
+consumer installation and lifecycle hooks, strict graphs, Pi setup and real
+server/UI admission pass. All 20 archives are hash-verified and retained.
+[Hosted image build](https://github.com/paperclipai/paperclip/actions/runs/37676853634)
+passes. Image `sha256:5e62c8e294cd9d663316ba09b0aae1d7358a8938fe37d17936ef394cf1723ab2`
+passes anonymous Linux admission and an actual credential-free Daytona probe;
+probe deletion is confirmed. Current-source CI passes 54 checks with two skips.
+Nine simultaneous runner shutdowns are retained as infrastructure interruptions;
+a single failed-job rerun passes. Both PRs have zero unresolved review threads.
+
+Stop, same-turn steering and native questions pass on these installed bytes.
+Independent cleanup after each finds zero native snapshots, temporary roots,
+owned runtime processes or credential input files. The fresh memory case then
+fails its unchanged exact-byte grader: the native read and public managed-file
+API both return the expected 32-character value without its required line feed.
+The original 38 MB of canonical evidence and failure classification are retained;
+the sequence halts with no subsequent paid dispatch or automatic retry.
+
+A free probe against the actual installed Pi write/read modules proves that
+32-byte and 33-byte inputs are written and read unchanged, with no newline
+insertion or trimming. The task JSON independently decodes to the correct
+33-byte value. The supported cause is model behavior, separate from the original
+canonical candidate-failure classification. The only fixture correction explains
+that write never appends a newline and complete read preserves it. Original
+JSON, exact-byte graders, cross-root denial, model, low thinking, deadlines,
+permissions and production profile 18 remain unchanged. Qualification must use
+a recorded new harness revision for this changed prompt; shipping artifacts
+remain frozen at `06a3d9739`.
+
+The owned 10 GB build host is resumed after its unsupported disk-resize endpoint
+rejected a request. Four exact checksum-verified toolchain download caches are
+reclaimed after rechecking all 20 package archives and daemon bytes. Installed
+tools and all canonical evidence remain retained. The 2 GB disk admission floor,
+finite host lifetime and independent zero-snapshot cleanup stay in force.
+No local Docker is used and no rollout, release or merge is authorized.
+
 ## Final fixture reconciliation — 2026-10-07
 
 Fresh Linux CI passed the server, database, UI and package checks. It exposed

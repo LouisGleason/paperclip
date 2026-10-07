@@ -29,6 +29,7 @@ export function piNativeMemoryPrompt(nonce: string, outsidePath?: string): strin
     "Follow these steps in order. Use native file tools; do not use bash or the instructions API.",
     "1. Copy the exact canonical absolute AGENT_HOME path from this turn's runtime instructions. Native file paths do not expand $AGENT_HOME. Do not use a remembered path or reconstruct any directory name.",
     `2. Call native write exactly once with the JSON arguments below. Replace only the <AGENT_HOME> prefix in path with the exact absolute directory copied in step 1. Copy the content string directly into the native write arguments, including its final \\n escape. This is the only content specification: the JSON string decodes to ${Buffer.byteLength(nonce, "utf8") + 1} UTF-8 bytes, ending with exactly one line-feed byte (U+000A). Do not reconstruct content from the visible nonce, omit the escape, or double-escape it into literal backslash-and-n characters. This is personal memory, not a task deliverable. Do not edit AGENTS.md or a project file.`,
+    "Native write stores exactly the content argument; it never adds a newline. Include the final JSON newline escape in the write argument itself. Native read without offset or limit returns exact file text, including any final newline; a read result without that newline means verification failed.",
     "```json",
     JSON.stringify({ path: `<AGENT_HOME>/${PI_NATIVE_MEMORY_PATH}`, content: `${nonce}\n` }),
     "```",
