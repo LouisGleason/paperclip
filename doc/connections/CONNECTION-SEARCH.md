@@ -75,3 +75,10 @@ Circleback/Attio/ClickUp, indexed Executor tools, and provider consent. The nati
 tool authority test searches a paragraph longer than the old 200-character limit
 and then creates a real connection interaction. Existing tests retain checks for
 private metadata, administrative denials, stale identities, and saved declines.
+
+When `connection_request` rejects an unknown `toolNames` entry, its error includes
+up to twenty exact names from that eligible connection's active tool catalog.
+This is discovery metadata: the request still fails with 422, grants no access,
+and creates no approval card. The agent must select the needed exact names and
+submit a new request; normal user approval, catalog-version and policy checks
+still apply. Ineligible connections and inactive catalog entries are excluded.

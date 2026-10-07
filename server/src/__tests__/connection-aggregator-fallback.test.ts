@@ -608,6 +608,51 @@ const support = await getEmbeddedPostgresTestSupport();
       );
       expect(result.instruction).toContain("Arcade");
     });
+    it("returns exact eligible catalog names after a guessed tool without granting access", async () => {
+      await resetQuestions();
+      const connection = await seedProvider("arcade", "Hubspot_ListContacts", "responsible-user", false);
+      await db.delete(toolConnectionInstalls).where(eq(toolConnectionInstalls.connectionId, connection.id));
+      await seedProvider("composio", "Unrelated_PrivateTool", "other-user", false);
+      await db.insert(toolCatalogEntries).values({ companyId: claims.company_id, connectionId: connection.id,
+        toolName: "Hubspot_RemovedTool", name: "Removed", versionHash: "old", entryKind: "tool", status: "removed" });
+      const answer = await selectProvider("via:arcade:hubspot");
+      const service = connectionIntentService(db);
+      const error = await service.request(claims, "via:arcade:hubspot", {
+        selectionInteractionId: answer.id, toolNames: ["hubspot_list_contacts"],
+      }).catch(error => error);
+      expect(error).toMatchObject({ status: 422 });
+      expect(error.message).toContain('"Hubspot_ListContacts"');
+      expect(error.message).toContain("Request only the needed exact names");
+      expect(error.message).not.toMatch(/Unrelated_PrivateTool|Hubspot_RemovedTool/);
+      expect(await db.select().from(toolProfiles).where(eq(toolProfiles.companyId, claims.company_id))).toEqual([]);
+      const interactions = await db.select().from(issueThreadInteractions).where(eq(issueThreadInteractions.companyId, claims.company_id));
+      expect(interactions.map(row => [row.id, row.status])).toEqual([[answer.id, "answered"]]);
+      const requested = await service.request(claims, "via:arcade:hubspot", {
+        selectionInteractionId: answer.id, toolNames: ["Hubspot_ListContacts"],
+      });
+      expect(requested.state).toBe("needs_user_action");
+      const loaded = await service.loadIntent(requested.interactionId!);
+      expect(loaded.interaction.payload.accessRequest?.tools.map(tool => tool.toolName)).toEqual(["Hubspot_ListContacts"]);
+      expect(loaded.interaction.status).toBe("pending");
+      expect(await db.select().from(toolProfiles).where(eq(toolProfiles.companyId, claims.company_id))).toEqual([]);
+    });
+    it("bounds catalog-name recovery and does not disclose an ineligible connection", async () => {
+      await resetQuestions();
+      const connection = await seedProvider("arcade", "Read_00", "responsible-user", false);
+      await db.insert(toolCatalogEntries).values(Array.from({ length: 24 }, (_, index) => ({
+        companyId: claims.company_id, connectionId: connection.id, toolName: `Read_${String(index + 1).padStart(2, "0")}`,
+        name: `Read_${String(index + 1).padStart(2, "0")}`, versionHash: "v1", entryKind: "tool" as const, status: "active" as const,
+      })));
+      const service = connectionIntentService(db);
+      const error = await service.request(claims, "arcade", { connectionId: connection.id, toolNames: ["guessed"] }).catch(error => error);
+      expect(error).toMatchObject({ status: 422 });
+      expect(error.message).toContain("first 20 of 25");
+      expect(error.message.match(/Read_\d{2}/g)).toHaveLength(20);
+      await db.update(connectionGrants).set({ status: "revoked" }).where(eq(connectionGrants.connectionId, connection.id));
+      const denied = await service.request(claims, "arcade", { connectionId: connection.id, toolNames: ["guessed"] }).catch(error => error);
+      expect(denied.message).not.toContain("Read_");
+      expect(denied.message).toContain("not eligible");
+    });
     it("does not switch providers when the chosen route loses permission", async () => {
       await resetQuestions();
       const answer = await selectProvider("via:arcade:hubspot");

@@ -739,7 +739,12 @@ export function connectionIntentService(db: Db) {
         const catalog = (await indexedCatalog(connection.id, context.run.companyId)).filter(tool => tool.entryKind === "tool");
         const names = options.toolNames ?? (app.slug === "composio" ? ["COMPOSIO_SEARCH_TOOLS", "COMPOSIO_MANAGE_CONNECTIONS"] : catalog.map(tool => tool.toolName));
         const tools = names.map(name => catalog.find(tool => tool.toolName === name));
-        if (options.toolNames && tools.some(tool => !tool)) throw unprocessable("A requested tool is not in this connection's active catalog");
+        if (options.toolNames && tools.some(tool => !tool)) {
+          // Return discovery metadata only after validating this connection's
+          // eligibility. Never substitute guessed names or grant access here.
+          const availableNames = catalog.map(tool => tool.toolName).sort();
+          throw unprocessable(`A requested tool is not in this connection's active catalog. Available indexed tool names (first ${Math.min(20, availableNames.length)} of ${availableNames.length}): ${JSON.stringify(availableNames.slice(0, 20))}. Request only the needed exact names with connection_request. No access was granted.`);
+        }
         const effective = await access.getEffectiveProfilesForAgent(context.run.companyId, context.agent.id);
         const installed = effective.installedConnections.some(item => item.id === connection.id);
         const missing = !installed || tools.some(tool => tool && !effective.allowedTools.some(allowed => allowed.id === tool.id));
