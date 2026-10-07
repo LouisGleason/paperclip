@@ -5,7 +5,7 @@ import { createRoutineSchema, updateRoutineSchema, createRoutineTriggerSchema, u
 import { routineService } from "../routines.js";
 import { documentAnnotationService } from "../document-annotations.js";
 import { persistActivity } from "../activity-log.js";
-import { forbidden, notFound } from "../../errors.js";
+import { conflict, forbidden, notFound } from "../../errors.js";
 
 export const manageRoutineInputSchema = z.object({
   idempotencyKey: z.string().trim().min(1).max(240),
@@ -33,7 +33,20 @@ export const manageRoutineInputSchema = z.object({
 type Binding = { companyId: string; agentId: string; issueId: string; runId: string };
 
 export async function lockOwnedRoutine(db: Db, binding: Binding, id: string) {
-  const [routine] = await db.select().from(routines).where(and(eq(routines.id, id), eq(routines.companyId, binding.companyId))).for("update");
+  // Execution authorization already holds the agent and issue locks. A firing
+  // holds the routine while assigning its issue and waking the agent, so waiting
+  // here would form a cycle. Reject contention and roll back the receipt before
+  // the agent retries; this also covers saved create receipts.
+  let routine: typeof routines.$inferSelect | undefined;
+  try {
+    [routine] = await db.select().from(routines).where(and(eq(routines.id, id), eq(routines.companyId, binding.companyId))).for("update", { noWait: true });
+  } catch (error) {
+    const failure = error as { code?: string; cause?: { code?: string } } | null;
+    if (failure?.code === "55P03" || failure?.cause?.code === "55P03") {
+      throw conflict("Routine is busy. Retry the same request after the current firing or edit finishes.", { code: "routine_busy", retryable: true });
+    }
+    throw error;
+  }
   if (!routine) throw notFound("Routine not found");
   if (routine.assigneeAgentId !== binding.agentId) throw forbidden("Agents can only manage routines assigned to themselves");
   return routine;
