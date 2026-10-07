@@ -6,7 +6,7 @@ import { codexExecutableReadOnlyRoots } from "../drivers/codex/codex-security-co
 import { isCanonicalProviderEventType } from "../provider-events.js";
 import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { parseNativeUserAttachments } from "../contracts/user-attachments.js";
+import { parseNativeUserAttachments, validateNativeUserMessageSize } from "../contracts/user-attachments.js";
 import {
   appendFileSync,
   existsSync,
@@ -5751,6 +5751,7 @@ class DurablePrpCodexTransport implements CodexAppServerTransport {
       .filter((item) => item.type !== "skill")
       .map((item) => (typeof item.text === "string" ? item.text : ""))
       .join("\n");
+    validateNativeUserMessageSize(message, attachments);
     const skills = resolveRunnerdCodexSkillInputs(
       input.filter((item) => item.type === "skill"),
       this.options.runtimeContext ?? null,
