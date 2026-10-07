@@ -75,7 +75,10 @@ export async function resolveNewAgentRunnerForCompany(db: Db, companyId: string,
     environment = await envs.findManagedSandboxEnvironment(companyId);
     if (!environment) throw unprocessable("The managed sandbox is unavailable. Restore Paperclip Computer and retry.", { code: "managed_sandbox_unavailable" });
   }
-  if (environment && environment.companyId && environment.companyId !== companyId) throw unprocessable("The selected environment belongs to another company.");
+  if (settings.general?.executionMode === "kubernetes") {
+    environment = await envs.findKubernetesEnvironment(companyId);
+    if (!environment) throw unprocessable("The required Kubernetes environment is unavailable.", { code: "kubernetes_environment_unavailable" });
+  }
   const driver = environment?.driver ?? "local";
   const target = driver === "local" ? { driver, platform: process.platform, architecture: process.arch }
     : { driver, ...(driver === "sandbox" ? { platform: "linux", architecture: "x64" } : {}) };
