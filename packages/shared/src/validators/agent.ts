@@ -7,7 +7,7 @@ import {
   AGENT_STATUSES,
   INBOX_MINE_ISSUE_STATUS_FILTER,
 } from "../constants.js";
-import { agentAdapterTypeSchema } from "../adapter-type.js";
+import { agentAdapterTypeSchema, optionalAgentAdapterTypeSchema } from "../adapter-type.js";
 import { envConfigSchema } from "./secret.js";
 import { trustAuthorizationPolicySchema, trustPresetSchema } from "./trust-policy.js";
 import { agentDesiredSkillSelectionSchema } from "./adapter-skills.js";
@@ -125,7 +125,7 @@ export type CreateAgent = z.infer<typeof createAgentSchema>;
 
 export const builtInAgentProvisionSchema = z.object({
   runner: agentRunnerChoiceSchema.optional(),
-  adapterType: agentAdapterTypeSchema.optional(),
+  adapterType: optionalAgentAdapterTypeSchema,
   adapterConfig: adapterConfigSchema.optional(),
   budgetMonthlyCents: z.number().int().nonnegative().optional(),
 }).strict();
