@@ -37,7 +37,7 @@ describe("Grok terminal prompt usage", () => {
 });
 
 describe("Grok admitted receipt persistence", () => {
-  const envelope = (update = terminal, sessionId = "session") => ({ method: "_x.ai/session/update", params: { sessionId, update } });
+  const envelope = (update = terminal, sessionId = "session") => ({ method: "_x.ai/session_notification", params: { sessionId, update } });
   const prompt = { method: "session/prompt", params: { sessionId: "session" } };
 
   it("persists the prompt receipt once and sums costs across follow-ups", () => {
@@ -76,6 +76,24 @@ describe("Grok admitted receipt persistence", () => {
     expect(persistedAcpxTurnUsage(status(before), status(after), "turn", "grok")).toMatchObject({
       cost: { amount: 0.271714, currency: "USD" },
     });
+  });
+  it.each(["replay_stream", "replay_tag", "malformed_replay_tag", "request_envelope"])("does not settle current work from %s", kind => {
+    const active = { requestId: "turn", sessionId: "session", signal: new AbortController().signal };
+    const capture = createGrokUsageCapture(() => active);
+    const before = state("previous", ["previous"]); capture.remember(before); capture.admit();
+    capture.observe("outbound", prompt);
+    const notification = envelope();
+    capture.observe("inbound", kind === "replay_stream" ? { ...notification, method: "_x.ai/session/update" }
+      : kind === "request_envelope" ? { ...notification, id: 1 }
+      : { ...notification, params: { ...notification.params, _meta: { isReplay: kind === "replay_tag" ? true : "false" } } });
+    const after = capture.project(state("turn", ["previous", "current"]), before);
+    expect(after.request_token_usage).toEqual({});
+    expect(after.cumulative_cost).toBeUndefined();
+    // An ignored replay has no authority to consume or poison the live receipt.
+    capture.observe("inbound", envelope());
+    const live = capture.project(state("turn", ["previous", "current"]), after);
+    expect(live.request_token_usage?.current).toEqual(parseGrokPromptUsage(terminal)?.tokens);
+    expect(live.cumulative_cost).toEqual({ amount: 0.271714, currency: "USD" });
   });
   it.each(["no_admission", "no_prompt", "foreign_session", "cancelled", "expired", "replayed", "duplicate", "old_message"])("does not authorize %s receipts", kind => {
     const controller = new AbortController();

@@ -12,10 +12,10 @@ One owner carries implementation, verification and relevant review fixes through
 - Branch: `codex/default-agent-runner`
 - Base: `083073703` (master, rebased 2026-10-07); existing-agent staging baseline remains `b31558064093564fb937cf046596d1d497f5be27`.
 - PR: https://github.com/paperclipai/paperclip/pull/15422
-- Preview: http://127.0.0.1:3104/RUN/agents
-- Evidence task: http://127.0.0.1:3104/RUN/issues/RUN-2
+- Preview: http://127.0.0.1:3114/RUN/agents
+- Evidence task: http://127.0.0.1:3114/RUN/issues/RUN-2
 - Test-drive: the production source includes security fix `204740b27`; `/api/health` exposes the running checkout commit. The final handoff records the tested PR head.
-- Next action: validate the extended existing Product E2E fixtures, freeze the qualification candidate, and run the bounded local/staging checklist. Merge and production deployment require separate authorization.
+- Next action: freeze the proven live Grok receipt and packaging fixes, then qualify that candidate and its immutable preview in parallel. Merge and production deployment require separate authorization.
 
 ## Implemented
 
@@ -23,7 +23,9 @@ Shared production-qualified mapping and idempotent configuration translation; se
 
 Live testing and regression review fixed historical-adapter SQL projection, built-in setup readiness, partial native credential updates, AgentCore retention acknowledgement, managed/pooled task-model discovery, onboarding provider authentication and plugin resets across harnesses. Required legacy-specific fixtures now request legacy explicitly. The user's single-PR requirement takes precedence over the PR skill's usual file-count limit; the additional files are necessary regression coverage.
 
-## Verification state (2026-10-07)
+## Historical verification state (2026-10-07)
+
+The active checklist is the [17:10 qualification checkpoint](#qualification-checkpoint-2026-10-07-1710-utc). Historical results below remain supporting evidence; they do not close its failed or blocked gates.
 
 - Workspace typecheck, production build, Storybook build and token gates passed after the functional review fixes. Server typecheck passed after the credential-routing guard fix.
 - Focused review regressions: 422 passed, then 66 passed after correcting the AgentCore test's step label. Credential inheritance, connection pools and permission suites: 183 passed after the security fix. Session/revision tests: 9 passed. Pinned Grok setup probes: 6 passed.
@@ -42,9 +44,9 @@ The dark-mode Runner menu used native HTML options with unreadable text on the b
 - CI on `e3dd8558e`: all UI/browser, build, typecheck, runner, packaging, security, and server gates passed. Greptile completed on that exact head at 5/5 with no actionable issues, and all review threads are resolved. The workspace adapter lane twice timed out at the existing Cursor managed-sandbox test's five-second deadline. The complete execution file passed eight tests locally. That real archive/child-process fixture now has a scoped 15-second allowance; execution assertions and production behavior are unchanged. The next pushed head requires fresh CI and review.
 - CI on `eb3b74b0e` passed all 53 successful checks, with two intentionally skipped checks and Snyk success. Greptile rated it 5/5 and identified missing list context for searchable model choices. Added a named listbox, kept search/Detect/Refresh outside it, and verified the accessibility regression. The next pushed head requires fresh checks and review.
 - Live creation: selected Grok from the ordinary picker, reused the saved xAI connection, inspected the shared Runner and Model menus, and confirmed custom-model entry focused Model ID. Closed the disposable setup tab without hiring an agent.
-- [Creation menu evidence](http://127.0.0.1:3104/api/attachments/6efcce5f-fe88-402f-9fa1-4f69d6dc200b/content) — work product `b6bb6818-0de9-4264-8d8e-b5d1662d5c79`.
-- [Dark menu evidence](http://127.0.0.1:3104/api/attachments/0a5e7872-508e-4edb-be09-c91973d013a7/content) — work product `a7ba4c67-4bbb-48fb-ad2d-22b1d323b351`.
-- [Mobile menu evidence](http://127.0.0.1:3104/api/attachments/ec5a31b8-2e12-41e1-82c5-ef5f396b66ba/content) — work product `044cfc23-1d26-41f7-9cb6-184bdc79ce45`.
+- [Creation menu evidence](http://127.0.0.1:3114/api/attachments/6efcce5f-fe88-402f-9fa1-4f69d6dc200b/content) — work product `b6bb6818-0de9-4264-8d8e-b5d1662d5c79`.
+- [Dark menu evidence](http://127.0.0.1:3114/api/attachments/0a5e7872-508e-4edb-be09-c91973d013a7/content) — work product `a7ba4c67-4bbb-48fb-ad2d-22b1d323b351`.
+- [Mobile menu evidence](http://127.0.0.1:3114/api/attachments/ec5a31b8-2e12-41e1-82c5-ef5f396b66ba/content) — work product `044cfc23-1d26-41f7-9cb6-184bdc79ce45`.
 
 ## Observed live acceptance
 
@@ -69,15 +71,15 @@ New harness qualification, existing-agent migration, legacy removal, permission-
 
 Screenshots are uploaded as attachment-backed artifact work products on RUN-2, not only workspace files.
 
-- [Ordinary harness picker](http://127.0.0.1:3104/api/attachments/2e6efe43-e49a-4d65-9a43-4e3e8da0ff38/content) — work product `575c48a4-f11f-4ea3-a876-2fe4ac0489f6`.
-- [Native Grok setup passed](http://127.0.0.1:3104/api/attachments/d82ef090-76b9-45d8-aac8-a1ba733e1ec7/content) — work product `1c544e99-0293-4e83-8c87-ebcf31a303c8`.
-- [Native Grok task and follow-up](http://127.0.0.1:3104/api/attachments/b797d434-6a4a-4859-ab3d-265ffa1a93b9/content) — work product `bd6fb0b4-37d6-40ed-875c-d8bed6517370`.
-- [Explicit legacy Grok task](http://127.0.0.1:3104/api/attachments/b3bdb8e4-dbbc-4755-be82-547075e23712/content) — work product `695fb35f-3a2a-45cd-8189-acb39cbae80c`.
-- [Automatic team import](http://127.0.0.1:3104/api/attachments/d28fcf60-7af9-42ad-b757-995eaf185d9d/content) — work product `b1353ddb-9335-4657-b2af-6a2a8149d651`.
-- [Unsupported harness stays legacy](http://127.0.0.1:3104/api/attachments/7543c47f-a8c5-400e-a9c7-4fbbadfddf34/content) — work product `845cd3d1-a91c-491f-a2e6-6b6a2a158cf4`.
-- [Actionable Cursor setup failure and runner override](http://127.0.0.1:3104/api/attachments/e7aa5c95-fed6-4472-bf57-3350d3e7bbf6/content) — work product `e71aeb0b-41d8-4da6-b154-221b158cc485`.
+- [Ordinary harness picker](http://127.0.0.1:3114/api/attachments/2e6efe43-e49a-4d65-9a43-4e3e8da0ff38/content) — work product `575c48a4-f11f-4ea3-a876-2fe4ac0489f6`.
+- [Native Grok setup passed](http://127.0.0.1:3114/api/attachments/d82ef090-76b9-45d8-aac8-a1ba733e1ec7/content) — work product `1c544e99-0293-4e83-8c87-ebcf31a303c8`.
+- [Native Grok task and follow-up](http://127.0.0.1:3114/api/attachments/b797d434-6a4a-4859-ab3d-265ffa1a93b9/content) — work product `bd6fb0b4-37d6-40ed-875c-d8bed6517370`.
+- [Explicit legacy Grok task](http://127.0.0.1:3114/api/attachments/b3bdb8e4-dbbc-4755-be82-547075e23712/content) — work product `695fb35f-3a2a-45cd-8189-acb39cbae80c`.
+- [Automatic team import](http://127.0.0.1:3114/api/attachments/d28fcf60-7af9-42ad-b757-995eaf185d9d/content) — work product `b1353ddb-9335-4657-b2af-6a2a8149d651`.
+- [Unsupported harness stays legacy](http://127.0.0.1:3114/api/attachments/7543c47f-a8c5-400e-a9c7-4fbbadfddf34/content) — work product `845cd3d1-a91c-491f-a2e6-6b6a2a158cf4`.
+- [Actionable Cursor setup failure and runner override](http://127.0.0.1:3114/api/attachments/e7aa5c95-fed6-4472-bf57-3350d3e7bbf6/content) — work product `e71aeb0b-41d8-4da6-b154-221b158cc485`.
 
-- [Native Grok follow-up after restart](http://127.0.0.1:3104/api/attachments/96941d27-7881-4f37-8eea-c772412b2f06/content) — work product `6af9e9f8-117d-4821-9de3-aebc564d4823`.
+- [Native Grok follow-up after restart](http://127.0.0.1:3114/api/attachments/96941d27-7881-4f37-8eea-c772412b2f06/content) — work product `6af9e9f8-117d-4821-9de3-aebc564d4823`.
 
 ## Final qualification campaign (2026-10-07)
 
@@ -140,7 +142,7 @@ Next action: freeze and push all reviewed fixes, rebuild runner binary and verif
 - Public-install workflow [37639977094](https://github.com/paperclipai/paperclip/actions/runs/37639977094) remains queued on the trusted EC2 fleet. Existing clean Linux installer assertions passed, but do not close packaged macOS/Linux UI, Docker, or Linux service onboarding. The source-install service hook still needs a clean authorized host. No replacement infrastructure was added.
 - The previous full local test invocation was interrupted after source changed during execution; it is not a final pass. Run the required checks on the frozen next candidate and use Linux for DB-heavy route proof where macOS resources prevent execution.
 
-Budget remains $250 maximum. Reservations: initial provider attempts/probes $25 plus Cursor's unchanged account cap $25; disposable target/image preparation $50; root final local API-key cells $20; Linux first-task qualification $40; staging managed qualification $40; cleanup/unreported charges $50. These sum to $250 and are upper allocations, not actual-spend claims. Known recovered receipts remain Grok $0.271714 and Claude $0.212112; other setup/provider/environment costs have incomplete reporting and remain reserved. No paid rerun starts before target revision/artifact verification. Canonical branch: `codex/default-agent-runner`; [PR #15422](https://github.com/paperclipai/paperclip/pull/15422); [RUN-2](http://127.0.0.1:3104/RUN/issues/RUN-2). Next action: freeze the reviewed fix commit, build/restart locally, and qualify the unique immutable preview concurrently. Merge and production deployment remain unauthorized.
+Budget remains $250 maximum. Reservations: initial provider attempts/probes $25 plus Cursor's unchanged account cap $25; disposable target/image preparation $50; root final local API-key cells $20; Linux first-task qualification $40; staging managed qualification $40; cleanup/unreported charges $50. These sum to $250 and are upper allocations, not actual-spend claims. Known recovered receipts remain Grok $0.271714 and Claude $0.212112; other setup/provider/environment costs have incomplete reporting and remain reserved. No paid rerun starts before target revision/artifact verification. Canonical branch: `codex/default-agent-runner`; [PR #15422](https://github.com/paperclipai/paperclip/pull/15422); [RUN-2](http://127.0.0.1:3114/RUN/issues/RUN-2). Next action: freeze the reviewed fix commit, build/restart locally, and qualify the unique immutable preview concurrently. Merge and production deployment remain unauthorized.
 
 ### Qualification checkpoint (2026-10-07, 16:35 UTC)
 
@@ -161,3 +163,42 @@ Next action: finish the narrow packaging gap extension, freeze and push the revi
 The narrow installed CLI/UI extension is ready: nine existing support tests pass, including real HTTP readiness, wrong-source rejection and substituted-asset rejection; standard CLI generator/esbuild staging and script syntax pass. Default verification starts the installed absolute CLI offline and checks installed UI bytes. Optional browser entry reuses the existing release-smoke and stops before provider authentication; it is not real onboarding proof. Original offline lifecycle isolation remains unchanged.
 
 Local API-key reconciliation: reported OpenCode $0.018327104, Claude $0.2411827 and genuine Grok $0.353190 total $0.612699804. Retain $5 for unpriced Codex and $1 for each of four setup probes. One final Grok attempt ($5 fixture plus $1 probe reserve), one explicit legacy Claude control ($2 fixture plus $0.50 probe reserve), and $1 cleanup bring the finite root allocation to $19.112699804 of $20. Each permits two task runs and 180-second turns; no retry without reconciliation. Cursor observed on-demand usage remains $0.04 after three native task runs, with its $25 cap unchanged; included subscription consumption is not a per-run price receipt.
+
+### Qualification checkpoint (2026-10-07, 17:10 UTC)
+
+Intermediate candidate `da91082136282b92ef600a7a6432ca453cb2e7c7` passed token gates, workspace typecheck and production build. All Linux general, serialized, runner and browser E2E shards passed on tested merge `c1175e188122`. Greptile reports 5/5, zero new findings and all 12 review threads resolved. Canary failed because the installed CLI verifier treated HTTP 200 with `status: "starting"` as ready. The existing verifier now waits for `"ok"` within the same deadline; its nine support tests include startup transition, permanent startup timeout, wrong commit and substituted UI bytes. Final candidate checks remain required.
+
+- The owned test-drive now serves `da910821` at <http://127.0.0.1:3114>. Port 3104 belongs to an unrelated task and is left untouched. The native and legacy Grok fixtures retain exactly their saved adapter type, adapter config, runtime config and default environment after the real server restart. The native reporting fixture remains paused to avoid unbounded progress-comment wakes. Live shared dropdowns are readable in both themes; Escape preserves Legacy, and the harness picker contains underlying harnesses without a Runner choice. Sanitized screenshots are retained for the PR and issue evidence.
+- The existing explicit legacy Claude cell passed all 11 checkpoints: setup, task, independently checked file, follow-up, recorded legacy identity, reload and cleanup. Report `connections-2026-10-07T16-54-28-151Z-2ce841`; runs `335a7af0-f995-4ab1-b106-eb73e41500c4` and `1303d682-0173-44c5-a57d-68a4a43411d7`. Reported spend is $0.6270495, with its setup probe still reserved.
+- Grok's automatic native cell remains failed. Run `7ba85451-f71d-463a-bc63-390a7e564bd1` completed and produced the independently checked 138-byte artifact, but normalized accounting contained no tokens or price and budget protection stopped the follow-up. The retained provider terminal receipt reports $0.276784. Read-only investigation found a concrete live-versus-replay notification mismatch: the provider sends live terminal usage on `_x.ai/session_notification`, while capture and fixtures listened on the persisted `_x.ai/session/update` rail. Correct the live boundary and reject replay receipts; retain the original failed measurement. No policy waiver or paid retry has occurred.
+- [Preview publication 37654224294](https://github.com/paperclipai/paperclip/actions/runs/37654224294) failed before a deployable immutable image/migrator pair existed. npm accepted the exact DB package at 16:44:48 UTC, but public visibility arrived at 16:59:03, after the preview's ten-minute deadline. The trusted release publisher already allows 180 ten-second attempts. Reuse those bounded settings in the existing preview helper, preserving exact-source and signed artifact gates. Pre-merge publication uses trusted master tooling, so this branch's helper repair cannot change that run yet. If a unique candidate times out, resume the supported path only after both exact packages are public; the planner then reuses them without republishing. No duplicate dispatch, staging bake, provider call or promotion occurred.
+- Three staging targets remain pinned to `6119dc4d`. Prepared Cloud-owned-company onboarding and preservation adapters reuse existing flows, graders, independent artifact checks and reports, with explicit $5 agent budgets. Their final managed journeys are blocked on the immutable candidate and qualified provider image. The two fresh onboarding companies remain empty.
+- The expired Claude authorization code was not entered or reused. Fresh Claude and Codex flows are open in the embedded browser; attended completion is still pending. Cursor's earlier isolated login and explicit-selector continuity evidence remain supporting evidence, with the final ordinary model picker journey open.
+
+This checkpoint supersedes pending-status descriptions above without discarding intermediate evidence. No final merge or production sign-off is given.
+
+| Required journey / gate | Status | Evidence or precise remaining action |
+| --- | --- | --- |
+| Local native Codex, Claude, OpenCode task and follow-up | Passed at intermediate `6119` | Existing provider-connection reports above; rerun affected final-source controls after freeze |
+| Local native Grok task and follow-up | Failed at `da910` | Valid first artifact; omitted genuine receipt blocks follow-up; proven boundary repair and rebuilt retest required |
+| Local native Cursor ordinary model picker and continuity | Blocked | Isolated attended login and explicit-selector artifacts passed; ordinary picker requires final-build acceptance |
+| Qualified managed five-harness matrix | Blocked | Final immutable preview pair and updated qualified provider image are not available |
+| Empty-instance Codex first task | Passed at intermediate `6119` on Linux | Existing first-task report proves four real native runs; final candidate control remains |
+| Empty-instance Claude first task | Failed at intermediate `6119` | Confirmation interrupts before a priced SDK result; budget blocks continuation; no trustworthy missing price found |
+| Fresh Cloud Codex/Claude first task | Blocked | Empty owned companies prepared; final image and qualified default environment required |
+| Attended Codex/Claude subscriptions and saved reuse | Blocked | Fresh embedded-browser flows await attended authorization and subsequent execution |
+| Attended Cursor subscription continuity | Passed at intermediate `6119` with explicit selector | Independent artifact/follow-up and reload; native per-run price remains unknown; ordinary picker still open |
+| Existing native/legacy preservation | Passed at current local `da910`, staging `6119` | Full stored execution equality; staging sleep/wake passed; final post-upgrade live tasks remain open |
+| Supported explicit legacy / unsupported auto | Passed locally, final control pending | Explicit legacy Claude passes `da910`; prior unsupported auto and Grok legacy proofs retained |
+| API/CLI, built-ins, hires/approvals, plugins, import/export | Passed in Linux automated gates at `da910` | Real CLI restart and frozen activation pass; representative final live import/built-in gaps remain |
+| Failures, recovery, no silent fallback | Passed automated; live coverage incomplete | Credential/model/selection errors and earlier Cursor UI failure; final recovery and managed failures remain |
+| Shared dropdowns / legacy UI | Passed supporting production observations at `da910` | Light/dark menus and keyboard dismissal preserve Legacy; final mobile/draft observations remain |
+| Clean Linux packaged installation / Docker | Failed Canary verifier at `da910` | Readiness check repaired; final exact installed CLI/UI and offline lifecycle run required |
+| macOS packaged first entry / Linux service / real packaged onboarding | Blocked | Reuse existing installer and release-smoke hooks; no selectable service host or completed real auth journey yet |
+| Exact-head CI and review | Failed CI, passed review at `da910` | Canary readiness failure; all other shards pass, Greptile 5/5; next head needs applicable final gates |
+| Actual private Cloud distribution / warm and cold signup | Blocked by authority | Requires separately authorized master merge and exact production composition |
+| Rollback and production canary campaign | Blocked by authority and missing proof | No current-default disposable compatibility probe; prepare only, no production deployment |
+
+Cost reconciliation replaces the latest reserved $5 Grok task and $2 legacy Claude task amounts with recovered $0.276784 and reported $0.6270495, retaining all probe, unpriced Codex and cleanup allowances. Root's consumed-plus-reserved local allocation is now $13.016533304 of $20 before any new attempt. Aggregate ceiling remains $250; no additional paid run is authorized by elapsed time or a passing mock. Canonical branch remains `codex/default-agent-runner`, [PR #15422](https://github.com/paperclipai/paperclip/pull/15422), [RUN-2](http://127.0.0.1:3114/RUN/issues/RUN-2), and [staging preview](https://runner-default-qa-1007.staging.paperclip.app) at intermediate `6119`. Next action: integrate proven fixes, freeze one candidate, qualify packaged artifacts and immutable preview in parallel, then run only affected bounded live cases. Merge, production deployment and default promotion remain unauthorized and unperformed.
+
+The next frozen source includes the verified Grok live/replay boundary repair (130 focused tests and runner TypeScript/Rust checks), preview polling repair (19 helper tests), and portable installed-package probe (10 support tests). The macOS packaging attempt uses intermediate `da910821` bytes, an isolated home/cache and owned ports; it is not final-source or provider-onboarding proof. Current production UI screenshots are stored under `doc/screenshots/pr-15422/` and link from the PR. No provider call is started before the final serving identity is verified.

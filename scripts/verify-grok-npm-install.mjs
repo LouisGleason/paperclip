@@ -7,12 +7,20 @@ import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, dirname, join, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { materializePublishManifest, prepareBundledPackage } from './prepare-bundled-package.mjs';
 import { GROK_PUBLIC_INSTALL_IMAGE, GROK_PUBLIC_INSTALL_LIFECYCLE, grokConsumerDockerArgs } from './grok-public-install-sandbox.mjs';
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-assert.equal(process.platform, 'linux', 'Run this verification on disposable EC2 Linux, not a developer host');
+const [mode, requestedOutput, ...extraArguments] = process.argv.slice(2);
+assert.ok(mode === undefined || mode === '--pack-only' && requestedOutput && !extraArguments.length,
+  'Usage: verify-grok-npm-install.mjs [--pack-only <new-absolute-output-directory>]');
+const packOnlyOutput = mode === '--pack-only' ? requestedOutput : undefined;
+if (packOnlyOutput) {
+  assert.ok(isAbsolute(packOnlyOutput) && resolve(packOnlyOutput) === packOnlyOutput, 'Pack output must be an absolute normalized path');
+  assert.ok(relative(repo, packOnlyOutput).startsWith('..'), 'Pack output must be outside the checkout');
+  assert.equal(existsSync(packOnlyOutput), false, 'Pack output must be a new owned directory');
+} else assert.equal(process.platform, 'linux', 'Run this verification on disposable EC2 Linux, not a developer host');
 const root = mkdtempSync(join(tmpdir(), 'paperclip-grok-public-install-'));
 const prerequisite = join(root, 'native/grok');
 const env = { ...process.env, NODE_PATH: '', PAPERCLIP_RELEASE_REUSE_UI_DIST: '1', npm_config_ignore_scripts: 'false', npm_config_audit: 'false', npm_config_fund: 'false' };
@@ -25,7 +33,19 @@ const browserOwner = `paperclip-public-install-${process.pid}-${Date.now()}`;
 const offlineOwner = `${browserOwner}-offline`;
 let browserNetworkCreated = false;
 let offlineProbeStarted = false;
+const packLifecycleSentinel = destination => {
+  const sentinelSource = join(root, 'lifecycle-sentinel'); mkdirSync(sentinelSource);
+  writeFileSync(join(sentinelSource, 'package.json'), JSON.stringify({
+    name: 'paperclip-verification-lifecycle-sentinel', version: '1.0.0', private: true,
+    scripts: { postinstall: 'node -e "require(\'node:fs\').writeFileSync(\'lifecycle-ran\', \'ok\')"' },
+  }));
+  run('npm', ['pack', '--ignore-scripts', '--pack-destination', destination], sentinelSource);
+  return 'paperclip-verification-lifecycle-sentinel-1.0.0.tgz';
+};
 try {
+  verification: {
+  const builtRevision = JSON.parse(readFileSync(join(repo, 'server/dist/build-info.json'), 'utf8')).commit;
+  assert.equal(builtRevision, sourceRevision, 'Public packages must be built from the selected source revision');
   const listing = run(process.execPath, [join(repo, 'scripts/release-package-map.mjs'), 'list'], repo).toString().trim().split('\n').map(line => line.split('\t'));
   const packages = new Map(listing.map(([dir, name]) => [name, { dir, manifest: JSON.parse(readFileSync(join(repo, dir, 'package.json'), 'utf8')) }]));
   const needed = new Set();
@@ -51,7 +71,16 @@ try {
   run(process.execPath, ['--check', join(cliStage, 'dist/index.js')]);
   // Match release.sh's unified versioning in temporary staging directories.
   // Source manifests remain untouched, including independently versioned SDKs.
-  run(process.execPath, [join(repo, 'scripts/build-standalone-public-packages.mjs')], repo);
+  if (packOnlyOutput) {
+    // A host packaging check consumes the already-built selected workspace
+    // closure. Do not install unrelated standalone plugins or alter that
+    // host's dependency-script approval policy to pack this consumer graph.
+    const workspace = new Set(JSON.parse(run('pnpm', ['list', '-r', '--depth', '-1', '--json'], repo)).map(pkg => pkg.name));
+    for (const name of needed) {
+      assert.ok(workspace.has(name), `Pack-only requires a built workspace dependency: ${name}`);
+      assert.ok(existsSync(join(repo, packages.get(name).dir, 'dist')), `Missing built public package ${name}`);
+    }
+  } else run(process.execPath, [join(repo, 'scripts/build-standalone-public-packages.mjs')], repo);
   run('bash', [join(repo, 'scripts/prepare-server-ui-dist.sh')], repo);
   const tarballs = [];
   for (const [index, name] of [...needed].entries()) {
@@ -81,6 +110,22 @@ try {
   run('npm', ['pack', '--ignore-scripts', '--pack-destination', root], cliStage);
   tarballs.push(join(root, `paperclipai-${releaseVersion}.tgz`));
   assert.ok(existsSync(tarballs.at(-1)));
+  if (packOnlyOutput) {
+    // Reuse this exact producer for a separately isolated host consumer. This
+    // mode packs bytes only; no dependency lifecycle or provider is invoked.
+    mkdirSync(packOnlyOutput, { mode: 0o700 });
+    const packed = tarballs.map(path => {
+      cpSync(path, join(packOnlyOutput, basename(path)));
+      return { name: basename(path), sha256: sha256(readFileSync(path)) };
+    });
+    const sentinelName = packLifecycleSentinel(packOnlyOutput);
+    const receipt = { schema: 'paperclip.public-npm-pack.v1', sourceRevision, releaseVersion,
+      packageCount: needed.size + 1, tarballs: packed,
+      lifecycleSentinel: { name: sentinelName, sha256: sha256(readFileSync(join(packOnlyOutput, sentinelName))) }, providerCalls: 0 };
+    writeFileSync(join(packOnlyOutput, 'pack-receipt.json'), JSON.stringify(receipt, null, 2), { mode: 0o600 });
+    console.log(JSON.stringify(receipt));
+    break verification;
+  }
   const assets = join(root, 'assets'); mkdirSync(assets, { mode: 0o755 });
   const consumer = join(root, 'consumer'); mkdirSync(consumer);
   const cache = join(root, 'cache'); mkdirSync(cache);
@@ -89,12 +134,7 @@ try {
     const destination = join(assets, basename(tarball)); cpSync(tarball, destination); chmodSync(destination, 0o644);
   }
   // Prove lifecycle execution is real even if npm changes its script defaults.
-  const sentinelSource = join(root, 'lifecycle-sentinel'); mkdirSync(sentinelSource);
-  writeFileSync(join(sentinelSource, 'package.json'), JSON.stringify({
-    name: 'paperclip-verification-lifecycle-sentinel', version: '1.0.0', private: true,
-    scripts: { postinstall: 'node -e "require(\'node:fs\').writeFileSync(\'lifecycle-ran\', \'ok\')"' },
-  }));
-  run('npm', ['pack', '--ignore-scripts', '--pack-destination', assets], sentinelSource);
+  packLifecycleSentinel(assets);
   const sentinel = join(consumer, 'node_modules/paperclip-verification-lifecycle-sentinel/lifecycle-ran');
   const consumerUid = process.getuid();
   const isolated = (command, options = {}) => run('docker', grokConsumerDockerArgs({ assets, consumer, cache, uid: consumerUid, gid: process.getgid(), command, ...options }));
@@ -174,6 +214,7 @@ try {
   }
   const tarballHashes = tarballs.map(path => ({ name: basename(path), sha256: sha256(readFileSync(path)) }));
   console.log(JSON.stringify({ schema: 'paperclip.grok.public-npm-install.v1', sourceRevision, releaseVersion, lifecycleScriptsEnabled: true, lifecycleSentinelVerified: true, lifecycleNetwork: 'none', consumerImage: GROK_PUBLIC_INSTALL_IMAGE, consumerUid, consumerLockPreserved: true, consumerLockSha256: sha256(consumerLock), cleanNpmInstall: true, packageCount: needed.size + 1, tarballs: tarballHashes, ...cliReceipt, builtinLauncherPresent: true, separateGrokPackage: false, npmProvisionedBinary: false, missingPrerequisiteRejected: true, provisionedBinaryVerified: true, commandLeaseVerified: true, providerCalls: 0 }));
+  }
 } finally {
   const cleanupErrors = [];
   for (const owner of [offlineProbeStarted && offlineOwner, browserNetworkCreated && browserOwner].filter(Boolean)) {

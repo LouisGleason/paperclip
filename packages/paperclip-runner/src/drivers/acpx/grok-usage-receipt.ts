@@ -65,7 +65,11 @@ export function createGrokUsageCapture(activeTurn: () => ActiveTurn | null) {
         scope.sent = true;
         return;
       }
-      if (direction !== "inbound" || message.method !== "_x.ai/session/update" || Object.hasOwn(message, "id")
+      // Grok sends live usage on session_notification. session/update is its
+      // persistence/replay stream and cannot settle the current admitted turn.
+      const meta = object(params._meta);
+      if (direction !== "inbound" || message.method !== "_x.ai/session_notification" || Object.hasOwn(message, "id")
+        || Object.hasOwn(meta, "isReplay") && meta.isReplay !== false
         || !scope?.sent || active !== scope.owner || active.signal.aborted || params.sessionId !== active.sessionId) return;
       const update = object(params.update);
       if (update.sessionUpdate !== "turn_completed") return;

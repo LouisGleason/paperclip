@@ -30,7 +30,7 @@ const HANDLE: AcpRuntimeHandle = {
 };
 
 describe("Codex ACPX runtime adapter", () => {
-  it("persists Grok's terminal receipt after ACPX saves the prepared User before sending its prompt", async () => {
+  it("persists only Grok's live terminal receipt after ACPX saves the prepared User before sending its prompt", async () => {
     const runtime = fakeRuntime(), pending = pendingExtensionTurn("turn-1");
     vi.mocked(runtime.startTurn).mockReturnValue(pending.turn);
     let created!: AcpRuntimeOptions;
@@ -49,17 +49,24 @@ describe("Codex ACPX runtime adapter", () => {
     await created.sessionStore!.save({ ...persisted, messages: [{ User: { id: "current", content: [] } }] });
     await created.sessionStore!.save({ ...persisted, lastRequestId: "turn-1" });
     created.onAcpMessage!("outbound", { method: "session/prompt", params: { sessionId: "backend-1" } });
-    created.onAcpMessage!("inbound", { method: "_x.ai/session/update", params: { sessionId: "backend-1", update: {
+    // Numeric-only projection of the qualified 1.0.13 failure receipt, with
+    // synthetic identities. Its persisted stream is not a live notification.
+    const terminal = {
       sessionUpdate: "turn_completed", prompt_id: "11111111-1111-1111-1111-111111111111",
-      usage: { inputTokens: 12, outputTokens: 5, totalTokens: 17, cachedReadTokens: 2,
-        cacheCreationTokens: 0, reasoningTokens: 3, costUsdTicks: 1000000000 },
-    } } });
+      usage: { inputTokens: 413063, outputTokens: 2748, totalTokens: 415811, cachedReadTokens: 381440,
+        cacheCreationTokens: 0, reasoningTokens: 1055, costUsdTicks: 2767840000 },
+    };
+    created.onAcpMessage!("inbound", { method: "_x.ai/session/update", params: { sessionId: "backend-1", update: terminal } });
+    await created.sessionStore!.save({ ...persisted, lastRequestId: "turn-1", messages: [{ User: { id: "current", content: [] } }] });
+    expect(persisted.request_token_usage).toEqual({});
+    expect(persisted.cumulative_cost).toBeUndefined();
+    created.onAcpMessage!("inbound", { method: "_x.ai/session_notification", params: { sessionId: "backend-1", update: terminal } });
     await created.sessionStore!.save({ ...persisted, lastRequestId: "turn-1", messages: [{ User: { id: "current", content: [] } }] });
     pending.settle(); await turn.result;
     expect(await port.getStatus()).toMatchObject({ lastRequestId: "turn-1",
-      usageCost: { amount: 0.1, currency: "USD" },
-      requestTokenUsage: { current: { input_tokens: 10, output_tokens: 5,
-        cache_read_input_tokens: 2, cache_creation_input_tokens: 0, thought_tokens: 0 } } });
+      usageCost: { amount: 0.276784, currency: "USD" },
+      requestTokenUsage: { current: { input_tokens: 31623, output_tokens: 2748,
+        cache_read_input_tokens: 381440, cache_creation_input_tokens: 0, thought_tokens: 0 } } });
     await port.close({ reason: "receipt fixture complete" });
   });
   it("rejects forged permission session identifiers before delegating or applying full-auto policy", async () => {

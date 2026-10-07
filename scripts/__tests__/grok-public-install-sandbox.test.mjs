@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { GROK_PUBLIC_INSTALL_IMAGE, GROK_PUBLIC_INSTALL_LIFECYCLE, grokConsumerDockerArgs } from '../grok-public-install-sandbox.mjs';
-import { inspectInstalledUi } from '../../tests/release-smoke/installed-cli-probe.mjs';
+import { inspectInstalledUi, installedProbePaths } from '../../tests/release-smoke/installed-cli-probe.mjs';
 
 const paths = { assets: '/private/staging/assets', consumer: '/private/staging/consumer', cache: '/private/staging/cache', uid: 1001, gid: 1001 };
 const values = (args, flag) => args.flatMap((value, index) => value === flag ? [args[index + 1]] : []);
@@ -76,12 +76,30 @@ test('only the optional browser fixture receives an owned internal network and l
   }
 });
 
+test('portable installed probe preserves Linux defaults and requires explicit owned paths and loopback', () => {
+  assert.deepEqual(installedProbePaths(), { consumer: '/consumer', dataDirectory: '/tmp/paperclip-installed-smoke',
+    readyPath: '/tmp/paperclip-installed-smoke-ready.json', base: 'http://127.0.0.1:3100' });
+  const privatePaths = { consumer: '/private/tmp/installed/consumer', dataDirectory: '/private/tmp/installed/state',
+    readyPath: '/private/tmp/installed/ready.json', base: 'http://127.0.0.1:39919' };
+  assert.deepEqual(installedProbePaths(privatePaths), privatePaths);
+  for (const base of ['http://localhost:39919', 'http://0.0.0.0:39919', 'https://example.com:39919', 'http://127.0.0.1:39919/path']) {
+    assert.throws(() => installedProbePaths({ ...privatePaths, base }), /loopback/);
+  }
+  for (const consumer of ['relative', '/', '/private/tmp/installed/../consumer']) {
+    assert.throws(() => installedProbePaths({ ...privatePaths, consumer }), /Invalid installed probe/);
+  }
+  assert.throws(() => installedProbePaths({ ...privatePaths, command: 'external' }), /Unknown installed probe/);
+});
+
 test('installed UI readiness checks a real HTTP response, exact serving commit, and installed asset bytes', async () => {
   const root = await mkdtemp(join(tmpdir(), 'paperclip-install-ui-test-'));
   const sourceRevision = 'a'.repeat(40), script = 'export const installed = true;';
-  let commit = sourceRevision, servedScript = script;
+  let commit = sourceRevision, servedScript = script, startingResponses = 1, healthRequests = 0;
   const server = createServer((request, response) => {
-    if (request.url === '/api/health') response.end(JSON.stringify({ status: 'ok', commit }));
+    if (request.url === '/api/health') {
+      healthRequests += 1;
+      response.end(JSON.stringify({ status: healthRequests <= startingResponses ? 'starting' : 'ok', commit }));
+    }
     else if (request.url === '/onboarding') { response.setHeader('Content-Type', 'text/html'); response.end('<div id="root"></div><script src="/assets/installed.js"></script>'); }
     else if (request.url === '/assets/installed.js') response.end(servedScript);
     else { response.statusCode = 404; response.end(); }
@@ -92,6 +110,7 @@ test('installed UI readiness checks a real HTTP response, exact serving commit, 
     server.listen(0, '127.0.0.1'); await once(server, 'listening');
     const options = { base: `http://127.0.0.1:${server.address().port}`, server: root, sourceRevision, timeoutMs: 500 };
     const receipt = await inspectInstalledUi(options);
+    assert.equal(healthRequests, 2, 'HTTP 200 during startup cannot establish installed runtime readiness');
     assert.equal(receipt.servingCommit, sourceRevision);
     assert.equal(receipt.installedUiAssetsPassed, true);
     assert.equal(receipt.assets[0].bytes, Buffer.byteLength(script));
@@ -99,6 +118,8 @@ test('installed UI readiness checks a real HTTP response, exact serving commit, 
     await assert.rejects(inspectInstalledUi(options), /serving commit/);
     commit = sourceRevision; servedScript = 'export const substituted = true;';
     await assert.rejects(inspectInstalledUi(options), /must be the installed file/);
+    startingResponses = Infinity;
+    await assert.rejects(inspectInstalledUi(options), /Installed CLI server did not become ready/);
   } finally {
     server.closeAllConnections();
     await new Promise(resolve => server.close(resolve));
