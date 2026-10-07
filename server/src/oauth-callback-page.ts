@@ -8,8 +8,8 @@ export function escapeCallbackHtml(value: string): string {
 export function oauthCallbackPage(input: {
   title: string;
   description: string;
-  actionHref: string;
-  actionLabel: string;
+  actionHref?: string;
+  actionLabel?: string;
   state?: "success" | "error" | "pending";
   head?: string;
   script?: string;
@@ -19,7 +19,7 @@ export function oauthCallbackPage(input: {
 :root{color-scheme:light dark;--bg:#faf9f6;--card:#fff;--text:#242320;--muted:#68665f;--line:#e5e3dc;--accent:#345d45}
 @media(prefers-color-scheme:dark){:root{--bg:#191a18;--card:#22231f;--text:#f2f1eb;--muted:#b1b2a8;--line:#3b3d35;--accent:#a5d3b4}}
 *{box-sizing:border-box}body{margin:0;min-height:100svh;display:grid;place-items:center;padding:24px;background:var(--bg);color:var(--text);font:16px/1.6 system-ui,sans-serif}main{width:100%;max-width:460px;padding:36px;background:var(--card);border:1px solid var(--line);border-radius:16px}.brand{font-weight:650;letter-spacing:-.03em;margin-bottom:36px}.mark{display:inline-block;margin-right:8px;color:var(--accent)}.status{display:grid;place-items:center;width:44px;height:44px;border:1px solid var(--line);border-radius:50%;font-size:24px;color:var(--accent)}h1{font-size:26px;line-height:1.25;letter-spacing:-.025em;margin:20px 0 12px}p{color:var(--muted);margin:0 0 28px}a{display:inline-block;background:var(--text);color:var(--card);padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:600}a:focus-visible{outline:3px solid var(--accent);outline-offset:4px}.note{font-size:13px;margin:24px 0 0}@media(max-width:480px){main{padding:24px}}
-</style></head><body><main><div class="brand"><span class="mark" aria-hidden="true">↗</span>Paperclip</div><div class="status" aria-hidden="true">${input.state === "success" ? "✓" : input.state === "error" ? "!" : "…"}</div><h1>${escape(input.title)}</h1><p>${escape(input.description)}</p><a href="${escape(input.actionHref)}">${escape(input.actionLabel)}</a><p class="note">You can close this window and return to Paperclip.</p></main>${input.script ? `<script>${input.script}</script>` : ""}</body></html>`;
+</style></head><body><main><div class="brand"><span class="mark" aria-hidden="true">↗</span>Paperclip</div><div class="status" aria-hidden="true">${input.state === "success" ? "✓" : input.state === "error" ? "!" : "…"}</div><h1>${escape(input.title)}</h1><p>${escape(input.description)}</p>${input.actionHref && input.actionLabel ? `<a href="${escape(input.actionHref)}">${escape(input.actionLabel)}</a>` : ""}<p class="note">You can close this window and return to Paperclip.</p></main>${input.script ? `<script>${input.script}</script>` : ""}</body></html>`;
 }
 
 const callbackPaths = new Set([

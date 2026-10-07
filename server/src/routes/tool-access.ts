@@ -224,7 +224,8 @@ export function oauthCallbackInterstitialHtml(continuePath: string): string {
   // two racing follow-ups would let the loser render an expired-state error.
   return oauthCallbackPage({
     title: "Finishing connection", description: "Please wait while Paperclip finishes connecting your app.",
-    actionHref: continuePath, actionLabel: "Continue to Paperclip", state: "pending",
+    // No link: a second navigation can race the single-use automatic refresh.
+    state: "pending",
     head: `<meta http-equiv="refresh" content="0;url=${attribute}">`,
   });
 }
