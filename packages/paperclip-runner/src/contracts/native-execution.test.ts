@@ -344,7 +344,7 @@ describe("NativeExecutionInputV1", () => {
       profile: provider.profile,
     });
     expect(parseNativeExecutionInput(parsed)).toEqual(parsed);
-    for (const unsupportedVersion of [0, 17, 1.5, "14", null]) {
+    for (const unsupportedVersion of [0, Math.max(16, QUALIFIED_ACPX_PROFILES.pi.agentProfileVersion) + 1, 1.5, "14", null]) {
       expect(() => parseNativeExecutionInput({
         ...input,
         session: { ...input.session, driverKind: "acpx_runtime" },
