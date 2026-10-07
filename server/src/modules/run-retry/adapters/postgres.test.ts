@@ -29,7 +29,7 @@ describePostgres("run-retry postgres adapter", () => {
   let postgres: Awaited<ReturnType<typeof startEmbeddedPostgresTestDatabase>> | null = null;
   const now = new Date("2026-04-20T12:00:00.000Z");
 
-  function makeAdapter() {
+  function makeAdapter(recordWorkspaceQuarantineActivity: RunRetryAdapterHost["recordWorkspaceQuarantineActivity"] = async () => {}) {
     const host: RunRetryAdapterHost = {
       evaluateAgentInvokability: async (agent) => agent.status === "active"
         ? { invokable: true }
@@ -39,7 +39,7 @@ describePostgres("run-retry postgres adapter", () => {
       conversationContinuationPolicy: "continue_conversation_v1",
       normalizeRetryContext: (context) => context,
       readContinuationAttempt: () => 0,
-      recordWorkspaceQuarantineActivity: async () => {},
+      recordWorkspaceQuarantineActivity,
     };
     return createPostgresRunRetryAdapter(db, host);
   }
@@ -116,6 +116,21 @@ describePostgres("run-retry postgres adapter", () => {
     return { companyId, agentId, runId, issueId, run };
   }
 
+  async function seedWorkspace(source: Awaited<ReturnType<typeof seedSource>>) {
+    const projectId = randomUUID();
+    const workspaceId = randomUUID();
+    await db.insert(projects).values({ id: projectId, companyId: source.companyId, name: "Project", status: "in_progress" });
+    await db.insert(executionWorkspaces).values({
+      id: workspaceId, companyId: source.companyId, projectId, sourceIssueId: source.issueId,
+      mode: "isolated_workspace", strategyType: "git_worktree", name: "failed-workspace",
+      status: "active", cwd: "/workspace/failed-workspace", baseRef: "origin/master",
+      branchName: "failed-workspace", providerType: "git_worktree", providerRef: "/workspace/failed-workspace",
+      metadata: { existing: true },
+    });
+    await db.update(issues).set({ projectId, executionWorkspaceId: workspaceId }).where(eq(issues.id, source.issueId));
+    return workspaceId;
+  }
+
   function writerInput(source: Awaited<ReturnType<typeof seedSource>>, overrides: Record<string, unknown> = {}) {
     return {
       companyId: source.companyId,
@@ -165,6 +180,35 @@ describePostgres("run-retry postgres adapter", () => {
       .toMatchObject({ invokable: false, reason: "paused" });
   });
 
+  it("rejects an agent from another company without changing the agent", async () => {
+    const source = await seedSource();
+    const other = await seedCompany();
+    const [agent] = await db.select().from(agents).where(eq(agents.id, source.agentId));
+    if (!agent) throw new Error("The agent is missing.");
+
+    await expect(makeAdapter().checkAgentInvokability({ companyId: other.companyId, now, agent }))
+      .rejects.toThrow("The agent company does not match the retry company.");
+    expect(await db.select().from(agents).where(eq(agents.id, source.agentId))).toEqual([agent]);
+  });
+
+  it("rejects a run from another company before it creates a retry or quarantines a workspace", async () => {
+    const source = await seedSource();
+    const other = await seedCompany();
+    const workspaceId = await seedWorkspace(source);
+    const [workspaceBefore] = await db.select().from(executionWorkspaces).where(eq(executionWorkspaces.id, workspaceId));
+    const [issueBefore] = await db.select().from(issues).where(eq(issues.id, source.issueId));
+
+    await expect(makeAdapter().scheduleRetry(writerInput(source, {
+      companyId: other.companyId,
+      workspaceValidationRetryPayload: { executionWorkspaceId: workspaceId, reason: "invalid_branch" },
+      shouldQuarantineWorkspaceForRetry: true,
+    }))).rejects.toThrow("The run company does not match the retry company.");
+    expect(await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.retryOfRunId, source.runId))).toHaveLength(0);
+    expect(await db.select().from(agentWakeupRequests).where(eq(agentWakeupRequests.agentId, source.agentId))).toHaveLength(0);
+    expect(await db.select().from(executionWorkspaces).where(eq(executionWorkspaces.id, workspaceId))).toEqual([workspaceBefore]);
+    expect(await db.select().from(issues).where(eq(issues.id, source.issueId))).toEqual([issueBefore]);
+  });
+
   it("reuses a generic successor for the same company and predecessor", async () => {
     const source = await seedSource();
     const adapter = makeAdapter();
@@ -209,17 +253,7 @@ describePostgres("run-retry postgres adapter", () => {
 
   it("quarantines the failed workspace and detaches it from the issue", async () => {
     const source = await seedSource();
-    const projectId = randomUUID();
-    const workspaceId = randomUUID();
-    await db.insert(projects).values({ id: projectId, companyId: source.companyId, name: "Project", status: "in_progress" });
-    await db.insert(executionWorkspaces).values({
-      id: workspaceId, companyId: source.companyId, projectId, sourceIssueId: source.issueId,
-      mode: "isolated_workspace", strategyType: "git_worktree", name: "failed-workspace",
-      status: "active", cwd: "/workspace/failed-workspace", baseRef: "origin/master",
-      branchName: "failed-workspace", providerType: "git_worktree", providerRef: "/workspace/failed-workspace",
-      metadata: { existing: true },
-    });
-    await db.update(issues).set({ projectId, executionWorkspaceId: workspaceId }).where(eq(issues.id, source.issueId));
+    const workspaceId = await seedWorkspace(source);
     const result = await makeAdapter().scheduleRetry(writerInput(source, {
       workspaceValidationRetryPayload: { executionWorkspaceId: workspaceId, reason: "invalid_branch" },
       shouldQuarantineWorkspaceForRetry: true,
@@ -229,6 +263,29 @@ describePostgres("run-retry postgres adapter", () => {
     const [issue] = await db.select().from(issues).where(eq(issues.id, source.issueId));
     expect(workspace?.status).toBe("archived");
     expect(issue?.executionWorkspaceId).toBeNull();
+  });
+
+  it("rolls back workspace quarantine and the retry when the activity write fails", async () => {
+    const source = await seedSource();
+    const workspaceId = await seedWorkspace(source);
+    const [workspaceBefore] = await db.select().from(executionWorkspaces).where(eq(executionWorkspaces.id, workspaceId));
+    const [issueBefore] = await db.select().from(issues).where(eq(issues.id, source.issueId));
+    let activityAttempted = false;
+    const adapter = makeAdapter(async () => {
+      activityAttempted = true;
+      throw new Error("Activity write failed.");
+    });
+
+    await expect(adapter.scheduleRetry(writerInput(source, {
+      workspaceValidationRetryPayload: { executionWorkspaceId: workspaceId, reason: "invalid_branch" },
+      shouldQuarantineWorkspaceForRetry: true,
+    }))).rejects.toThrow("Activity write failed.");
+    expect(activityAttempted).toBe(true);
+    expect(await db.select().from(executionWorkspaces).where(eq(executionWorkspaces.id, workspaceId))).toEqual([workspaceBefore]);
+    expect(await db.select().from(issues).where(eq(issues.id, source.issueId))).toEqual([issueBefore]);
+    expect(await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.retryOfRunId, source.runId))).toHaveLength(0);
+    expect(await db.select().from(agentWakeupRequests).where(eq(agentWakeupRequests.agentId, source.agentId))).toHaveLength(0);
+    expect(await db.select().from(activityLog).where(eq(activityLog.companyId, source.companyId))).toHaveLength(0);
   });
 
   it("transfers the issue execution lock to the retry run", async () => {
