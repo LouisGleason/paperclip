@@ -6059,7 +6059,7 @@ describe("company portability", () => {
     }, "user-1");
 
     expect(imported.agents).toEqual([expect.objectContaining({ action: "created", id: "agent-created" })]);
-    expect(agentSvc.create).toHaveBeenCalledWith("company-1", expect.objectContaining({ runner, adapterType, adapterConfig: expect.objectContaining(adapterConfig) }));
+    expect(agentSvc.create).toHaveBeenCalledWith("company-1", expect.objectContaining({ runner, adapterType, adapterConfig: expect.objectContaining(adapterConfig) }), { createdByUserId: "user-1" });
   });
 
   it("uses creation defaults for a runner-omitted package", async () => {
@@ -6084,7 +6084,7 @@ describe("company portability", () => {
 
     expect(agentSvc.create).toHaveBeenCalledWith("company-1", expect.objectContaining({
       runner: "paperclip", adapterType: "paperclip_runner", adapterConfig: expect.objectContaining({ provider: "codex", model: "gpt-5.6-sol" }),
-    }));
+    }), { createdByUserId: "user-1" });
   });
 
   it.each([
@@ -6145,7 +6145,7 @@ describe("company portability", () => {
     };
 
     await portability.importBundle(request, "user-1");
-    expect(agentSvc.create).toHaveBeenCalledWith("company-1", expect.objectContaining({ adapterType: "paperclip_runner", runner: "paperclip" }));
+    expect(agentSvc.create).toHaveBeenCalledWith("company-1", expect.objectContaining({ adapterType: "paperclip_runner", runner: "paperclip" }), { createdByUserId: "user-1" });
 
     instanceSettingsSvc.getExperimental.mockResolvedValue({ enableNativeRunner: true });
     await portability.importBundle({
