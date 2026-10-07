@@ -12,6 +12,7 @@ export * from "./contracts/native-session-backend.js";
 export * from "./contracts/question-set.js";
 export * from "./contracts/runtime-context.js";
 export * from "./contracts/types.js";
+export * from "./contracts/user-attachments.js";
 export * from "./backends/harness-driver-backend.js";
 export { describeRunnerdNativeSessionBackend } from "./backends/codex-native-backend.js";
 export { createOpenCodeNativeSessionBackend } from "./backends/opencode-native-backend.js";

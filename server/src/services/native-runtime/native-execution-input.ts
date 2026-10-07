@@ -7,6 +7,7 @@ import type {
   NativeAcpxPermissionMode,
   NativeCodexApprovalPolicy,
   NativeExecutionInputV5,
+  NativeExecutionInputV6,
   NativeCompletionSource,
   NativeInteractionResponseEnvelope,
   NativeOpenCodePermissionMode,
@@ -69,6 +70,7 @@ export function buildNativeExecutionInput(input: {
   normalizedSessionId: string | null;
   provider?: "codex" | "opencode" | "claude_managed" | "aws_agentcore" | "acpx";
   acpxAgent?: NativeAcpxAgent;
+  hermesConnectionFingerprint?: string;
   codexApprovalPolicy?: NativeCodexApprovalPolicy;
   codexReasoningEffort?: string;
   opencodePermissionMode?: NativeOpenCodePermissionMode;
@@ -101,7 +103,7 @@ export function buildNativeExecutionInput(input: {
     sources?: Array<{ id: string; source: NativeCompletionSource }>;
   };
   runtimeContext: NativeRuntimeContextSnapshot;
-}): NativeExecutionInputV5 {
+}): NativeExecutionInputV5 | NativeExecutionInputV6 {
   if (input.issue.workMode !== "standard" && input.issue.workMode !== "planning" && input.issue.workMode !== "ask") {
     throw new Error("native_execution_input_invalid: issue work mode must be standard, planning, or ask");
   }
@@ -191,7 +193,7 @@ export function buildNativeExecutionInput(input: {
     ? verifiedCompletionSources(input.turnContext, input.completionContract.sources ?? [])
     : [];
   return parseNativeExecutionInput({
-    schema: "paperclip.native-execution-input.v5",
+    schema: input.acpxAgent === "hermes" ? "paperclip.native-execution-input.v6" : "paperclip.native-execution-input.v5",
     ...((input.initialCommunicationGuidance || input.freshSessionHandoff) ? {
       initialCommunicationGuidance: [input.initialCommunicationGuidance, input.freshSessionHandoff].filter(Boolean).join("\n\n"),
     } : {}),
@@ -265,6 +267,7 @@ export function buildNativeExecutionInput(input: {
       : input.provider === "acpx"
       ? {
           kind: "acpx",
+          ...(input.acpxAgent === "hermes" ? { connectionFingerprint: input.hermesConnectionFingerprint } : {}),
           agent: acpxProfile!.agent,
           model: input.model,
           permissionMode: input.acpxPermissionMode ?? "approve-all",

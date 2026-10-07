@@ -32,6 +32,8 @@ export type {
   NativeExecutionInput,
   NativeExecutionInputV4,
   NativeExecutionInputV5,
+  NativeExecutionInputV6,
+  NativeUserAttachment,
   NativeCompletionSource,
   NativeCompletionSources,
   NativeInteractionResponseEnvelope,
