@@ -6,7 +6,7 @@ import { expect, it, vi } from "vitest";
 import { piNativeTasks, PI_NATIVE_MEMORY_PARENT_SEED_PATH, PI_NATIVE_MEMORY_PARENT_SEED_CONTENT } from "./pi-native-cases.js";
 import { runPiNativeFlow } from "./pi-native-flow.js";
 import * as remoteFixtures from "./remote-native-fixtures.js";
-const browser = vi.hoisted(() => ({ create: (_value: any) => {} }));
+const browser = vi.hoisted(() => ({ create: (_value: any) => ({ submittedAtMs: Date.now(), issueId: "issue-fixture" }) }));
 vi.mock("./user-actions.js", () => ({ createTaskThroughUi: async (value: unknown) => browser.create(value) }));
 vi.mock("@playwright/test", () => ({ expect: (value: unknown, message?: string) => ({ toBe: (expected: unknown) => expect(value, message).toBe(expected), toBeVisible: async () => {} }) }));
 
@@ -26,8 +26,10 @@ it.each([
     ? { complete: false, incompleteReasons: ["unwatched_directory"] } as any : originalDiagnostic(error));
   browser.create = value => {
     expect(parentSeeded).toBe(true);
+    expect(value.requireExplicitTitle).toBe(true);
     expect(value.prompt).toMatch(/^Read only bootstrap-/); expect(value.prompt).not.toContain("forbidden");
-    const n = issues.length + 1; issues.push({ id: `issue-${n}`, title: value.title, status: "in_progress" }); runs.push({ id: `run-${n}`, status: "running", runtimeMode: "native", createdAt: `2026-09-29T00:00:0${n}Z` });
+    const n = issues.length + 1; issues.push({ id: `issue-${n}`, title: "Provider-generated task name", companyId: "company", assigneeAgentId: "agent", status: "in_progress" }); runs.push({ id: `run-${n}`, status: "running", runtimeMode: "native", createdAt: `2026-09-29T00:00:0${n}Z` });
+    return { submittedAtMs: Date.now(), issueId: `issue-${n}` };
   };
   const api = { request: { put: async (path: string, input: any) => {
     expect(path).toBe("/api/agents/agent/instructions-bundle/file");
