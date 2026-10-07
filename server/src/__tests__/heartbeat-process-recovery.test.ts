@@ -5,6 +5,7 @@ import { legacyDispositionFingerprint, LEGACY_DISPOSITION_REPAIR_INSTRUCTION } f
 import * as controllerLeases from "../services/legacy-controller-lease.js";
 import * as instructionWorkingCopies from "../services/agent-instruction-working-copies.js";
 import * as runEvents from "../services/heartbeat-run-events.js";
+import { waitForPendingRunFailureReports } from "../services/run-failure-report.js";
 import { instanceSettingsService } from "../services/instance-settings.js";
 import { createHash, randomUUID } from "node:crypto";
 import { terminalizeLegacyExecution } from "../services/legacy-execution-recovery.js";
@@ -2716,6 +2717,10 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
       stopReason: "process_lost",
       timeoutConfigured: false,
       timeoutFired: false,
+      processLossDiagnostic: {
+        pidRecorded: true, groupRecorded: false, localCheck: "not_observed_alive", retryEligible: true,
+        observerUptimeMs: expect.any(Number), runPredatesObserver: true,
+      },
     });
     // The legacy engine writes this terminal status through the same
     // guarded emitter that reports a genuine failed transition to Sentry.
@@ -2725,6 +2730,10 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
         runId,
         errorCode: "process_lost",
         runStatus: "failed",
+        diagnostics: expect.objectContaining({ execution: expect.objectContaining({
+          processLossPidRecorded: true, processLossGroupRecorded: false, processLossLocalCheck: "not_observed_alive",
+          processLossRetryEligible: true, processLossRunPredatesObserver: true,
+        }) }),
       }),
     );
     const [action] = await db
@@ -5688,6 +5697,9 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
       );
     });
     expect(configurationComment).toBeTruthy();
+    await heartbeat.waitForRunExecutionDrain(runId);
+    await waitForPendingRunFailureReports();
+    expect(mockCaptureRunFailure.mock.calls.filter(([event]) => event.runId === runId)).toEqual([]);
   });
 
   it("queues one finish-handoff wake when a successful run leaves in-progress work without a next action", async () => {

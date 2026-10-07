@@ -1008,7 +1008,7 @@ describe("agent skill routes", () => {
           }),
         }),
       }),
-      { runnerResolved: true, claudeLogin: { storedSessionId: null, ownerUserId: "local-board", applyExistingWithoutClaim: false } },
+      { runnerResolved: true, createdByUserId: "local-board", claudeLogin: { storedSessionId: null, ownerUserId: "local-board", applyExistingWithoutClaim: false } },
     );
     expect(mockTrackAgentCreated).toHaveBeenCalledWith(
       expect.anything(),
@@ -1060,7 +1060,7 @@ describe("agent skill routes", () => {
       expect.objectContaining({
         role: "security",
       }),
-      { runnerResolved: true, claudeLogin: { storedSessionId: null, ownerUserId: "local-board", applyExistingWithoutClaim: false } },
+      { runnerResolved: true, createdByUserId: "local-board", claudeLogin: { storedSessionId: null, ownerUserId: "local-board", applyExistingWithoutClaim: false } },
     );
     expect(mockTrackAgentCreated).toHaveBeenCalledWith(
       expect.anything(),
@@ -1514,6 +1514,7 @@ describe("agent skill routes", () => {
       }),
       {
         runnerResolved: true,
+        createdByUserId: "local-board",
         claudeLogin: {
           storedSessionId: null,
           ownerUserId: "local-board",

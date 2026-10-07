@@ -543,6 +543,32 @@ Decision-desk triage uses company-scoped sidecars rather than adding queue field
 - `decision_archive_notification_outbox` records one retry-safe origin-agent notification per source/archive version. The 90-day internal sweeper archives only unkept rows and coalesces delivery per origin agent.
 - Queue membership never grants source visibility. Item writes re-authorize the referenced source, and queue reads re-authorize every member before returning rows or counts.
 
+## 7.17 Personal primary agent (2026-10-07)
+
+`user_company_preferences` has a unique company/user key, nullable `primary_agent_id`,
+and sticky `primary_agent_initialized` flag. GET/PUT
+`/api/companies/:companyId/primary-agent/me` derives the human identity from auth,
+checks company access and agent visibility, rejects agent actors, and audits changes.
+PUT accepts an approved, non-terminated agent; choosing a previously left agent
+rejoins it under the existing membership rules. There is no explicit removal UI or
+nullable PUT. Leaving, termination, and deletion clear the reference without
+allowing a later creation to initialize it again. Pausing and errors retain it.
+
+Initialization runs in the human-attributed creation transaction, including
+onboarding, with uniqueness arbitrating concurrent creation. System provisioning
+and agent-authored hires cannot initialize a human preference. Migration backfill
+uses the earliest attributable human creation, preserving empty initialized state
+when the original is gone, terminated, or left; unknown ownership stays unset.
+
+The profile is the only setting surface. Replacing a primary requires the reviewed
+avatar-to-avatar confirmation. A first choice has no modal. Only the profile and
+roster show the accessible crown; the Agents sidebar pins the primary first without
+duplication. Tasks preserve explicit/draft assignments, then choose a recent
+eligible assignee, the eligible primary, or the existing fallback. Chat preserves
+a valid recent conversation, then opens the primary, then retains its chooser.
+Navigation alone does not create an execution. Failed preference mutations restore
+the previous state and offer retry. Preferences and caches are company/user scoped.
+
 ## 8. State Machines
 
 ## 8.1 Agent Status
@@ -1527,6 +1553,20 @@ for contracts, recovery behavior, Storybook, and acceptance workflows.
   - emit high-priority activity event
 
 Board may override by raising budget or explicitly resuming agent.
+
+Native runs retain final usage receipts during a bounded accounting-only drain
+after a governed wait cancels provider work. This does not accept late messages,
+tool calls, or new completion proposals. Missing or incomplete receipts continue
+to block budget admission.
+A controller that detaches for server restart loses checkpoint and completion
+write authority. A closing event stream is not proof that the governed run
+finished; the replacement controller must adopt and settle the original run.
+
+Complete direct Anthropic API receipts for `claude-sonnet-5` can use a versioned
+list-price estimate when the provider supplies no run price. The receipt records
+the rates and assumptions. Aggregate cache writes use the one-hour rate because
+their TTL is unknown. Estimates are not invoices. Other models, billers, unknown
+billing types, and incomplete receipts remain unpriced.
 
 ## 13.3 Cost Event Ingestion
 

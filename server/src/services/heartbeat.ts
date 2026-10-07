@@ -1,3 +1,4 @@
+import { CONFIGURED_ENVIRONMENT_KEYS, configuredEnvironmentProjection } from "../vendor/paperclip-runner/index.js";
 import { activeIssueInteractionCondition, TASK_QUESTION_GUIDANCE } from "./issue-question-context.js";
 import { createAgentIdentityRedactor } from "./agent-identity-redaction.js";
 import { agentIdentityService, supportsManagedAgentIdentity } from "./agent-identity.js";
@@ -350,6 +351,8 @@ import {
   emitAgentTaskRunById,
 } from "./agent-task-run-telemetry.js";
 import { reportRunFailure } from "./run-failure-report.js";
+import { performance } from "node:perf_hooks";
+import { buildProcessLossDiagnostic } from "./process-loss-diagnostics.js";
 import { collectRunFailureSecretValues, type RunFailureReportOptions } from "./run-failure-diagnostics.js";
 import { companySkillService } from "./company-skills.js";
 import { budgetService, withCurrentBudgetEnforcement, type BudgetEnforcementScope } from "./budgets.js";
@@ -1495,6 +1498,7 @@ const LOW_TRUST_SENSITIVE_ENV_KEY_RE =
 // 3. Any other PAPERCLIP_*-named binding is user data and flows through to
 //    the run env like any non-prefixed binding.
 const FORBIDDEN_ENV_BINDING_KEYS = new Set([
+  CONFIGURED_ENVIRONMENT_KEYS,
   "PAPERCLIP_AGENT_KEY_ID", "PAPERCLIP_AGENT_PUBLIC_KEY", "PAPERCLIP_AGENT_PRIVATE_KEY",
   "PAPERCLIP_RUNNER_NETWORK_ACCESS",
   "PAPERCLIP_RUNNER_NETWORK_ROOTS",
@@ -1950,6 +1954,11 @@ export async function resolveExecutionRunAdapterConfig(input: {
   }
   return {
     resolvedConfig,
+    // Capture resolved task values before provider credential injection or host
+    // inheritance. Native-only launch limits are checked at native dispatch.
+    configuredTaskEnvironment: Object.fromEntries(
+      Object.entries(parseObject(resolvedConfig.env)).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+    ),
     secretKeys,
     secretManifest: [
       ...(environmentEnvResolution.manifest ?? []),
@@ -8158,9 +8167,11 @@ export async function buildPaperclipWakePayload(input: {
         .then((rows) => rows[0] ?? null)
     : null;
   const recoveryEvidence = parseObject(recoveryAction?.evidence);
-  const executionAlreadyReconciled =
-    recoveryAction?.status === "resolved" &&
-    Boolean(recoveryEvidence.executionReconciliation);
+  // A restored task resumes its deliverable, not the completed repair. A
+  // referenced settled/missing action must not fall back to a stale cause.
+  const recoveryStillActive = recoveryAction
+    ? ["active", "escalated"].includes(recoveryAction.status)
+    : !recoveryActionId && Boolean(recoveryCause);
   const originalAssigneeId =
     recoveryAction?.returnOwnerAgentId ??
     recoveryAction?.previousOwnerAgentId ??
@@ -8204,7 +8215,7 @@ export async function buildPaperclipWakePayload(input: {
     attachmentOmissions,
     externalChatProvider,
     recovery:
-      !executionAlreadyReconciled && (recoveryAction || recoveryCause)
+      recoveryStillActive
         ? {
             cause: recoveryAction?.cause ?? recoveryCause,
             failureSummary: readNonEmptyString(recoveryEvidence.failureSummary),
@@ -16872,17 +16883,25 @@ export function heartbeatService(
     if (promotion.outcome === "promoted") {
       applyRunDispatchPostCommitEffects(promotion.postCommitEffects);
     }
-    const promotedRow = await getIssueRetryRun(issue.companyId, issue.id, [
-      "queued",
-      "running",
-      "cancelled",
-    ]);
-    const scheduledRetry = promotedRow
-      ? summarizeIssueScheduledRetryRun(promotedRow)
-      : summarizeIssueScheduledRetryRun({
-          run: updated,
+    // Promotion can preserve this row as a cleanup wait. Read that exact run,
+    // not an older cancelled retry or the pre-promotion schedule.
+    const currentRun = await getRun(updated.id);
+    const scheduledRetry = currentRun
+      ? summarizeIssueScheduledRetryRun({
+          run: currentRun,
           agentName: scheduled.agentName,
-        });
+        })
+      : null;
+
+    if (currentRun?.status === "scheduled_retry") {
+      return {
+        outcome: "waiting" as const,
+        message: parseObject(currentRun.resultJson?.executionWait).cause === "execution_owner_active"
+          ? "Waiting for execution cleanup. Paperclip will retry automatically once cleanup finishes."
+          : "The retry remains scheduled. Paperclip will check again at the scheduled time.",
+        scheduledRetry,
+      };
+    }
 
     if (promotion.outcome === "promoted") {
       return {
@@ -16898,10 +16917,17 @@ export function heartbeatService(
         scheduledRetry,
       };
     }
+    if (currentRun && ["queued", "running"].includes(currentRun.status)) {
+      return {
+        outcome: "already_promoted" as const,
+        message: "Scheduled retry was already promoted",
+        scheduledRetry,
+      };
+    }
     return {
-      outcome: "already_promoted" as const,
-      message: "Scheduled retry was already promoted",
-      scheduledRetry,
+      outcome: "no_scheduled_retry" as const,
+      message: "No live scheduled retry exists for this issue",
+      scheduledRetry: null,
     };
   }
 
@@ -17630,11 +17656,16 @@ export function heartbeatService(
         companyId: run.companyId,
         expectedStatus: "queued",
       });
-      if (staleness.outcome === "cancelled") {
+      if (staleness.outcome === "cancelled" || staleness.outcome === "deferred") {
         applyRunDispatchPostCommitEffects(staleness.postCommitEffects);
         logger.info(
-          { runId: run.id, issueId, errorCode: staleness.errorCode },
-          "claimQueuedRun: cancelled stale queued run",
+          {
+            runId: run.id,
+            issueId,
+            outcome: staleness.outcome,
+            errorCode: staleness.outcome === "cancelled" ? staleness.errorCode : undefined,
+          },
+          "claimQueuedRun: withheld queued run at the execution gate",
         );
         return null;
       }
@@ -19591,6 +19622,13 @@ export function heartbeatService(
           monitorDispatchLostWithoutFutureWake);
       if (!(await revokeExpiredLegacyController(db, run))) continue;
       const baseMessage = buildProcessLossMessage(run);
+      const processLossDiagnostic = buildProcessLossDiagnostic({
+        run,
+        nowMs: Date.now(),
+        observerStartedAtMs: performance.timeOrigin,
+        checksPersistedChildLiveness,
+        retryEligible: shouldRetry,
+      });
       const conversationContinuationEligible = await runUsedConversationAdapter(db, run);
 
       const failureWrite = await setRunStatusFromLive(
@@ -19607,7 +19645,7 @@ export function heartbeatService(
               "failed",
               {
                 conversationContinuationEligible,
-                resultJson: parseObject(run.resultJson),
+                resultJson: { ...parseObject(run.resultJson), processLossDiagnostic },
                 errorCode: "process_lost",
                 errorMessage: shouldRetry
                   ? `${baseMessage}; retrying once`
@@ -21797,7 +21835,7 @@ export function heartbeatService(
           selectedEnvironmentForConfig?.driver ?? "local",
         );
 
-      const { resolvedConfig, secretKeys, secretManifest } =
+      const { resolvedConfig, configuredTaskEnvironment, secretKeys, secretManifest } =
         await resolveExecutionRunAdapterConfig({
           managedAiCredentials: Boolean(aiBinding),
           managedGitHubCredentials: !useHostGitHub,
@@ -24994,6 +25032,7 @@ export function heartbeatService(
                     managedAiCredentialIdentity: managedAiRuntime?.identity,
                     managedAiCredentialHome: managedAiRuntime ? String((managedAiRuntime.config.env as Record<string, unknown>).CODEX_HOME) : undefined,
                     runnerEnvironment: {
+                      ...configuredEnvironmentProjection(configuredTaskEnvironment),
                       ...buildNativeProviderEnvironment(
                         adapterEnv,
                         process.env,

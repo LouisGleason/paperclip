@@ -189,7 +189,7 @@ export function approvalService(db: Db) {
               spentMonthlyCents: 0,
               permissions: undefined,
               lastHeartbeatAt: null,
-            }, { runnerResolved: true });
+            }, { runnerResolved: true, createdByUserId: updated.requestedByAgentId ? null : updated.requestedByUserId });
             hireApprovedAgentId = created?.id ?? null;
           }
           if (hireApprovedAgentId) {
