@@ -153,6 +153,7 @@ import {
 import {
   enqueueChatRunMilestones,
   resolveChatRunPresentationAuthorizationReason,
+  CHAT_RUN_PRESENTATION_AUTHORIZATION_REASON,
 } from "../services/chat-run-publications.js";
 import {
   heartbeatService,
@@ -2192,7 +2193,7 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
       return { ...fixture, ...context, endpoint, principal, management };
     }
     it.each(["personal", "organization"] as const)(
-      "wizard persists a %s owner and resumes the same bound registration after a lost Cloud response",
+      "wizard persists a %s owner and resumes the same bound registration after a lost Cloud response and enrolled origin change",
       async (ownerType) => {
         const f = await seedCompany();
         const { service } = createService();
@@ -2203,17 +2204,18 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
         );
         let cloudRecord: Record<string, unknown> | undefined,
           loseResponse = true;
+        let browserOrigin = "http://127.0.0.1:3104";
         const githubApp = vi.fn(
           async ({ binding }: { binding: Record<string, unknown> }) => {
             if (!cloudRecord) cloudRecord = binding;
-            expect(binding).toEqual(cloudRecord);
+            expect({ ...binding, returnUri: cloudRecord.returnUri }).toEqual(cloudRecord);
             if (loseResponse) {
               loseResponse = false;
               throw new Error("Response lost");
             }
             return {
               id: binding.id,
-              returnOrigin: "http://127.0.0.1:3104",
+              returnOrigin: browserOrigin,
               expiresAt: new Date(Date.now() + 60_000).toISOString(),
               webhookUrl: "https://gateway.example.test/webhook",
               callbackUrls: {
@@ -2225,7 +2227,7 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
           },
         );
         const wizard = githubChatWizardService(db, {
-          origin: () => "http://127.0.0.1:3104",
+          origin: () => browserOrigin,
           connector: () =>
             ({
               githubAppsAvailable: async () => true,
@@ -2248,6 +2250,7 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
         await expect(wizard.start(bot.id, "owner-user", input)).rejects.toThrow(
           "Response lost",
         );
+        browserOrigin = "http://localhost:3104";
         const resumed = await wizard.start(bot.id, "owner-user", input);
         expect(resumed.state).toBe("create");
         const sessions = await db
@@ -2259,6 +2262,13 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
         expect(cloudRecord).toMatchObject({
           returnUri: "http://127.0.0.1:3104/api/chat-github/cloud/callback",
         });
+        expect(githubApp).toHaveBeenLastCalledWith(expect.objectContaining({
+          binding: expect.objectContaining({
+            id: cloudRecord!.id,
+            returnState: cloudRecord!.returnState,
+            returnUri: "http://localhost:3104/api/chat-github/cloud/callback",
+          }),
+        }));
         expect(cloudRecord).not.toHaveProperty("ownerType");
         expect(cloudRecord).not.toHaveProperty("agentId");
         expect(resumed.registration?.manifest).toMatchObject({
@@ -2282,6 +2292,57 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
         const current = await service.get(bot.id);
         expect(current.id).toBe(bot.id);
         expect(current.assignedAgentId).toBe(f.assignedAgentId);
+      },
+    );
+    it.each(["expired", "live", "claimed", "consumed", "exchanging", "failed", "wrong-manager", "wrong-registration"] as const)(
+      "wizard restarts only an expired unconsumed registration: %s", async (scenario) => {
+        const f = await seedCompany(), { service } = createService();
+        const bot = await service.create(f.companyId, { provider: "github", assignedAgentId: f.assignedAgentId }, "owner-user");
+        const [prior] = await db.insert(chatGitHubRegistrations).values({
+          companyId: f.companyId, endpointId: bot.id,
+          userId: scenario === "wrong-manager" ? "another-manager" : "owner-user",
+          stateHash: createHash("sha256").update(randomUUID()).digest("hex"), trustedOrigin: "http://127.0.0.1:3104",
+          ownerType: "organization", ownerLogin: "acme", appName: "My Reviewer",
+          status: scenario === "exchanging" || scenario === "failed" ? scenario : "pending",
+          expiresAt: new Date(Date.now() + (scenario === "live" ? 60000 : -60000)),
+          consumedAt: scenario === "consumed" ? new Date() : undefined,
+          handoff: { cloudId: "expired-route", returnState: "expired-state", redemptionId: "old-receipt",
+            ...(scenario === "claimed" ? { manifestClaimId: "received-claim" } : {}) },
+        }).returning();
+        const githubApp = vi.fn(async ({ binding }: { binding: { id: string } }) => ({
+          id: binding.id, returnOrigin: "http://127.0.0.1:3104", expiresAt: new Date(Date.now() + 60000).toISOString(),
+          webhookUrl: "https://gateway.example.test/webhook",
+          callbackUrls: { manifest: "https://gateway.example.test/manifest", install: "https://gateway.example.test/install", oauth: "https://gateway.example.test/oauth" },
+        }));
+        const wizard = githubChatWizardService(db, {
+          origin: () => "http://127.0.0.1:3104", connector: () => ({ githubApp }) as unknown as PaperclipCloudConnector,
+          startDirect: service.startGitHubRegistration, storeApp: service.storeGitHubApp, storeCredentials: async () => {},
+          refreshRepositories: service.refreshGitHubRepositories, resources: service.listResources, replaceResources: service.replaceResources,
+          configure: async () => {}, finish: async () => {},
+        });
+        if (scenario !== "expired") {
+          await expect(wizard.restartRegistration(bot.id, "owner-user", scenario === "wrong-registration" ? randomUUID() : prior.id))
+            .rejects.toThrow("cannot be restarted");
+          expect(githubApp).not.toHaveBeenCalled();
+          expect(await db.select().from(chatGitHubRegistrations).where(eq(chatGitHubRegistrations.endpointId, bot.id))).toHaveLength(1);
+          return;
+        }
+        expect(await wizard.advance(bot.id, "owner-user")).toMatchObject({ state: "recovery", restartableRegistrationId: prior.id });
+        const result = await wizard.restartRegistration(bot.id, "owner-user", prior.id);
+        expect(result).toMatchObject({ endpointId: bot.id, state: "create", registration: { manifest: { name: "My Reviewer", public: false } } });
+        expect(result.registration!.registrationUrl).toContain("/organizations/acme/settings/apps/new");
+        const sessions = await db.select().from(chatGitHubRegistrations).where(eq(chatGitHubRegistrations.endpointId, bot.id));
+        expect(sessions).toHaveLength(2);
+        expect(sessions.find(s => s.id === prior.id)).toMatchObject({ status: "failed", consumedAt: expect.any(Date) });
+        const next = sessions.find(s => s.id !== prior.id)!;
+        expect(next).toMatchObject({ status: "pending", ownerType: "organization", ownerLogin: "acme", appName: "My Reviewer" });
+        expect(next.stateHash).not.toBe(prior.stateHash);
+        expect(next.handoff!.cloudId).not.toBe(prior.handoff!.cloudId);
+        const unchanged = await service.get(bot.id);
+        expect(unchanged.connectionId).toBe(bot.connectionId);
+        expect(unchanged.assignedAgentId).toBe(bot.assignedAgentId);
+        await expect(wizard.restartRegistration(bot.id, "owner-user", prior.id)).rejects.toThrow("cannot be restarted");
+        expect(await db.select().from(chatGitHubRegistrations).where(eq(chatGitHubRegistrations.endpointId, bot.id))).toHaveLength(2);
       },
     );
     it("stack exchanges a callback code only once when vault storage is interrupted", async () => {
@@ -3565,6 +3626,70 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
         ),
       ).rejects.toThrow("no longer authorized");
     });
+    it("admits opt-in signed issue events without PR checks, deduplicates them and rechecks revoked policy", async () => {
+      const f = await reviewBotFixture();
+      const payload = {
+        action: "opened", installation: { id: 2468 },
+        repository: { id: 97531, full_name: "paperclipai/paperclip", name: "paperclip", owner: { id: 1357, login: "paperclipai" } },
+        sender: { id: 77, login: "maintainer" },
+        issue: { number: 83, title: "Say hello", body: "Untrusted issue body", user: { id: 42, login: "octocat", type: "User" }, labels: [] },
+      };
+      const send = (delivery = randomUUID(), content = payload) => f.service.handleWebhook(f.endpoint.publicId, "github", signedGitHubWebhookRequest({
+        event: "issues", delivery, payload: content, webhookSecret: f.webhookSecret,
+      }));
+      expect((await send()).status).toBeLessThan(300);
+      expect(await db.select().from(chatConversations).where(eq(chatConversations.endpointId, f.endpoint.id))).toHaveLength(0);
+      const saved = await f.management.configuration(f.endpoint.id, "owner-user");
+      await f.management.saveConfiguration(f.endpoint.id, {
+        expectedRevision: saved.revision,
+        configuration: { ...saved.configuration, defaults: { ...saved.configuration.defaults, issueOpened: true, issueOpenedInstructions: "Reply with an ASCII animal." } },
+      }, "owner-user");
+      const delivery = randomUUID();
+      expect((await send(delivery)).status).toBeLessThan(300);
+      await expect.poll(async () => (await db.select().from(chatConversations).where(eq(chatConversations.endpointId, f.endpoint.id))).length, { timeout: 10000 }).toBe(1);
+      await send(delivery);
+      const [conversation] = await db.select().from(chatConversations).where(eq(chatConversations.endpointId, f.endpoint.id));
+      const [task] = await db.select().from(issues).where(eq(issues.id, conversation.issueId!));
+      expect(task).toMatchObject({ title: "GitHub issue #83: Say hello", assigneeAgentId: f.assignedAgentId, responsibleUserId: "owner-user", originKind: "chat_channel" });
+      expect(conversation.providerUrl).toBe("https://github.com/paperclipai/paperclip/issues/83");
+      const comments = await db.select().from(issueComments).where(eq(issueComments.issueId, task.id));
+      expect(comments).toHaveLength(1);
+      expect(comments[0].body).toContain("Reply with an ASCII animal.");
+      expect(comments[0].body).toContain("Untrusted GitHub issue context");
+      expect(await db.select().from(chatGitHubReviews).where(eq(chatGitHubReviews.endpointId, f.endpoint.id))).toHaveLength(0);
+      expect(await db.select().from(chatActions).where(and(eq(chatActions.endpointId, f.endpoint.id), eq(chatActions.kind, "github_review_check")))).toHaveLength(0);
+      const [run] = await db.insert(heartbeatRuns).values({
+        companyId: f.companyId, agentId: f.assignedAgentId, invocationSource: "assignment", status: "running",
+        contextSnapshot: { issueId: task.id, wakeCommentId: comments[0].id },
+      }).returning();
+      const current = await f.management.configuration(f.endpoint.id, "owner-user");
+      await f.management.saveConfiguration(f.endpoint.id, {
+        expectedRevision: current.revision,
+        configuration: { ...current.configuration, defaults: { ...current.configuration.defaults, issueOpened: false } },
+      }, "owner-user");
+      await expect(githubChatReviewService(db, f.providerFetch).execute({ companyId: f.companyId, agentId: f.assignedAgentId, issueId: task.id, runId: run.id }, "comment", {
+        body: "Late reply", idempotencyKey: "revoked-issue",
+      })).rejects.toThrow("Automatic GitHub task authority is no longer available");
+    });
+    it("does not admit an unlinked issue author through the linked webhook sender", async () => {
+      const f = await reviewBotFixture();
+      const saved = await f.management.configuration(f.endpoint.id, "owner-user");
+      await f.management.saveConfiguration(f.endpoint.id, {
+        expectedRevision: saved.revision,
+        configuration: { ...saved.configuration, defaults: { ...saved.configuration.defaults, issueOpened: true } },
+      }, "owner-user");
+      expect((await f.service.handleWebhook(f.endpoint.publicId, "github", signedGitHubWebhookRequest({
+        event: "issues", delivery: randomUUID(), webhookSecret: f.webhookSecret,
+        payload: {
+          action: "opened", installation: { id: 2468 },
+          repository: { id: 97531, full_name: "paperclipai/paperclip", name: "paperclip", owner: { id: 1357, login: "paperclipai" } },
+          sender: { id: 42, login: "octocat" },
+          issue: { number: 84, title: "No authority", body: "", user: { id: 999, login: "unknown", type: "User" }, labels: [] },
+        },
+      }))).status).toBeLessThan(300);
+      expect(await db.select().from(chatConversations).where(eq(chatConversations.endpointId, f.endpoint.id))).toHaveLength(0);
+      expect(await db.select().from(chatGitHubReviews).where(eq(chatGitHubReviews.endpointId, f.endpoint.id))).toHaveLength(0);
+    });
     it("admits signed PR events into an ordinary assigned task and deduplicates delivery", async () => {
       const f = await reviewBotFixture();
       const delivery = randomUUID();
@@ -3781,6 +3906,7 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
           invocationSource: "assignment",
           status: "running",
           contextSnapshot: {
+            source: "chat:github",
             issueId: conversation.issueId,
             wakeCommentId: link.commentId,
           },
@@ -3938,6 +4064,20 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
           ),
         );
       expect(publication.status).toBe("processed");
+      const presentation = {
+        companyId: f.companyId, issueId: conversation.issueId, runId: run.id,
+      };
+      await expect(resolveChatRunPresentationAuthorizationReason(db, presentation)).resolves.toBe("internal_agent_write");
+      // An unconfirmed response, a check-only assessment, or another run's
+      // receipt cannot suppress this run's provider-visible final summary.
+      await db.update(chatActions).set({ status: "received" }).where(eq(chatActions.id, publication.id));
+      await expect(resolveChatRunPresentationAuthorizationReason(db, presentation)).resolves.toBe(CHAT_RUN_PRESENTATION_AUTHORIZATION_REASON);
+      await db.update(chatActions).set({ status: "processed", result: { ...publication.result, summaryUrl: null } }).where(eq(chatActions.id, publication.id));
+      await expect(resolveChatRunPresentationAuthorizationReason(db, presentation)).resolves.toBe(CHAT_RUN_PRESENTATION_AUTHORIZATION_REASON);
+      await db.update(chatActions).set({ result: publication.result, payload: { ...publication.payload, session: { ...session, runId: randomUUID() } } }).where(eq(chatActions.id, publication.id));
+      await expect(resolveChatRunPresentationAuthorizationReason(db, presentation)).resolves.toBe(CHAT_RUN_PRESENTATION_AUTHORIZATION_REASON);
+      await db.update(chatActions).set({ payload: publication.payload }).where(eq(chatActions.id, publication.id));
+      await expect(resolveChatRunPresentationAuthorizationReason(db, { ...presentation, companyId: randomUUID() })).resolves.toBe("internal_agent_write");
       expect(
         mutations.find((m) => m.body.conclusion === "failure")?.body,
       ).toMatchObject({

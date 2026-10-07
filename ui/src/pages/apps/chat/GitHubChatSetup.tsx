@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, ExternalLink, Loader2 } from "lucide-react";
 import type { GitHubAppWizardState } from "@paperclipai/shared";
@@ -13,6 +13,7 @@ import {
   SetupWizardFooter,
 } from "@/components/SetupWizard";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
@@ -22,29 +23,52 @@ import { useNavigate, useSearchParams, Link } from "@/lib/router";
 import { buildPermissionsForTrustPreset } from "@/lib/trust-policy-ui";
 import { copyTextToClipboard } from "@/lib/clipboard";
 
-/** Submit the supported manifest form directly, with no intermediate preparation screen. */
-export function submitGitHubAppManifest(
+/** Restrict native manifest submission to GitHub registration endpoints. */
+export function gitHubAppManifestAction(
   registration: NonNullable<GitHubAppWizardState["registration"]>,
 ) {
   const url = new URL(registration.registrationUrl);
   if (
     url.origin !== "https://github.com" ||
+    url.username || url.password || url.hash ||
     !/^\/(settings|organizations\/[A-Za-z0-9-]+\/settings)\/apps\/new$/.test(
       url.pathname,
     )
   )
     throw new Error("GitHub returned an invalid registration address");
-  const form = document.createElement("form");
-  form.method = "POST";
-  form.action = url.toString();
-  const manifest = document.createElement("input");
-  manifest.type = "hidden";
-  manifest.name = "manifest";
-  manifest.value = JSON.stringify(registration.manifest);
-  form.append(manifest);
-  document.body.append(form);
-  form.submit();
-  form.remove();
+  return url.toString();
+}
+function GitHubAppManifestForm({
+  registration, onSaveExit, disabled, autoSubmit, onSubmit,
+}: {
+  registration: NonNullable<GitHubAppWizardState["registration"]>;
+  onSaveExit: () => void;
+  disabled: boolean;
+  autoSubmit: boolean;
+  onSubmit: () => void;
+}) {
+  const form = useRef<HTMLFormElement>(null);
+  const requested = useRef(false);
+  useEffect(() => {
+    if (!autoSubmit) requested.current = false;
+    if (autoSubmit && !disabled && !requested.current && form.current) {
+      requested.current = true;
+      form.current.requestSubmit();
+    }
+  }, [autoSubmit, disabled]);
+  return (
+    <form
+      ref={form}
+      method="post"
+      action={gitHubAppManifestAction(registration)}
+      onSubmit={onSubmit}
+    >
+      <input type="hidden" name="manifest" value={JSON.stringify(registration.manifest)} />
+      <SetupWizardFooter onSaveExit={onSaveExit} disabled={disabled}>
+        <Button type="submit" disabled={disabled}>Continue to GitHub</Button>
+      </SetupWizardFooter>
+    </form>
+  );
 }
 export function GitHubChatSetup() {
   const [params, setParams] = useSearchParams();
@@ -62,6 +86,7 @@ export function GitHubChatSetup() {
   const [ownerLogin, setOwnerLogin] = useState("");
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
+  const [submitManifest, setSubmitManifest] = useState(false);
   const [error, setError] = useState("");
   const [existing, setExisting] = useState(params.get("reconnect") === "1");
   const [credentials, setCredentials] = useState({
@@ -69,6 +94,7 @@ export function GitHubChatSetup() {
     privateKey: "",
     webhookSecret: "",
   });
+  const [appNotCreated, setAppNotCreated] = useState(false);
   const [copied, setCopied] = useState(false);
   const [legacyAccount, setLegacyAccount] = useState("");
   const [identityLinked, setIdentityLinked] = useState(false);
@@ -539,7 +565,7 @@ export function GitHubChatSetup() {
             const result = await toolsApi.startCloudConnectorEnrollment(
               selectedCompanyId!,
               undefined,
-              `${window.location.pathname}${window.location.search}`,
+              `/apps/chat/connect${window.location.search}`,
             );
             if (!result.verificationUrl)
               throw new Error("Cloud enrollment could not be started");
@@ -554,7 +580,21 @@ export function GitHubChatSetup() {
           <Button variant="ghost" onClick={() => setExisting(true)}>
             Use existing App credentials
           </Button>
-          {footer("Try again", refresh)}
+          {state.restartableRegistrationId && (
+            <div className="flex items-center gap-2">
+              <Checkbox id="github-app-not-created" checked={appNotCreated} disabled={busy}
+                onCheckedChange={(checked) => setAppNotCreated(checked === true)} />
+              <Label htmlFor="github-app-not-created">I haven't created this App on GitHub.</Label>
+            </div>
+          )}
+          {state.restartableRegistrationId
+            ? footer("Continue to GitHub", async () => {
+                const result = await githubChatApi.restartRegistration(bot.id, state.restartableRegistrationId!);
+                setAppNotCreated(false);
+                queryClient.setQueryData(["github-wizard", bot.id], result);
+                if (result.registration) setSubmitManifest(true);
+              }, !appNotCreated)
+            : footer("Try again", refresh)}
         </>
       ) : state?.state === "verify" ? (
         <>
@@ -631,18 +671,17 @@ export function GitHubChatSetup() {
           >
             I already have an App
           </button>
-          {footer(
+          {state?.registration ? (
+            <GitHubAppManifestForm registration={state.registration} onSaveExit={exit}
+              disabled={busy} autoSubmit={submitManifest} onSubmit={() => setSubmitManifest(false)} />
+          ) : footer(
             "Continue to GitHub",
             async () => {
-              const result = state?.registration
-                ? state
-                : await githubChatApi.registration(bot.id, appInput());
+              const result = await githubChatApi.registration(bot.id, appInput());
               queryClient.setQueryData(["github-wizard", bot.id], result);
-              if (result.registration)
-                submitGitHubAppManifest(result.registration);
+              if (result.registration) setSubmitManifest(true);
             },
-            progress.isPending ||
-              (ownerType === "organization" && !ownerLogin.trim()),
+            progress.isPending || (ownerType === "organization" && !ownerLogin.trim()),
           )}
         </>
       )}

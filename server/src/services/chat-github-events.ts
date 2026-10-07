@@ -14,6 +14,8 @@ import {
   githubCommitSchema,
   githubIdSchema,
   type GitHubReviewEventContext,
+  type GitHubIssueEventContext,
+  type GitHubAutomaticEventContext,
 } from "@paperclipai/shared";
 import {
   effectiveGitHubReviewPolicy,
@@ -48,6 +50,34 @@ const payloadSchema = z.object({
   }),
   before: githubCommitSchema.optional(),
 });
+
+const issuePayloadSchema = z.object({
+  action: z.literal("opened"),
+  repository: payloadSchema.shape.repository,
+  sender: person,
+  issue: z.object({
+    number: z.number().int().positive(),
+    title: z.string().max(1000),
+    body: z.string().nullable(),
+    user: person,
+    labels: z.array(z.object({ name: z.string() })).default([]),
+    pull_request: z.unknown().optional(),
+  }),
+});
+
+/** Called only after signature and installation/repository verification. */
+export function githubAutomaticIssueEvent(payload: unknown, deliveryId: string): GitHubIssueEventContext | null {
+  const parsed = issuePayloadSchema.safeParse(payload);
+  if (!parsed.success || parsed.data.issue.pull_request !== undefined) return null;
+  const { repository, sender, issue } = parsed.data;
+  return {
+    event: "issue_opened", deliveryId,
+    repositoryId: repository.id, repository: repository.full_name.toLowerCase(),
+    issueNumber: issue.number, title: issue.title, body: (issue.body ?? "").slice(0, 24000),
+    author: { id: issue.user.id, login: issue.user.login, isBot: issue.user.type === "Bot" },
+    sender: { id: sender.id, login: sender.login }, labels: issue.labels.map(label => label.name),
+  };
+}
 
 /** Called only after signature and installed-repository admission. */
 export function githubAutomaticReviewEvent(
@@ -84,7 +114,7 @@ export function githubAutomaticReviewEvent(
 export async function githubAutomaticAdmission(
   db: Db | Parameters<Parameters<Db["transaction"]>[0]>[0],
   endpoint: typeof chatEndpoints.$inferSelect,
-  context: GitHubReviewEventContext,
+  context: GitHubAutomaticEventContext,
 ) {
   const [saved] = await db
     .select()

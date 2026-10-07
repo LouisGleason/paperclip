@@ -35,13 +35,14 @@ export const githubChatApi = {
     }),
   registration: (id: string, input: GitHubAppRegistrationInput) =>
     api.post<GitHubAppWizardState>(`${path(id)}/registration`, input),
+  restartRegistration: (id: string, registrationId: string) => api.post<GitHubAppWizardState>(`${path(id)}/registration/restart`, { registrationId, appNotCreated: true }),
   saveDraft: (id: string, input: GitHubAppRegistrationInput) => api.put<{ saved: true }>(`${path(id)}/draft`, input),
   advance: (id: string) => api.post<GitHubAppWizardState>(`${path(id)}/setup`, {}),
   startIdentity: (id: string) => api.post<{ authorizationUrl: string }>(`${path(id)}/identity/start`, {}),
   confirmIdentity: (id: string, githubUserId: string) => api.post<GitHubAppWizardState>(`${path(id)}/identity/confirm`, { githubUserId }),
   connectApp: (
     id: string,
-    credentials: { appId: string; privateKey: string; webhookSecret: string },
+    credentials: { appId: string; privateKey: string; webhookSecret: string; clientId?: string; clientSecret?: string },
   ) => api.post<ChatEndpoint>(`${path(id)}/app`, credentials),
   refreshRepositories: (id: string) =>
     api.post<ChatEndpointResource[]>(`${path(id)}/repositories/refresh`, {}),

@@ -38,9 +38,9 @@ rules and prompts also live in settings.
 
 Local instances receive public callbacks and signed events through an enrolled
 Paperclip Cloud connector, using outbound requests instead of a public tunnel.
-The Cloud capability must be deployed and enabled before localhost onboarding.
+The Cloud gateway capability must be deployed before localhost onboarding.
 Direct public-HTTPS webhook connections and manual existing-App credential
-recovery remain supported. Setup tasks and copied prompts are not part of this
+recovery remain supported. An expired, unconsumed Cloud handoff can be renewed in the same draft after the configuring manager confirms that no App was created on GitHub. Claimed, consumed, and uncertain exchanges still require existing-App recovery. Setup tasks and copied prompts are not part of this
 wizard. Normal agent API keys cannot call its board-only management APIs.
 
 GitHub review bots use the existing agent runtime; this connector does not add
@@ -80,6 +80,14 @@ Choose automatic reviews and enable **updated commits** to review new pushes.
 Opened, reopened, ready-for-review, and updated-commit events are independently
 configurable. Draft and bot-authored PRs are excluded by default. Settings can
 be overridden per enabled repository.
+
+**New GitHub issues** is a separate opt-in automatic event, disabled on existing
+and new connections until selected. It uses the same repository, author,
+linked-member or sponsored-guest, responsible-member, and label restrictions as
+automatic PR events; PR branch filters do not apply to issues. Its instructions
+start an ordinary issue task with task-bound comment tools, without a PR
+assessment or commit check. Older manually configured Apps must subscribe to
+the `issues` webhook event before enabling this setting.
 
 An authorized mention can bypass automatic author/branch/label scheduling
 filters. It cannot bypass repository restrictions, excluded files, or access
@@ -128,7 +136,13 @@ execution is disallowed, a gated head requests an authorized manual review.
 
 ## Hosted ingress
 
-Cloud proxies only `POST /api/chat-webhooks/:publicId/github` and the narrow
+Dedicated Apps use Cloud as a sealed transport gateway. Cloud routes opaque
+callbacks and signed webhook bytes to the enrolled instance; the instance
+exchanges GitHub codes, stores credentials, verifies webhook signatures, and
+applies repository and actor policy. Local instances poll outbound and do not
+need an inbound tunnel.
+
+Legacy direct-webhook Cloud deployments proxy only `POST /api/chat-webhooks/:publicId/github` and the narrow
 `GET /api/chat-github/manifest/callback` registration callback without browser
 login. The instance verifies the untouched webhook body and GitHub signature;
 registration uses expiring, single-use user/company/origin-bound state.

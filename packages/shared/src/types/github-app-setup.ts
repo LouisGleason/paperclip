@@ -26,6 +26,8 @@ export type GitHubAppWizardState = {
     manifest: Record<string, unknown>;
     expiresAt: string;
   };
+  /** Expired, unconsumed Cloud registration; manager must attest no App was created. */
+  restartableRegistrationId?: string;
   installationUrl?: string;
   identity?: { githubUserId: string; login: string; avatarUrl: string | null };
   identityLinked?: boolean;

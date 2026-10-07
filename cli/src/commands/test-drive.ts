@@ -194,7 +194,15 @@ export async function prepareTestDriveEnvironment(
   process.env.PAPERCLIP_DEPLOYMENT_EXPOSURE = "private";
   process.env.PAPERCLIP_BIND = "loopback";
   process.env.HOST = "127.0.0.1";
-  process.env.PORT = String(await resolveTestDriveServerPort());
+  let preferredPort = 3100;
+  try {
+    preferredPort = readConfig(process.env.PAPERCLIP_CONFIG)?.server.port ?? preferredPort;
+  } catch {
+    // The normal startup doctor owns invalid-config diagnostics and repair.
+  }
+  // Reusing a test drive must preserve callback and enrollment origins when
+  // its saved port is available. Only move forward if that port is occupied.
+  process.env.PORT = String(await resolveTestDriveServerPort(preferredPort));
 
   return { dataDir, linkedWorktree };
 }

@@ -6,6 +6,7 @@ import {
   type GitHubReviewAssessment,
   type GitHubReviewConclusion,
   type GitHubReviewEventContext,
+  type GitHubAutomaticEventContext,
   type GitHubReviewPolicy,
 } from "@paperclipai/shared";
 
@@ -83,7 +84,7 @@ export function githubReviewLineIsInPatch(
 
 export function githubReviewSchedulingDecision(input: {
   configuration: GitHubChatConfiguration;
-  context: GitHubReviewEventContext;
+  context: GitHubAutomaticEventContext;
   repositoryEnabled: boolean;
   /** Resolved against current company membership and the user's confirmed link. */
   linkedMemberUserId: string | null;
@@ -142,9 +143,10 @@ export function githubReviewSchedulingDecision(input: {
     return { allowed: false, reason: "automatic_reviews_disabled_for_person" };
   if (guestAllowed && policy.invocation !== "allowed_authors")
     return { allowed: false, reason: "guest_automatic_reviews_disabled" };
-  if (!policy.events.includes(context.event))
+  const isIssue = context.event === "issue_opened";
+  if (isIssue ? policy.issueOpened !== true : !policy.events.includes(context.event))
     return { allowed: false, reason: "event_disabled" };
-  if (context.draft && !policy.reviewDrafts)
+  if (!isIssue && context.draft && !policy.reviewDrafts)
     return { allowed: false, reason: "draft" };
   if (context.author.isBot && !policy.reviewBotAuthors)
     return { allowed: false, reason: "bot_author" };
@@ -162,14 +164,14 @@ export function githubReviewSchedulingDecision(input: {
   )
     return { allowed: false, reason: "author_excluded" };
   if (
-    policy.targetBranches.length &&
+    !isIssue && policy.targetBranches.length &&
     !policy.targetBranches.some((p) =>
       matchesGitHubReviewPattern(context.baseBranch, p),
     )
   )
     return { allowed: false, reason: "branch_excluded" };
   if (
-    (policy.excludedBranches ?? []).some((p) =>
+    !isIssue && (policy.excludedBranches ?? []).some((p) =>
       matchesGitHubReviewPattern(context.baseBranch, p),
     )
   )
@@ -180,7 +182,7 @@ export function githubReviewSchedulingDecision(input: {
     return { allowed: false, reason: "label_excluded" };
   return {
     allowed: true,
-    reason: "automatic_review",
+    reason: isIssue ? "automatic_issue" : "automatic_review",
     responsibleUserId,
     guest: !linkedAllowed,
   };

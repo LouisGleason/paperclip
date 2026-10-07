@@ -204,6 +204,11 @@ export function chatChannelRoutes(db: Db, options: ChatChannelRouteOptions) {
       ? await service.startGitHubRegistration(endpointId(req), githubUser(req), req.body.name)
       : await service.githubWizard.start(endpointId(req), githubUser(req), req.body));
   });
+  router.post("/chat-endpoints/:endpointId/github/registration/restart", validate(z.object({ registrationId: z.string().uuid(), appNotCreated: z.literal(true) }).strict()), async (req, res) => {
+    if (!(await assertEndpointManagementAccess(req, res))) return;
+    res.set("Cache-Control", "no-store");
+    res.json(await service.githubWizard.restartRegistration(endpointId(req), githubUser(req), req.body.registrationId));
+  });
   router.put("/chat-endpoints/:endpointId/github/draft", validate(z.object({ name: z.string().trim().min(1).max(34), ownerType: z.enum(["personal", "organization"]), ownerLogin: z.string().regex(/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/).optional() }).strict()), async (req, res) => {
     if (!(await assertEndpointManagementAccess(req, res))) return;
     res.set("Cache-Control", "no-store");
@@ -224,7 +229,7 @@ export function chatChannelRoutes(db: Db, options: ChatChannelRouteOptions) {
     res.set("Cache-Control", "no-store");
     res.json(await service.githubWizard.confirmIdentity(endpointId(req), githubUser(req), req.body.githubUserId));
   });
-  router.post("/chat-endpoints/:endpointId/github/app", validate(z.object({ appId: z.string().regex(/^[1-9][0-9]*$/), privateKey: z.string().min(1).max(32000), webhookSecret: z.string().min(16).max(1024) }).strict()), async (req, res) => {
+  router.post("/chat-endpoints/:endpointId/github/app", validate(z.object({ appId: z.string().regex(/^[1-9][0-9]*$/), privateKey: z.string().min(1).max(32000), webhookSecret: z.string().min(16).max(1024), clientId: z.string().min(1).max(128).optional(), clientSecret: z.string().min(1).max(1024).optional() }).strict().refine(value => !!value.clientId === !!value.clientSecret, "Supply both OAuth client credentials")), async (req, res) => {
     if (!(await assertEndpointManagementAccess(req, res))) return;
     res.json(await service.storeGitHubApp(endpointId(req), githubUser(req), req.body));
   });

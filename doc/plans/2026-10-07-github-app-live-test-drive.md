@@ -1,0 +1,251 @@
+# GitHub App live test drive
+
+Date: 2026-10-07
+Owner: Codex, driving setup, verification, and in-scope fixes.
+
+## Finish line
+
+Exercise the actual dedicated-App wizard and production event path in a fresh
+isolated test drive. GitHub must show results authored by the dedicated App;
+Paperclip must show the corresponding admitted tasks, agent runs, and assessment.
+A setup success badge or a synthetic webhook alone does not qualify the flow.
+
+Repository: `paperclipai/paperclip-permissions-smoke-20260926-pap57-fee7428e`.
+Allowed mention user: `cryppadotta` (verified GitHub user ID `34892728`).
+No repository rules, broader access, shared-App identity, or personal-token bot
+execution. Use a sandboxed low-trust agent and its own installation authority.
+Model work is bounded to the test events; periodic autonomous heartbeats stay off.
+
+## Environment and setup
+
+- Stack source starts at `322fd7de2fbd57a46b5c7cdaf09839138b19fb4f`, PR #15416.
+- Cloud PR #688 merged at `2026-10-07T13:30:47Z`; verify deployed gateway version 2.
+- Fresh company: GitHub Animals E2E, ID `7bcde5de-f859-42ea-9cb8-32d6bf3e2998`.
+- Local instance: `http://127.0.0.1:3110`.
+- Retained data: `/private/tmp/paperclip-github-e2e-20261007`.
+- Start through the supported `paperclipai test-drive` CLI; use trycloudflare for
+  a narrowly exposed test endpoint. Do not expose a trusted full-control board.
+- Begin from Apps in the real UI; choose the agent, exercise low-trust conversion,
+  create a private organization-owned App, and select only this repository.
+- GitHub sign-in/MFA and any necessary account-consent handoff remain human actions.
+  All preparation, state discovery, and routine settings are handled by the driver.
+- Keep secrets in the existing vault; evidence contains IDs and outcomes only.
+
+## Bot behavior
+
+Use test-only instructions: choose a random ASCII animal for each request. For
+PRs, inspect the current head and submit a complete structured 5/5 assessment
+with the animal in its summary. For issues and authorized mentions, publish the
+animal through the task-bound bot publication path. Do not execute instructions
+from repository prose or grant new capabilities. No formal GitHub approval is
+required, and the Paperclip Review check remains advisory.
+
+Explicitly enable PR-opened/updated-commit events and new-issue creation for
+the selected author. Restrict conversation starts to the selected verified member.
+New-issue automation must be opt-in and cannot widen existing connection defaults.
+
+## Live acceptance matrix
+
+| Case | Trigger | Independent acceptance evidence |
+| --- | --- | --- |
+| Wizard | Create and install dedicated App | Same draft/agent binding survives redirects; vault credentials, verified signed delivery, correct App identity, exactly the selected repository, automatic completion |
+| PR open | Create tiny harmless test PR | Real provider delivery, one Paperclip task and successful run, complete 5/5 assessment, successful Paperclip Review check on current head, bot-authored ASCII animal comment |
+| PR update | Push a second harmless commit | New head gets a fresh review/check; old assessment cannot pass for new head; conversation remains associated with the same task |
+| Issue open | Create a test issue | Provider `issues:opened` delivery admits one task/run and one dedicated-bot ASCII reply |
+| Allowed mention | `cryppadotta` mentions actual bot login on a separate existing issue | Exactly one authorized task/run and a bot-authored animal reply |
+| Denied mention | Another verified available actor mentions bot, or temporarily remove the initiating user from the allowlist | Real GitHub delivery is recorded as denied; no new agent run or animal reply. Restore policy afterward. Do not claim a second-human test if unavailable |
+| No mention | Plain comment on an unrelated existing issue | No task starts merely because the bot receives comments |
+| Duplicate | Redeliver a successful GitHub delivery | Delivery/session idempotency prevents duplicate tasks or publications |
+| Persistence | Reload/restart after connection | Same App, draft, repository restrictions, identity, and settings; a later real event still works |
+
+## Execution and fixes
+
+Keep a compact record of visible screen transitions and provider-to-task-to-output
+IDs. Inspect failures at their real boundary: deployed capability, enrollment,
+callback claim, local exchange/vault, installation discovery, signature admission,
+person/repository policy, sandbox execution, model/tool use, or publication.
+Fix concrete defects with focused tests and rerun the affected live journey.
+Do not substitute direct webhooks silently for the Cloud gateway being qualified.
+
+Implemented the gap found during preparation: both manifest builders now subscribe
+to `issues`, and new-issue intake has an explicit opt-in with the existing
+repository, person, responsible-member, guest, and revocation boundaries. Issues
+create ordinary tasks and cannot create PR assessments or commit checks.
+
+## Evidence and cleanup
+
+Link the actual GitHub PR/issues/comments/checks and Paperclip task/review/run
+records here as they become available. Preserve screenshots of meaningful UI
+states and sanitized runtime logs in the temporary evidence directory. Record
+source revision, settings revision, time, and model costs alongside results.
+Close disposable issues/PRs and remove their test branch after qualification;
+retain the bot and test-drive data for the user's inspection unless asked to remove
+them. Stop the tunnel and test runtime at the end, leaving restart commands.
+
+## Progress and remaining qualification
+
+Updated 2026-10-07 after the final live retests. **The organization-owned App and all requested bot behaviors passed.** Six GitHub-triggered native runs succeeded. The final configuration is revision 4, with cryppadotta as the only permitted linked member. The same draft, connection, App, repository restriction, identity and vaulted credentials survived a restart. The historical diagnostics below record failures that were fixed or superseded; they are not pending handoffs.
+
+Independent proof is saved in `live-e2e-proof.json`. The live acceptance results and remaining qualification limits are recorded at the end of this plan.
+
+- Cloud staging advertises `githubApps.version=2` and `sealed_gateway` at
+  `https://my-staging.paperclip.app/v1/connector/capabilities`. Production does
+  not yet advertise this capability; this test uses staging explicitly.
+- Test server is pinned to port **3110** after a sibling dev instance acquired
+  3109. The sibling was left untouched. Same company, agent, draft, and vault
+  survived the restart.
+- trycloudflare: `https://drew-changes-emacs-analyze.trycloudflare.com`. Its local
+  relay on 23109 exposes only a landing page and redacted `/api/health`;
+  mutations and trusted board routes are denied. GitHub uses Cloud gateway
+  ingress, not this tunnel.
+- Animal Bot: `4be7066f-130b-4bfd-9a1a-740d52fe5080`. Real UI agent selection and
+  one-click low-trust conversion passed. Agent instructions request 5/5 reviews
+  and random ASCII animals through task-bound bot tools.
+- Draft `d5918d73-be6a-46b7-bf89-01e396c84ce8` retains organization `paperclipai`
+  and suggested name `Animal Bot E2E 20261007` after reload/restart.
+- Cloud enrollment for **http://localhost:3110** is approved. Human sign-in and access confirmation completed. Installation selected only the designated test repository, and the dedicated App identity was linked and confirmed.
+- Existing Daytona environment `49bd3525-7d3b-4edf-b719-95e48431ea06` uses the
+  authorized vaulted key and snapshot `fleet-sbx-01e815d1e284-5caa7196b56e`.
+  Low-trust and sandbox isolation remain enforced; periodic heartbeats are off.
+
+### Source verification
+
+- Event/parser and scheduling tests: **17 passed**.
+- New-issue signed-ingress integration cases: **2 passed**, including default-off,
+  deduplication, author-versus-sender identity, and publication revocation.
+- Full GitHub agent review workflow integration group: **30 passed**.
+- Server/UI targeted typechecks and UI token gates passed.
+- Full `pnpm -r typecheck` and `pnpm build` passed.
+- Final full typecheck and build passed after the enrollment fixes.
+- Full `pnpm test:run` failed: **29 files failed, 711 passed, 59 skipped; 6 tests failed, 12,958 passed, 3,464 skipped**. Most failed suites could not bootstrap embedded PostgreSQL. Other failures include adapter accounting and large Git/Teams timeout cases. Do not label the full suite green or claim a verified baseline.
+- New origin/enrollment-return tests: **23 passed**. GitHub integration regression including bound-registration origin changes: **30 passed**. Wizard UI including same-draft enrollment return: **14 passed**. Token gates passed.
+
+### Real runtime evidence
+
+- CLI run `7ea67041-d357-48e9-aec1-f8d230613f8e`, model `gpt-5.4`, ran inside
+  Daytona and returned an ASCII animal. Its per-run callback endpoint refused
+  connections, so it could not write the required comment or complete GIT-1.
+  A successful model exit is **not** a passed task or GitHub E2E test.
+- Automatic recovery run `322ce17e-3a56-485b-a8a7-7183c5faf69e` could write a
+  comment and block GIT-1. It correctly could not schedule privileged retries.
+  Both CLI runs failed to load `Paperclip_connections` and `Paperclip_projects`
+  MCP servers because the sandbox cannot use host localhost endpoints.
+- Switched the same bot to `paperclip_runner` / Codex / `gpt-5.4` in the same
+  sandbox. Native tools use the authenticated Runner transport. GIT-2
+  (`ac96bb88-2c6b-413c-8fd8-a59b26202128`) is a bounded fresh runtime smoke.
+- Native run `13cda2bc-1bf4-4e97-b3b0-f189ba4e6a0a` stopped before model work:
+  `runner_remote_artifact_platform_mismatch`. This Mac checkout lacks a matching
+  Linux Runner artifact. Building this checkout's locked Runner source using
+  an existing first-party Linux Docker image; without a separate paid sandbox probe.
+- Matching Linux Runner built and verified from the locked current source;
+  source, protocol asset, and binary hashes are recorded in
+  `linux-runner-build-provenance.json`. The same environment and snapshot are
+  retained. Startup retries create and release normal per-turn sandbox leases;
+  no separate environment or paid capability-probe campaign was created.
+- Native smoke run `f0d4b1e0-cf03-47bf-a77f-b3fcf1085fba` **passed** from
+  14:48:51–14:49:33 UTC: bot-authored ASCII comment
+  `799b4d23-8c68-4608-bb31-f1fcdde32490` persisted, then GIT-2 became `done`.
+  Independent task/comment/run evidence is in `native-smoke-proof.json`.
+  This qualifies native model/task tools in Daytona, not GitHub publication.
+  Model `gpt-5.4`; metered OpenAI receipt remains `unpriced` / cost null.
+- A live restart exposed the CLI ignoring saved `server.port` and moving to a
+  lower free port. Fixed `prepareTestDriveEnvironment` to prefer the saved port
+  and move upward only when occupied. All **34** CLI test-drive tests pass,
+  including available and occupied saved-port cases; CLI typecheck/build pass.
+  The test drive was then verified back on 3110, preserving enrollment origin.
+- Model secret references stay vaulted. A normal agent config save replaces
+  declaration IDs, so the driver refreshes the exact model-binding grant through
+  the permissions API after configuration edits. No broad secret grant.
+- Costs recorded by Paperclip are unpriced/null for the CLI turn; do not invent a
+  monetary value. Startup-only failures did not run a model. Retain separate
+  actual runtime, deterministic fixture, and external publication evidence.
+
+### Evidence and resume
+
+Sanitized evidence: `/private/tmp/paperclip-github-e2e-evidence/`.
+Full check logs: `/private/tmp/paperclip-github-e2e-full-{typecheck,tests,build}.log`.
+Linux build log: `/private/tmp/paperclip-github-e2e-runner-linux-build.log`.
+
+The live matrix is complete. No GitHub consent handoff remains pending. The earlier TES-1 monitor remains paused. Retain the App, bot and test-drive data for inspection; close only this test's disposable provider fixtures and stop the owned public relay/tunnel.
+
+Restart the retained instance with:
+
+```sh
+cd /private/tmp/paperclip-github-gateway-pr
+PATH=/private/tmp/gateway-tools:$PATH node cli/node_modules/tsx/dist/cli.mjs cli/src/index.ts test-drive --data-dir /private/tmp/paperclip-github-e2e-20261007 --no-browser
+```
+
+Its instance `.env` contains the non-secret Linux artifact path and staging
+gateway configuration; its model credentials remain in the retained vault.
+Do not print the `.env` file or expose trusted board routes through the tunnel.
+
+The earlier provider fixtures are now qualified:
+
+- Mention issue: https://github.com/paperclipai/paperclip-permissions-smoke-20260926-pap57-fee7428e/issues/1 . Created before installation to isolate mentions from issue-open automation.
+- PR: https://github.com/paperclipai/paperclip-permissions-smoke-20260926-pap57-fee7428e/pull/3 . Branch `codex/github-animals-e2e-20261007`, harmless file `paperclip-animal-e2e.txt`.
+- Initial head: `c1525d7a904142590babb421971e7590d0a03b26`.
+- Retest head: `b046e7e18bdda6208515088540aee438091ab120`.
+- New issues: https://github.com/paperclipai/paperclip-permissions-smoke-20260926-pap57-fee7428e/issues/2 and https://github.com/paperclipai/paperclip-permissions-smoke-20260926-pap57-fee7428e/issues/4 .
+
+The following sections are chronological failure diagnoses. Their original intermediate limits are superseded by the final live results.
+
+### Live enrollment diagnosis 2026-10-07T15:17:51.100312+00:00
+
+Cloud enrollment was approved for `http://localhost:3110`. The old consent expired and was renewed with the same recipient/scope. Two actual setup defects surfaced: the enrollment return allowlist rejected the company-prefixed chat wizard path and fell back to the connector list; GitHub registration used the numeric loopback alias while Cloud correctly required the exact enrolled origin (`RETURN_ORIGIN_NOT_ENROLLED`). Fixed the unprefixed chat return path and its narrow allowlist, and select an already enrolled loopback alias only on the same port. Retry retains registration ID/state, using the current approved destination. Added 23 passing focused tests; server typecheck and token gates passed. No App was created before the rejection.
+
+A restart briefly failed because macOS exhausted its SysV shared-memory IDs. Released exactly one orphan with zero attachments and a verified exited creator; did not stop sibling services or change kernel limits. Retrying the owned instance with the same database.
+
+### Login-return recovery diagnosis 2026-10-07
+
+The user completed GitHub login. Reopening the old manifest URL by GET lost the POST manifest, and GitHub displayed a blank personal-App form. No App was created: the organization App list contains no Animal Bot E2E 20261007, and the exact local draft still has no App ID. Its 30-minute registration had expired; the wizard incorrectly implied an App already existed and offered only credential recovery.
+
+Added manager-only renewal of an expired, unconsumed Cloud registration after an explicit no-App-created attestation. It rotates bound routing state, retires the old registration, preserves owner/name/agent/connection, and refuses live, claimed, consumed, failed, exchanging, other-manager, and stale submissions. Eight focused integration cases and 16 wizard UI tests passed. Cloud consent remains approved for the same localhost origin. No provider creation, installation, or external bot publication is yet qualified.
+
+### Browser POST diagnosis and current consent handoff
+
+The initial scripted manifest form repeatedly reached GitHub's 500 page before creation. A loopback-only diagnostic using an ordinary HTML form reached the creation confirmation with the identical manifest, under both numeric loopback and localhost origins. No permission or manifest-field workaround was needed. Changed the real wizard to a mounted native POST form; verified that Continue to GitHub now reaches **Create GitHub App for paperclipai**. Fresh API preparation submits the mounted form with requestSubmit, guarded against duplicate effect execution. Wizard regression suite: 17 passing tests.
+
+An action-time browser confirmation is pending for the exact private App, designated smoke repository, read contents/metadata and write issues/pull requests/checks, with webhook events routed through the staging Cloud gateway. Earlier blanket approval does not meet the browser tool's action-time access requirement. No App creation, repository installation, or real GitHub bot publication has occurred. The exact draft and approved enrollment are retained; the native model/task smoke remains qualified separately.
+
+
+### Created-App scope failure and recovery — 2026-10-07 17:33 UTC
+
+The user confirmed the exact App/repository access and completed creation. GitHub returned App ID `5226756`, name `Animal Bot E2E 20261007`, slug `animal-bot-e2e-20261007`. The stack rejected its valid `issues` subscription because credential verification still used a PR-only optional-event allowlist. Added `issues` to the optional allowlist, retaining older Apps and rejecting broader events/permissions. Six focused credential/lifecycle cases passed; server and UI typechecks passed.
+
+Validation failed before credentials entered the vault. Recovered this same App through the normal manager existing-App API with a newly generated key and paired OAuth client credentials. Extended that API's optional recovery fields to accept both OAuth values together; secrets stayed in the vault, and transient plaintext files were deleted after successful storage. No duplicate App was created. The one-time manifest credential-loss edge remains a recovery concern: this fix does not implement a durable sealed receipt before validation.
+
+Installation `168949146` is scoped to repository ID `1389500980` only. Native GitHub selection and identity confirmation completed; the original draft, connection and bot remain bound. Signed installation delivery independently passed. The no-mention control was delivered and filtered without task creation. The allowed mention admitted GIT-3 (`cef78507-a1e5-4f34-9379-384bc8f5cfbd`) and native run `2aa46373-3165-4714-b42b-1aa407a22f39`. Ordinary-comment orphan ordering delayed mention admission by approximately one minute; this is bounded behavior, not a lost delivery.
+
+Live fixtures now open: issue 2 (new-issue automation) and PR 3 (initial head `c1525d7a904142590babb421971e7590d0a03b26`). Do not claim completed publication based on queued/admitted work. Connection screenshot: `github-connected.png`; scope proof: `github-selected-repository-consent.png` in the evidence folder.
+
+
+### Duplicate response fix and final live results
+
+The first successful tool publications exposed another product defect: the native runner's final summary replaced the generic progress comment with another animal, duplicating the tool's authoritative reply. Final presentations now remain internal after a confirmed task-bound GitHub comment, formal review, or assessment-summary receipt. The receipt must match the company, issue, run, endpoint, conversation and assigned agent. Pending/failed operations, another run's receipt, and check-only assessments do not suppress a final response. A generic completed progress marker remains.
+
+A focused integration case verifies those receipt boundaries. The complete GitHub review workflow group passes **38 tests**, and chat-run publication units pass **20 tests**. After restarting the same instance, three real provider events each produced one animal response plus the generic completed marker, with no duplicate runner animal.
+
+| Case | Result and independently observed evidence |
+| --- | --- |
+| Dedicated App setup | App `5226756`, slug `animal-bot-e2e-20261007`, installation `168949146`, repository `1389500980` only. Wizard completed automatically after installation and identity confirmation. Signed delivery and connection verification passed. |
+| PR opened | Run `8b318bd5-3464-4a8d-a979-b918a322ea15` succeeded. Assessment `4074d5fc-87e9-4ccb-a1a6-ee6d8e6e75e4` completed at 5/5. Check `112924406209` passed on initial head `c1525d7...`. The App authored the animal review. |
+| PR updated | Same task `344e157e-ba0f-416e-8c4b-d5819a7e95bb`; run `87545503-e6be-410a-85bf-316db115aa8c` succeeded. New assessment `fdff7e83-a777-4817-af0c-79f2eb8c08dd` completed at 5/5. Check `112928995770` passed on exact new head `b046e7e18bdda6208515088540aee438091ab120`. |
+| New issue | Issue 2 run `28fcb039-2663-4773-93ef-4262e490bfa0` and post-fix issue 4 run `04308fc0-11c7-4f3a-b42b-478ba7b56118` succeeded. Issue 4 has one bot animal reply, comment `6043522941`. |
+| Allowed mention | Initial run `2aa46373-3165-4714-b42b-1aa407a22f39` and post-fix run `97fc1ec0-4499-43c1-a6bb-f2ed972893d1` succeeded on the same task. Post-fix animal comment `6043507486` is authored by the dedicated App. |
+| Denied mention | Temporarily removed cryppadotta from the allowlist, posted mention `6043347709`, and observed `filtered` with `Linked Paperclip account is not currently permitted`. No new run or reply. Restored exactly the prior policy as revision 4. This did not use a second human actor. |
+| No mention | Ordinary comment `6043243532` was delivered and filtered because it did not address the agent or an active task. No task/run admitted. |
+| Duplicate delivery | Redelivered original PR delivery `0efb52f0-c275-11f1-9c40-56d38adaec3f` through GitHub's controls. GitHub recorded HTTP 202 at 17:42:29 UTC. One original local delivery remained, with no extra task, model run or publication before the later fresh-head event. This qualifies duplicate prevention across the gateway; it does not claim a second stack admission. |
+| Persistence | Restart at 17:41 UTC retained the original App, draft, connection, vault, identity, selected repository and revision 4. The three subsequent live events passed. |
+
+Inspectable provider results:
+
+- [5/5 review on the updated head](https://github.com/paperclipai/paperclip-permissions-smoke-20260926-pap57-fee7428e/pull/3#issuecomment-6043294143).
+- [Passing current-head check](https://github.com/paperclipai/paperclip-permissions-smoke-20260926-pap57-fee7428e/runs/112928995770).
+- [New-issue animal reply](https://github.com/paperclipai/paperclip-permissions-smoke-20260926-pap57-fee7428e/issues/4#issuecomment-6043522941).
+- [Allowed-mention animal reply](https://github.com/paperclipai/paperclip-permissions-smoke-20260926-pap57-fee7428e/issues/1#issuecomment-6043507486).
+
+All corresponding Paperclip tasks finished. All ten recorded sandbox leases have successful cleanup (eight expired, two released); no active lease remains. Costs were not independently priced for this qualification and no monetary estimate is claimed.
+
+Final source checks after the response fix: repository typecheck, build, token gates and diff whitespace check pass. The earlier full-suite run remains a failed result, not a green claim: 29 failed files / six failed tests, with PostgreSQL bootstrap failures and adapter/timeouts. It was not rerun after the final response fix; the changed workflow's 38 integration and 20 publication tests were rerun and passed. The PR remains draft pending current-head CI/review and full-suite failure resolution.
+
+Qualification limits: personal-account setup, delayed organization approval and production Cloud deployment were not tested live. Creation required recovery of the same App after the obsolete validator discarded its one-time manifest credentials; durable sealed credential receipt before validation remains an unresolved recovery improvement. The wizard's connected summary still lacks a repository list, and local task/run labels in GitHub comments lack public links. These do not change the verified event, access, check or publication outcomes.

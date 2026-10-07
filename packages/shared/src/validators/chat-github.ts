@@ -23,6 +23,8 @@ export const githubReviewPolicySchema = z
     events: z
       .array(z.enum(GITHUB_REVIEW_EVENTS))
       .max(GITHUB_REVIEW_EVENTS.length),
+    issueOpened: z.boolean().optional(),
+    issueOpenedInstructions: z.string().max(12000).optional(),
     reviewDrafts: z.boolean(),
     reviewBotAuthors: z.boolean(),
     includeAuthors: shortList,

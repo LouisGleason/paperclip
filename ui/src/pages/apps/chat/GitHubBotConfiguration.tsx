@@ -71,7 +71,7 @@ export function GitHubPolicyEditor({
     <div className="space-y-6">
       <div className="space-y-2">
         <Label htmlFor="github-invocation">
-          When should this agent review?
+          When should this agent work?
         </Label>
         <select
           id="github-invocation"
@@ -85,19 +85,19 @@ export function GitHubPolicyEditor({
           }
         >
           <option value="linked_authors">
-            Linked members’ PRs and authorized mentions
+            Linked members’ enabled events and authorized mentions
           </option>
           <option value="mentions_only">Authorized mentions only</option>
           <option value="allowed_authors">
-            Allowed authors’ PRs and authorized mentions
+            Allowed authors’ enabled events and authorized mentions
           </option>
         </select>
         <p className="text-xs text-muted-foreground">
-          Newly added people have a separate automatic-review setting in Access.
+          Newly added people have a separate automatic-event setting in Access.
         </p>
       </div>
       <div>
-        <h3 className="text-sm font-medium">Automatic review events</h3>
+        <h3 className="text-sm font-medium">Automatic events</h3>
         {GITHUB_REVIEW_EVENTS.slice(0, 4).map((event) => (
           <GitHubToggle
             key={event}
@@ -114,13 +114,29 @@ export function GitHubPolicyEditor({
           />
         ))}
         <GitHubToggle
+          label="New GitHub issues"
+          description="Start a task for an authorized author's new issue. Uses the same repository and person restrictions."
+          checked={policy.issueOpened === true}
+          onChange={(enabled) => set("issueOpened", enabled)}
+        />
+        {policy.issueOpened && (
+          <div className="space-y-2">
+            <Label htmlFor="github-issue-opened-instructions">New issue instructions</Label>
+            <Textarea
+              id="github-issue-opened-instructions"
+              value={policy.issueOpenedInstructions ?? ""}
+              onChange={(event) => set("issueOpenedInstructions", event.target.value)}
+            />
+          </div>
+        )}
+        <GitHubToggle
           label="Include draft PRs"
           checked={policy.reviewDrafts}
           onChange={(value) => set("reviewDrafts", value)}
         />
         <GitHubToggle
           label="Include bot authors"
-          description="Also allow the bot account in Access with a sponsor and automatic reviews enabled."
+          description="Also allow the bot account in Access with a sponsor and automatic events enabled."
           checked={policy.reviewBotAuthors}
           onChange={(value) => set("reviewBotAuthors", value)}
         />
@@ -541,7 +557,7 @@ export function GitHubAccessEditor({
               </Button>
             </div>
             <GitHubToggle
-              label={`Automatic PR reviews for @${person.login}`}
+              label={`Automatic events for @${person.login}`}
               checked={person.automaticReviews}
               onChange={(value) =>
                 onChange({

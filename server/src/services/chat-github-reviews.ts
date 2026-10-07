@@ -27,6 +27,7 @@ import {
 } from "@paperclipai/db";
 import {
   githubCommitSchema,
+  type GitHubAutomaticEventContext,
   type GitHubReviewEventContext,
   type GitHubReviewPolicy,
 } from "@paperclipai/shared";
@@ -208,14 +209,14 @@ export function githubChatReviewService(db: Db, fetchImpl = fetch) {
     );
     if (!access?.allowed)
       throw forbidden("The initiating GitHub person is no longer authorized");
-    const automatic = source.delivery.normalizedEvent.githubAutomatic as
-      { context: GitHubReviewEventContext } | undefined;
+    const automatic = (source.delivery.normalizedEvent.githubAutomatic ?? source.delivery.normalizedEvent.githubIssue) as
+      { context: GitHubAutomaticEventContext } | undefined;
     if (
       automatic &&
       !(await githubAutomaticAdmission(db, source.endpoint, automatic.context))
         ?.allowed
     )
-      throw forbidden("Automatic review authority is no longer available");
+      throw forbidden("Automatic GitHub task authority is no longer available");
     const repositoryId = String(
       source.resource.metadata?.providerRepositoryId ?? "",
     );

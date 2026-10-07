@@ -17,6 +17,7 @@ import { alias } from "drizzle-orm/pg-core";
 import type { Db } from "@paperclipai/db";
 import {
   agents,
+  chatActions,
   chatConversations,
   chatEndpoints,
   chatMessageLinks,
@@ -91,6 +92,43 @@ export async function resolveChatRunPresentationAuthorizationReason(
   // before this check; otherwise model metadata can appear as a noisy sibling
   // beside the card or its continuation response.
   if (await hasChatRunOwnedProviderInteraction(db, input)) {
+    return "internal_agent_write";
+  }
+  // Task-bound GitHub tools already publish the authoritative response. A
+  // selected runner summary must remain local after a confirmed comment or
+  // review receipt, rather than duplicating it through the chat progress lane.
+  // Pending/failed operations and check-only assessments still need a final.
+  const githubResponses = await db
+    .select({ endpointId: chatActions.endpointId })
+    .from(chatActions)
+    .innerJoin(chatConversations, and(
+      eq(chatConversations.companyId, chatActions.companyId),
+      eq(chatConversations.id, chatActions.conversationId),
+      eq(chatConversations.endpointId, chatActions.endpointId),
+      eq(chatConversations.issueId, input.issueId),
+    ))
+    .innerJoin(chatEndpoints, and(
+      eq(chatEndpoints.companyId, chatActions.companyId),
+      eq(chatEndpoints.id, chatActions.endpointId),
+      eq(chatEndpoints.provider, "github"),
+      sql`${chatEndpoints.assignedAgentId}::text = ${chatActions.payload} -> 'session' ->> 'agentId'`,
+    ))
+    .where(and(
+      eq(chatActions.companyId, input.companyId),
+      eq(chatActions.kind, "github_review_publication"),
+      eq(chatActions.status, "processed"),
+      sql`${chatActions.payload} -> 'session' ->> 'companyId' = ${input.companyId}`,
+      sql`${chatActions.payload} -> 'session' ->> 'issueId' = ${input.issueId}`,
+      sql`${chatActions.payload} -> 'session' ->> 'runId' = ${input.runId}`,
+      sql`(
+        (${chatActions.payload} ->> 'operation' in ('comment', 'formal_review')
+          and coalesce(${chatActions.result} ->> 'id', '') <> ''
+          and coalesce(${chatActions.result} ->> 'url', '') <> '')
+        or (${chatActions.payload} ->> 'operation' = 'assessment'
+          and coalesce(${chatActions.result} ->> 'summaryUrl', '') <> '')
+      )`,
+    ));
+  if (bindings.every(binding => githubResponses.some(response => response.endpointId === binding.endpointId))) {
     return "internal_agent_write";
   }
   return CHAT_RUN_PRESENTATION_AUTHORIZATION_REASON;

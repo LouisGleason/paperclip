@@ -32,6 +32,29 @@ import {
   paperclipCloudConnectorConfigFromEnv,
   type PaperclipCloudConnector,
 } from "./paperclip-cloud-connector.js";
+import { paperclipCloudConnectorEnrollmentStatus } from "./paperclip-cloud-connector-enrollment.js";
+
+/** Loopback aliases are equivalent locally, but Cloud requires the approved exact origin. */
+export function githubWizardBrowserOrigin(
+  value: string | null,
+  enrolledOrigins: string[],
+): string | null {
+  if (!value) return value;
+  const loopback = (url: URL) =>
+    url.protocol === "http:" &&
+    ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
+  const exactOrigin = (url: URL) =>
+    !url.username && !url.password && !url.search && !url.hash && url.pathname === "/";
+  const current = new URL(value);
+  if (!exactOrigin(current)) return value;
+  if (!loopback(current) || enrolledOrigins.includes(current.origin)) return value;
+  for (const candidate of enrolledOrigins) {
+    const approved = new URL(candidate);
+    if (loopback(approved) && approved.port === current.port && exactOrigin(approved))
+      return approved.origin;
+  }
+  return value;
+}
 
 const hash = (value: string) =>
   createHash("sha256").update(value).digest("hex");
@@ -162,7 +185,11 @@ export function githubChatWizardService(
     return `${options.origin()}/${company!.prefix}/apps/chat/connect?provider=github&purpose=chat&resume=${bot.id}`;
   }
   function origin() {
-    const value = options.origin();
+    const enrollment = paperclipCloudConnectorEnrollmentStatus();
+    const value = githubWizardBrowserOrigin(
+      options.origin(),
+      enrollment.status === "active" ? enrollment.origins : [],
+    );
     if (!value)
       throw badRequest(
         "Configure this instance's browser address before connecting GitHub",
@@ -318,7 +345,7 @@ export function githubChatWizardService(
     return {
       action: "start",
       id: session.handoff!.cloudId,
-      returnUri: `${session.trustedOrigin}/api/chat-github/cloud/callback`,
+      returnUri: `${origin()}/api/chat-github/cloud/callback`,
       returnState: session.handoff!.returnState,
     };
   }
@@ -363,6 +390,7 @@ export function githubChatWizardService(
           checks: "write",
         },
         default_events: [
+          "issues",
           "issue_comment",
           "pull_request_review_comment",
           "pull_request",
@@ -465,6 +493,46 @@ export function githubChatWizardService(
     }
   }
 
+  function restartable(session: typeof chatGitHubRegistrations.$inferSelect) {
+    return !!session.handoff?.cloudId && session.status === "pending" &&
+      session.expiresAt <= new Date() && !session.consumedAt &&
+      !session.handoff.manifestClaimId;
+  }
+  async function restartRegistration(id: string, userId: string, registrationId: string) {
+    const bot = await endpoint(id, userId);
+    const cloud = connector();
+    if (!cloud) throw conflict("Restore Paperclip Cloud enrollment before continuing");
+    const trustedOrigin = origin();
+    const created = await db.transaction(async (tx) => {
+      const [locked] = await tx.select().from(chatEndpoints)
+        .where(and(eq(chatEndpoints.id, id), eq(chatEndpoints.companyId, bot.companyId))).for("update");
+      const [prior] = await tx.select().from(chatGitHubRegistrations)
+        .where(and(eq(chatGitHubRegistrations.endpointId, id), eq(chatGitHubRegistrations.companyId, bot.companyId)))
+        .orderBy(desc(chatGitHubRegistrations.createdAt)).limit(1).for("update");
+      if (!locked || locked.botExternalId || locked.status !== "draft" ||
+          !prior || prior.id !== registrationId || prior.userId !== userId || !restartable(prior))
+        throw conflict("This registration cannot be restarted. Resume or recover its existing App.");
+      // Retire the old state before issuing a new one. Never repeat a claimed or uncertain exchange.
+      await tx.update(chatGitHubRegistrations).set({ status: "failed", consumedAt: new Date() })
+        .where(eq(chatGitHubRegistrations.id, prior.id));
+      const returnState = nonce();
+      const [next] = await tx.insert(chatGitHubRegistrations).values({
+        companyId: bot.companyId, endpointId: id, userId,
+        stateHash: hash(returnState), trustedOrigin,
+        ownerType: prior.ownerType, ownerLogin: prior.ownerLogin, appName: prior.appName,
+        expiresAt: new Date(Date.now() + 30 * 60_000),
+        handoff: { cloudId: nonce(), returnState, redemptionId: nonce() },
+      }).returning();
+      await logActivity(tx as unknown as Db, {
+        companyId: bot.companyId, actorType: "user", actorId: userId,
+        action: "chat_github.registration_restarted", entityType: "tool_connection", entityId: bot.connectionId,
+        details: { endpointId: id, registrationId: next!.id, previousRegistrationId: prior.id, appNotCreated: true },
+      });
+      return next!;
+    });
+    await setup(bot, { cloudRegistrationId: created.handoff!.cloudId, registrationStatus: "pending", stage: "connect" });
+    return advance(id, userId);
+  }
   async function saveDraft(
     id: string,
     userId: string,
@@ -686,8 +754,10 @@ export function githubChatWizardService(
           return {
             endpointId: id,
             state: "recovery",
-            message:
-              "Recover the App already created on GitHub. An interrupted exchange cannot safely be repeated.",
+            restartableRegistrationId: current && bot.status === "draft" && restartable(current) ? current.id : undefined,
+            message: current && restartable(current)
+              ? "This GitHub handoff expired. If you haven't created the App on GitHub, you can start a new handoff for this draft. Otherwise, recover the existing App."
+              : "Recover the App already created on GitHub. An interrupted exchange cannot safely be repeated.",
           };
         return {
           endpointId: id,
@@ -1406,6 +1476,7 @@ export function githubChatWizardService(
   return {
     saveDraft,
     repairCloud,
+    restartRegistration,
     start,
     advance,
     startIdentity,

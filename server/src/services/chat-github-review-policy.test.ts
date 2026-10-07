@@ -4,6 +4,7 @@ import {
   type GitHubChatConfiguration,
   type GitHubReviewAssessment,
   type GitHubReviewEventContext,
+  type GitHubIssueEventContext,
 } from "@paperclipai/shared";
 import {
   githubReviewConclusion,
@@ -179,6 +180,50 @@ describe("GitHub review authorization and scheduling", () => {
     const config = configuration();
     config.repositories["12"] = { events: [] };
     expect(decide(config).reason).toBe("event_disabled");
+  });
+});
+describe("GitHub issue intake authorization", () => {
+  const issue: GitHubIssueEventContext = {
+    event: "issue_opened", deliveryId: "issue-delivery", repositoryId: "12",
+    repository: "test/repo", issueNumber: 2, title: "Question", body: "",
+    author: context.author, sender: context.sender, labels: [],
+  };
+  it("keeps old policies disabled and requires explicit issue opt-in", () => {
+    const config = configuration();
+    delete config.defaults.issueOpened;
+    expect(decide(config, { context: issue }).reason).toBe("event_disabled");
+    config.defaults.issueOpened = true;
+    expect(decide(config, { context: issue })).toMatchObject({ allowed: true, reason: "automatic_issue" });
+    config.repositories["12"] = { issueOpened: false };
+    expect(decide(config, { context: issue }).reason).toBe("event_disabled");
+  });
+  it("retains repository, member, per-person and responsible-user gates", () => {
+    const config = configuration();
+    config.defaults.issueOpened = true;
+    expect(decide(config, { context: issue, repositoryEnabled: false }).reason).toBe("repository_disabled");
+    expect(decide(config, { context: issue, linkedMemberUserId: null }).reason).toBe("person_not_authorized");
+    expect(decide(config, { context: issue, activeSponsorUserIds: new Set() }).reason).toBe("responsible_user_unavailable");
+    config.people = [{ kind: "member", githubUserId: "42", login: "author", userId: "owner", automaticReviews: false }];
+    expect(decide(config, { context: issue }).reason).toBe("automatic_reviews_disabled_for_person");
+    config.people[0]!.automaticReviews = true;
+    config.memberAccess = "selected";
+    expect(decide(config, { context: issue }).allowed).toBe(true);
+    expect(decide(config, { context: { ...issue, author: { ...issue.author, id: "99" } } }).reason).toBe("person_not_authorized");
+  });
+  it("applies author and label filters while leaving PR-specific branches and events alone", () => {
+    const config = configuration();
+    config.defaults.issueOpened = true;
+    config.defaults.events = [];
+    config.defaults.targetBranches = ["release/*"];
+    config.defaults.excludedBranches = ["*"];
+    expect(decide(config, { context: issue }).allowed).toBe(true);
+    config.defaults.requiredLabels = ["triage"];
+    expect(decide(config, { context: issue }).allowed).toBe(false);
+    expect(decide(config, { context: { ...issue, labels: ["triage"] } }).allowed).toBe(true);
+    config.defaults.requiredLabels = [];
+    expect(decide(config, { context: { ...issue, author: { ...issue.author, isBot: true } } }).reason).toBe("bot_author");
+    config.defaults.excludeAuthors = ["author"];
+    expect(decide(config, { context: issue }).reason).toBe("author_excluded");
   });
 });
 describe("GitHub score validation", () => {
