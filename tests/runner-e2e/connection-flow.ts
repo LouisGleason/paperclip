@@ -141,7 +141,8 @@ async function openAgentPicker(input: ConnectionFlowInput) {
   const { page, api, company } = input;
   const { harness } = connectionCell(input.execution);
   await page.goto(`${api.origin}/${company.issuePrefix}/agents`, { waitUntil: "domcontentloaded" });
-  await page.getByRole("button", { name: "New Agent", exact: true }).click();
+  // Empty companies expose this action in both the header and empty state.
+  await page.getByRole("button", { name: "New Agent", exact: true }).first().click();
   await page.getByRole("textbox", { name: "Agent name", exact: true }).fill(`Connection QA ${input.nonce}`);
   await page.getByRole("button", { name: "Choose harness", exact: true }).click();
   await page.locator("label").filter({ has: page.locator(`input[name="new-agent-adapter"][value=${JSON.stringify(harness.adapter)}]`) }).click();
@@ -273,14 +274,26 @@ export async function runConnectionFlow(input: ConnectionFlowInput) {
   await input.checkpoint("select_model");
   await selectModel(page, settings.model);
   await input.checkpoint("setup_probe");
-  const response = page.waitForResponse(response => response.url().startsWith(`${api.origin}/api/companies/${company.id}/adapters/`) && response.url().endsWith("/test-environment"), { timeout: 120_000 });
-  await page.getByRole("button", { name: /^(Run test|Test again)$/ }).click();
-  const probe = await response;
-  const result = await probe.json();
-  evidence.setupChecks = connectionProbeChecks(result);
+  // Native readiness and provider authentication can be separate requests.
+  // Wait for the production UI's complete result, not the first response.
+  const probes: Promise<{ ok: boolean; result: Row }>[] = [];
+  const recordProbe = (response: import("@playwright/test").Response) => {
+    if (response.url().startsWith(`${api.origin}/api/companies/${company.id}/adapters/`) && response.url().endsWith("/test-environment"))
+      probes.push(response.json().then(result => ({ ok: response.ok(), result })));
+  };
+  page.on("response", recordProbe);
+  let completed: Awaited<(typeof probes)[number]>[];
+  try {
+    await page.getByRole("button", { name: /^(Run test|Test again)$/ }).click();
+    await page.getByRole("button", { name: "Test again", exact: true }).waitFor({ state: "visible", timeout: 180_000 });
+    completed = await Promise.all(probes);
+  } finally {
+    page.off("response", recordProbe);
+  }
+  evidence.setupChecks = [...new Map(completed.flatMap(probe => connectionProbeChecks(probe.result)).map(check => [check.code, check])).values()];
   if (evidence.setupChecks.some(check => check.level === "error" && (check.code === "hermes_cli_not_found" || /^(claude|codex|grok|opencode|gemini)_command_unresolvable$/.test(check.code))))
     throw new ConnectionBlock("blocked_target", "runtime_cli_required");
-  if (!probe.ok() || result.status !== "pass") throw new ConnectionFailure("setup_probe_failed");
+  if (!completed.length || completed.some(probe => !probe.ok || probe.result.status !== "pass")) throw new ConnectionFailure("setup_probe_failed");
   evidence.checkpoints.setup_probe = true;
   await page.getByRole("button", { name: "Finish setup", exact: true }).click();
   let agent: Row | undefined;
@@ -332,6 +345,8 @@ export async function runConnectionFlow(input: ConnectionFlowInput) {
     const deadline = Date.now() + config.turnTimeoutMs;
     while (Date.now() < deadline) {
     input.assertActive();
+      const companyState = await api.get<Row>(`/api/companies/${company.id}`);
+      if (companyState.status !== "active") throw new ConnectionFailure(companyState.pauseReason === "budget" ? "company_budget_stopped_execution" : "company_inactive_during_task");
       const summaries = await api.get<Row[]>(`/api/issues/${issue!.id}/runs`);
       for (const row of summaries) {
         const id = row.runId ?? row.id;
