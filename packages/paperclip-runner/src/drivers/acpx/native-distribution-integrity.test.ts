@@ -211,6 +211,79 @@ describe("native ACPX execution closure", () => {
     expect(() => lease.spawn()).toThrow("closed");
     await lease.close();
   });
+  it("waits for consumed native snapshot deletion before command retirement completes", async () => {
+    const declaration = await fixture();
+    const lease = await (await verifyNativeAcpxInstallation(declaration)).openCommand();
+    const deleting = gate(), releaseDeletion = gate();
+    const originalRm = vi.mocked(rm).getMockImplementation()!;
+    let snapshotRoot = "";
+    vi.mocked(rm).mockImplementation(async (path, options) => {
+      if (String(path).includes("paperclip-acpx-native-")) {
+        snapshotRoot = String(path);
+        deleting.release();
+        await releaseDeletion.promise;
+      }
+      return originalRm(path, options);
+    });
+    let retired = false;
+    let closing: Promise<void> | undefined;
+    try {
+      expect((await output(lease.spawn())).code).toBe(0);
+      await deleting.promise;
+      closing = lease.close().then(() => { retired = true; });
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(retired).toBe(false);
+    } finally {
+      releaseDeletion.release();
+      await closing;
+    }
+    await expect(stat(snapshotRoot)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+  it("retains spawned native bytes until the exact child exits", async () => {
+    const declaration = await fixture({ script: '#!/bin/sh\nprintf ready\nexec sleep 1000\n' });
+    const creatingStart = vi.mocked(mkdir).mock.calls.length;
+    const lease = await (await verifyNativeAcpxInstallation(declaration)).openCommand();
+    const snapshotRoot = dirname(String(vi.mocked(mkdir).mock.calls[creatingStart]![0]));
+    const child = lease.spawn();
+    const exited = once(child, "close");
+    child.stderr!.resume();
+    let retired = false;
+    let closing: Promise<void> | undefined;
+    try {
+      await once(child.stdout!, "data");
+      closing = lease.close().then(() => { retired = true; });
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(retired).toBe(false);
+      expect((await stat(snapshotRoot)).isDirectory()).toBe(true);
+    } finally {
+      child.kill("SIGTERM");
+      await exited;
+      await closing;
+    }
+    await expect(stat(snapshotRoot)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+  it("reports exit-triggered native deletion failure and retries only its retained cleanup", async () => {
+    const declaration = await fixture();
+    const lease = await (await verifyNativeAcpxInstallation(declaration)).openCommand();
+    const deleting = gate();
+    const originalRm = vi.mocked(rm).getMockImplementation()!;
+    let snapshotRoot = "", failed = false;
+    vi.mocked(rm).mockImplementation(async (path, options) => {
+      if (String(path).includes("paperclip-acpx-native-") && !failed) {
+        failed = true;
+        snapshotRoot = String(path);
+        deleting.release();
+        throw new Error("native snapshot deletion denied");
+      }
+      return originalRm(path, options);
+    });
+    expect((await output(lease.spawn())).code).toBe(0);
+    await deleting.promise;
+    await expect(lease.close()).rejects.toThrow("native snapshot deletion denied");
+    expect((await stat(snapshotRoot)).isDirectory()).toBe(true);
+    await lease.close();
+    await expect(stat(snapshotRoot)).rejects.toMatchObject({ code: "ENOENT" });
+  });
   it("gives packaged executables a fresh private extraction cache each launch", async () => {
     const declaration = { ...await fixture(), isolatedCacheEnvironmentName: "COPILOT_PKG_CACHE_HOME" as const };
     const install = await verifyNativeAcpxInstallation(declaration);

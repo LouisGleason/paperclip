@@ -1369,6 +1369,17 @@ function commandLease(
 ): VerifiedAcpxCommandLease {
   let consumed = false;
   let directoriesReleased = false;
+  let spawnedChild: ChildProcess | null = null;
+  let childExit: Promise<void> | null = null;
+  let snapshotCleanup: Promise<void> | null = null;
+  const cleanSnapshot = (): Promise<void> => {
+    if (snapshotCleanup === null) {
+      snapshotCleanup = Promise.resolve().then(() => privateSnapshot?.close());
+      // Exit-triggered cleanup remains observable at the authoritative close.
+      void snapshotCleanup.catch(() => undefined);
+    }
+    return snapshotCleanup;
+  };
   const releaseDirectories = async (): Promise<void> => {
     if (directoriesReleased) return;
     directoriesReleased = true;
@@ -1384,11 +1395,21 @@ function commandLease(
     void releaseDirectories().catch(() => undefined);
   };
   const close = async (): Promise<void> => {
-    if (consumed) return;
+    if (consumed && privateSnapshot === null) return;
     consumed = true;
     verifiedBytes.fill(0);
     await releaseDirectories();
-    await privateSnapshot?.close();
+    // A spawned provider may still read the snapshot. Runtime shutdown runs in
+    // parallel and retires that child; do not remove its bytes or report command
+    // retirement until observed exit and complete snapshot deletion.
+    await childExit;
+    const cleanup = cleanSnapshot();
+    try {
+      await cleanup;
+    } catch (error) {
+      if (snapshotCleanup === cleanup) snapshotCleanup = null;
+      throw error;
+    }
   };
   return {
     spawn(
@@ -1533,6 +1554,21 @@ function commandLease(
                 ],
           },
         );
+        spawnedChild = child;
+        if (privateSnapshot !== null) {
+          childExit = new Promise<void>((resolve) => {
+            child.once("exit", () => resolve());
+            child.once("error", () => {
+              // A failed spawn has no process. Errors from an admitted child
+              // do not prove it exited and must retain its snapshot.
+              if (child.pid === undefined) resolve();
+            });
+          });
+          child.once("exit", () => { void cleanSnapshot(); });
+          child.once("error", () => {
+            if (child.pid === undefined) void cleanSnapshot();
+          });
+        }
         if (guarded) {
           const guardianOwnerPipe = child.stdio[
             providerOwnershipFd - 1
@@ -1562,12 +1598,11 @@ function commandLease(
       } catch (error) {
         verifiedBytes.fill(0);
         releaseDirectoriesBestEffort();
-        void privateSnapshot?.close();
+        spawnedChild?.kill();
+        void Promise.resolve(childExit).then(cleanSnapshot).catch(() => undefined);
         throw error;
       }
       releaseDirectoriesBestEffort();
-      child.once("exit", () => { void privateSnapshot?.close(); });
-      child.once("error", () => { void privateSnapshot?.close(); });
       const sourceInput = child.stdio[COMMAND_SOURCE_FD] as Writable | null;
       if (sourceInput === null) {
         verifiedBytes.fill(0);
