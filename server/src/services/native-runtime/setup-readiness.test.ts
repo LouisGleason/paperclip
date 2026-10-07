@@ -1,12 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, posix } from "node:path";
-const { execute, probe, nativeProbe, remoteManifest, configuredManifest, bundledRunner, runnerBinding } = vi.hoisted(() => ({ execute: vi.fn(), probe: vi.fn(), nativeProbe: vi.fn(), remoteManifest: vi.fn(), configuredManifest: vi.fn(), bundledRunner: vi.fn(), runnerBinding: vi.fn() }));
+const { execute, probe, nativeProbe, remoteManifest, configuredManifest, bundledRunner, runnerBinding, selectedRunner, sshExecute, sshRunner, nativeArtifacts, remoteLauncher, registerPrp } = vi.hoisted(() => ({ execute: vi.fn(), probe: vi.fn(), nativeProbe: vi.fn(), remoteManifest: vi.fn(), configuredManifest: vi.fn(), bundledRunner: vi.fn(), runnerBinding: vi.fn(), selectedRunner: vi.fn(), sshExecute: vi.fn(), sshRunner: vi.fn(), nativeArtifacts: vi.fn(), remoteLauncher: vi.fn(), registerPrp: vi.fn() }));
 vi.mock("@paperclipai/adapter-utils/execution-target", () => ({ runAdapterExecutionTargetShellCommand: execute }));
+vi.mock("./native-ssh-command-runner.js", () => ({ createNativeSshCommandRunner: sshRunner }));
+vi.mock("../../realtime/runner-prp-ws.js", () => ({ registerRunnerPrpAuthority: registerPrp }));
+vi.mock("./native-codex-runner.js", () => ({ resolvePaperclipRunnerBinary: selectedRunner }));
 vi.mock("../../vendor/paperclip-runner/index.js", async (original) => ({ ...await original<typeof import("../../vendor/paperclip-runner/index.js")>(), probeQualifiedAcpxEnvironment: probe, probeNativeRunnerEnvironment: nativeProbe,
   bundledRemoteRunnerBinary: bundledRunner, readRunnerdArtifactBinding: runnerBinding }));
-vi.mock("./native-session-executor.js", async original => ({ ...await original<typeof import("./native-session-executor.js")>(), readBundledRemoteProviderPackManifest: remoteManifest, readRemoteProviderPackManifest: configuredManifest }));
+vi.mock("./native-session-executor.js", async original => ({ ...await original<typeof import("./native-session-executor.js")>(), readBundledRemoteProviderPackManifest: remoteManifest, readRemoteProviderPackManifest: configuredManifest, createRemoteNativeArtifactPreparation: nativeArtifacts, createRemoteRunnerProcessLauncher: remoteLauncher }));
 import { QUALIFIED_ACPX_PROFILES, acpxRuntimeSessionDirectoryName, resolveQualifiedAcpxProfile } from "../../vendor/paperclip-runner/index.js";
 import { assertNativeRunnerSetupReady, assertRemoteAcpxSetupReady, testNativeAcpxAuthentication, testNativeRunnerAuthentication } from "./setup-readiness.js";
 import { requireVerifiedAcpxModel } from "../../vendor/paperclip-runner/testing.js";
@@ -41,9 +44,19 @@ describe("Codex and OpenCode selected native account verification", () => {
   const receipt = (provider: "codex" | "opencode", model: string | null) => ({ provider, effectiveModel: model, providerDriver: provider === "codex" ? "codex_app_server" : "opencode_server", helloProbePassed: true, cleanupConfirmed: true });
   beforeEach(() => {
     execute.mockReset(); nativeProbe.mockReset();
+    sshExecute.mockReset().mockResolvedValue({ exitCode: 0, timedOut: false, stdout: "", stderr: "" });
+    sshRunner.mockReset().mockReturnValue({ execute: sshExecute });
+    nativeArtifacts.mockReset().mockReturnValue({ prepare: vi.fn().mockResolvedValue(undefined) });
+    remoteLauncher.mockReset().mockReturnValue(vi.fn());
+    registerPrp.mockReset().mockImplementation(async () => ({ release: vi.fn() }));
+    vi.stubEnv("PAPERCLIP_RUNNER_PUBLIC_URL", "wss://paperclip.example.test");
+    vi.stubEnv("PAPERCLIP_RUNNER_CA_BUNDLE_PATH", "");
+    vi.stubEnv("PAPERCLIP_RUNNER_REMOTE_CODEX_PATH", "");
+    vi.stubEnv("PAPERCLIP_RUNNER_REMOTE_CODEX_NPM_SPEC", "");
     remoteManifest.mockReset().mockReturnValue({ payload: { artifacts: { nodeCommand: { path: "node_modules/node/bin/node" } } } });
     configuredManifest.mockReset().mockReturnValue({ payload: { artifacts: { nodeCommand: { path: "node_modules/node/bin/node" } } } });
     bundledRunner.mockReset().mockReturnValue("/release/linux-x64/paperclip-runnerd");
+    selectedRunner.mockReset().mockReturnValue("/fixture/bin/paperclip-runnerd");
     runnerBinding.mockReset().mockReturnValue({ version: "1", digest: "sha256:" + "a".repeat(64) });
     vi.stubEnv("PAPERCLIP_RUNNER_REMOTE_PROVIDER_PACK_PATH", "");
     vi.stubEnv("PAPERCLIP_RUNNER_REMOTE_BINARY_PATH", "");
@@ -60,11 +73,109 @@ describe("Codex and OpenCode selected native account verification", () => {
     expect(result.status).toBe("pass");
     const input = nativeProbe.mock.calls[0][0];
     expect(input).toMatchObject({ provider, model, timeoutMs: 45_000, environment: { [key]: "bound-account" } });
+    expect(input.transportOptions.runnerBinary).toBe("/fixture/bin/paperclip-runnerd");
+    expect(selectedRunner).toHaveBeenCalledOnce();
     expect(input.environment.ANTHROPIC_API_KEY).toBeUndefined();
     if (provider === "codex") expect(input.reasoningEffort).toBe("low");
     else expect(input.reasoningEffort).toBeUndefined();
     await expect(stat(input.runtimeDirectory)).rejects.toThrow();
     expect(execute).not.toHaveBeenCalled();
+  });
+  it.each(["host-home", "host-codex-home", "configured-home", "managed-home"] as const)("reuses the task's authorized local Codex home before isolation (%s)", async mode => {
+    vi.stubEnv("HOME", "/host-home");
+    vi.stubEnv("CODEX_HOME", mode === "host-home" ? "" : "/host-codex");
+    vi.stubEnv("OPENAI_API_KEY", "ambient-key-is-not-authorized");
+    nativeProbe.mockResolvedValue(receipt("codex", "observed-model"));
+    const config = mode === "configured-home" || mode === "managed-home" ? { env: { CODEX_HOME: "/configured-codex" } } : {};
+    expect((await testNativeRunnerAuthentication({ companyId: "company", adapterType: "paperclip_runner", config,
+      ...(mode === "managed-home" ? { managedAiCredentialHome: "/managed-codex" } : {}) }, "codex", null)).status).toBe("pass");
+    const input = nativeProbe.mock.calls[0][0];
+    expect(input.transportOptions.sourceCodexHome).toBe({ "host-home": "/host-home/.codex", "host-codex-home": "/host-codex", "configured-home": "/configured-codex", "managed-home": "/managed-codex" }[mode]);
+    expect(input.environment.OPENAI_API_KEY).toBeUndefined();
+    expect(input.environment.HOME).toBeUndefined();
+    expect(input.runtimeDirectory).not.toContain("host-home");
+  });
+  const sshContext = { companyId: "company", adapterType: "paperclip_runner", config: {}, executionTarget: {
+    kind: "remote" as const, transport: "ssh" as const, remoteCwd: "/qa-workspace", spec: { host: "qa-host", username: "qa-user", port: 22, remoteCwd: "/qa-workspace", remoteWorkspacePath: "/qa-workspace", privateKey: null, knownHosts: null, strictHostKeyChecking: true },
+  } };
+  it("uses task staging and the company-scoped native SSH transport without a provider pack", async () => {
+    remoteManifest.mockImplementation(() => { throw new Error("SSH has no provider pack"); });
+    bundledRunner.mockImplementation(() => { throw new Error("SSH has no npm release manifest"); });
+    let released = false;
+    registerPrp.mockResolvedValue({ release: async () => { released = true; } });
+    nativeProbe.mockImplementation(async input => {
+      const registration = await input.transportOptions.controlPlaneRegistration({ marker: "native-authority" });
+      expect(registration.connection).toMatchObject({ mode: "connect", connectUrl: expect.stringMatching(/^wss:\/\/paperclip\.example\.test\/api\/runner\/v1\/connect\//) });
+      await registration.release();
+      await input.onCleanupConfirmed();
+      return receipt("codex", "gpt-6.1-sol");
+    });
+    expect((await testNativeRunnerAuthentication({ ...sshContext, config: { env: { OPENAI_API_KEY: "company-account" }, modelReasoningEffort: "low" } }, "codex", "gpt-6.1-sol")).status).toBe("pass");
+    const input = nativeProbe.mock.calls[0][0];
+    expect(input).toMatchObject({ reasoningEffort: "low", environment: { OPENAI_API_KEY: "company-account" }, workingDirectory: expect.stringMatching(/^\/qa-workspace\/.paperclip-runtime\/paperclip-native-setup-.*\/filesystem\/workspace$/) });
+    expect(input.transportOptions).toMatchObject({ runnerBinary: "/fixture/bin/paperclip-runnerd", codexCommand: expect.stringMatching(/\/bin\/codex$/), runnerFilesystemRoot: expect.stringMatching(/\/filesystem$/) });
+    expect(nativeArtifacts).toHaveBeenCalledWith(expect.objectContaining({ controllerRunnerBinary: "/fixture/bin/paperclip-runnerd", model: "gpt-6.1-sol" }));
+    expect(nativeArtifacts.mock.results[0]!.value.prepare).toHaveBeenCalledWith("dial_wss");
+    expect(registerPrp).toHaveBeenCalledWith({ companyId: "company", runId: input.transportOptions.prpIdentity.runId, authority: { marker: "native-authority" } });
+    expect(remoteLauncher).toHaveBeenCalledWith(expect.objectContaining({ runnerInstanceId: input.transportOptions.prpIdentity.runnerInstanceId }));
+    expect(released).toBe(true);
+    expect(sshExecute.mock.calls.at(-1)![0]).toMatchObject({ command: "rm", args: ["-rf", "--", expect.stringContaining("paperclip-native-setup-")] });
+    expect(sshExecute.mock.calls.some(([value]) => JSON.stringify(value).includes("company-account"))).toBe(false);
+    expect(remoteManifest).not.toHaveBeenCalled(); expect(configuredManifest).not.toHaveBeenCalled(); expect(bundledRunner).not.toHaveBeenCalled(); expect(execute).not.toHaveBeenCalled();
+  });
+  it.each(["runtime missing", "authentication failed: selected-key", "no native completion", "model mismatch"])("fails SSH native setup without a legacy fallback (%s)", async message => {
+    nativeProbe.mockRejectedValue(new Error(message));
+    const result = await testNativeRunnerAuthentication({ ...sshContext, config: { env: { OPENAI_API_KEY: "selected-key" } } }, "codex", "gpt-6.1-sol");
+    expect(result.status).toBe("fail"); expect(JSON.stringify(result)).not.toContain("selected-key");
+    expect(nativeProbe).toHaveBeenCalledOnce(); expect(execute).not.toHaveBeenCalled();
+    expect(sshExecute.mock.calls.some(([value]) => value.command === "rm")).toBe(false);
+    expect((await stat(nativeProbe.mock.calls[0][0].runtimeDirectory)).isDirectory()).toBe(true);
+  });
+  it("fails SSH transport eligibility before staging or opening the native provider", async () => {
+    vi.stubEnv("PAPERCLIP_RUNNER_PUBLIC_URL", "");
+    expect((await testNativeRunnerAuthentication(sshContext, "codex", null)).status).toBe("fail");
+    expect(sshExecute).not.toHaveBeenCalled(); expect(nativeArtifacts).not.toHaveBeenCalled(); expect(nativeProbe).not.toHaveBeenCalled();
+  });
+  it.each([true, false])("removes SSH probe state only after confirmed teardown (%s)", async confirmed => {
+    nativeProbe.mockImplementation(async input => {
+      const registration = await input.transportOptions.controlPlaneRegistration({});
+      await registration.release();
+      if (confirmed) await input.onCleanupConfirmed();
+      throw new Error("authentication failed");
+    });
+    expect((await testNativeRunnerAuthentication(sshContext, "codex", null)).status).toBe("fail");
+    expect(sshExecute.mock.calls.some(([value]) => value.command === "rm")).toBe(confirmed);
+    const root = nativeProbe.mock.calls[0][0].runtimeDirectory;
+    if (confirmed) await expect(stat(root)).rejects.toThrow(); else expect((await stat(root)).isDirectory()).toBe(true);
+  });
+  it.each(["same-account", "another-account", "read-failure", "uncertain-close"] as const)("preserves managed SSH account refresh and confirmed cleanup (%s)", async mode => {
+    const home = await mkdtemp(join(tmpdir(), "native-ssh-managed-account-"));
+    const auth = (account: string, marker: string, age: number) => JSON.stringify({ tokens: { account_id: account, id_token: `id-${marker}`, access_token: `access-${marker}`, refresh_token: `refresh-${marker}` }, last_refresh: new Date(Date.now() - age).toISOString() });
+    try {
+      await writeFile(join(home, "auth.json"), auth("qa-account", "old", 120_000), { mode: 0o600 });
+      const refreshed = auth(mode === "another-account" ? "different-account" : "qa-account", "new", 60_000);
+      sshExecute.mockImplementation(async input => ({ exitCode: input.args?.[2] === "paperclip-native-refresh" && mode === "read-failure" ? 1 : 0, timedOut: false,
+        stdout: input.args?.[2] === "paperclip-native-refresh" ? Buffer.from(refreshed).toString("base64") : "", stderr: "" }));
+      nativeProbe.mockImplementation(async input => {
+        const registration = await input.transportOptions.controlPlaneRegistration({});
+        await registration.release();
+        const original = new Error("authentication failed in native SSH" + (mode === "uncertain-close" ? "; daemon teardown was not confirmed" : ""));
+        try { await input.onCodexCredentialRefresh(posix.join(input.transportOptions.runnerFilesystemRoot, "codex-home", "auth.json")); }
+        catch (error) { throw new AggregateError([original, error], original.message + "; " + (error as Error).message, { cause: original }); }
+        if (mode !== "uncertain-close") await input.onCleanupConfirmed();
+        throw original;
+      });
+      const result = await testNativeRunnerAuthentication({ ...sshContext, managedAiCredentialHome: home }, "codex", "gpt-6.1-sol");
+      expect(result.status).toBe("fail"); expect(result.checks[0].message).toContain("authentication failed in native SSH");
+      expect(JSON.parse(await readFile(join(home, "auth.json"), "utf8")).tokens.access_token).toBe(mode === "same-account" || mode === "uncertain-close" ? "access-new" : "access-old");
+      expect(sshExecute.mock.calls.some(([input]) => input.command === "rm")).toBe(mode === "same-account" || mode === "another-account");
+      expect(JSON.stringify(result)).not.toContain("access-new");
+      const read = sshExecute.mock.calls.find(([input]) => input.args?.[2] === "paperclip-native-refresh")![0];
+      expect(read.command).toBe("sh"); expect(read.args[1]).toContain("head -c 65537"); expect(read.args[1]).toContain("test ! -L");
+      expect(nativeProbe.mock.calls[0][0].transportOptions.sourceCodexHome).toBe(home);
+      if (mode === "read-failure") expect(result.checks[0].message).toContain("refresh handoff unavailable");
+      if (mode === "uncertain-close") expect(result.checks[0].message).toContain("teardown was not confirmed");
+    } finally { await rm(home, { recursive: true, force: true }); }
   });
   it.each(["codex", "opencode"] as const)("probes native %s in the selected remote pack with env-only credentials", async provider => {
     const model = provider === "codex" ? "gpt-6.1-sol" : "openrouter/example/model";

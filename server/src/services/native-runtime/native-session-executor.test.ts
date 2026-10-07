@@ -24,7 +24,7 @@ import { execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { inspect } from "node:util";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import {
   heartbeatRuns,
   heartbeatRunEvents,
@@ -308,6 +308,7 @@ import {
   closeIdleWarmNativeSessionsForRestart,
   createGovernedWaitEventObservation,
   createRemoteRunnerProcessLauncher,
+  createRemoteNativeArtifactPreparation,
   createRunnerdBackend,
   executePaperclipNativeSession,
   detachNativeSessionsForRestart,
@@ -2379,6 +2380,50 @@ describe("remote preinstalled executable discovery", () => {
     ).toBe(false);
     expect(mayUsePreinstalledRunnerArtifact("  ")).toBe(true);
     expect(mayUsePreinstalledRunnerArtifact(undefined)).toBe(true);
+  });
+});
+
+describe("shared native remote artifact staging", () => {
+  it.each(["qualified", "unsupported-codex", "missing-codex"] as const)("stages the task's daemon and verifies Codex without a provider pack (%s)", async mode => {
+    const root = await mkdtemp(join(tmpdir(), "native-ssh-artifacts-"));
+    const guestBin = join(root, "guest-bin");
+    const runtime = join(root, "owned-runtime");
+    const controllerRunner = resolve("packages/paperclip-runner/runner/target/debug/paperclip-runnerd");
+    try {
+      await mkdir(guestBin, { mode: 0o700 });
+      if (mode !== "missing-codex") {
+        await writeFile(join(guestBin, "codex"), `#!/bin/sh\nprintf 'codex-cli ${mode === "unsupported-codex" ? "0.148.9" : "0.160.0"}\\n'\n`, { mode: 0o700 });
+      }
+      const calls: Array<{ command: string; args?: string[]; stdin?: string }> = [];
+      const runner = { execute: async (input: { command: string; args?: string[]; stdin?: string }) => {
+        calls.push(input);
+        try {
+          const stdout = execFileSync(input.command, input.args ?? [], { cwd: root, input: input.stdin,
+            env: { PATH: `${guestBin}:/usr/bin:/bin`, HOME: root }, encoding: "utf8", maxBuffer: 1024 * 1024 });
+          return { exitCode: 0, timedOut: false, stdout, stderr: "", signal: null, pid: null, startedAt: new Date(0).toISOString() };
+        } catch (error) {
+          const failure = error as { status: number; stdout?: Buffer; stderr?: Buffer };
+          return { exitCode: failure.status ?? 1, timedOut: false, stdout: String(failure.stdout ?? ""), stderr: String(failure.stderr ?? ""), signal: null, pid: null, startedAt: new Date(0).toISOString() };
+        }
+      } };
+      const remoteBinary = join(runtime, "bin", "paperclip-runnerd");
+      const remoteCodex = join(runtime, "bin", "codex");
+      const artifacts = createRemoteNativeArtifactPreparation({ target: { kind: "remote", transport: "ssh", remoteCwd: root, spec: {} as never }, runner,
+        remoteBinary, controllerRunnerBinary: controllerRunner, remoteRuntimeRoot: runtime, remoteCodexBinary: remoteCodex, model: "gpt-6.1-sol" });
+      if (mode === "qualified") {
+        await artifacts.prepare("dial_wss");
+        await artifacts.verifyRemoteRunner("dial_wss");
+        await artifacts.verifyRemoteCodex();
+        expect(createHash("sha256").update(await readFile(remoteBinary)).digest("hex")).toBe(createHash("sha256").update(await readFile(controllerRunner)).digest("hex"));
+        expect(await readFile(remoteCodex, "utf8")).toContain(`exec '${join(guestBin, "codex")}' "$@"`);
+      } else {
+        await expect(artifacts.prepare("dial_wss")).rejects.toThrow(mode === "missing-codex" ? "runner_remote_codex_artifact_unavailable" : "runner_remote_provider_artifact_incompatible");
+        await expect(access(remoteCodex)).rejects.toThrow();
+      }
+      expect(calls.some(input => JSON.stringify(input.args).includes("provider-pack"))).toBe(false);
+      expect(calls.some(input => input.command === "npm")).toBe(false);
+      expect(calls.filter(input => input.command.endsWith("codex")).every(input => input.args?.[0] === "--version")).toBe(true);
+    } finally { await rm(root, { recursive: true, force: true }); }
   });
 });
 

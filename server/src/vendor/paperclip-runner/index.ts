@@ -128,7 +128,7 @@ export const probeQualifiedAcpxEnvironment = runner.probeQualifiedAcpxEnvironmen
 // declarations remain intact. The server build replaces this shim entirely.
 type NativeRunnerProbe = (options: {
   runtimeDirectory: string; provider: "codex" | "opencode"; model: string | null;
-  reasoningEffort?: string; environment: NodeJS.ProcessEnv; timeoutMs?: number;
+  reasoningEffort?: string; environment: NodeJS.ProcessEnv; timeoutMs?: number; workingDirectory?: string;
   transportOptions?: import("@paperclipai/paperclip-runner").RunnerdCodexTransportOptions;
   onCodexCredentialRefresh?: (filename: string) => Promise<void>;
   onCleanupConfirmed?: () => Promise<void>;

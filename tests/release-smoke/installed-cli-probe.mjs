@@ -87,16 +87,20 @@ export async function inspectInstalledProviderReadiness({ server, commandPath = 
   } catch (error) { failures.push(`Codex: ${error.message}`); }
   try {
     const installed = join(server, 'dist/vendor/paperclip-runner/drivers/acpx');
-    const { probeAcpxClaudeInstallation } = await import(pathToFileURL(join(installed, 'installation-integrity.js')).href);
+    const { createAcpxPackageJsonResolver, verifyQualifiedAcpxInstallation } = await import(pathToFileURL(join(installed, 'installation-integrity.js')).href);
     const { resolveQualifiedAcpxProfile } = await import(pathToFileURL(join(installed, 'qualified-profiles.js')).href);
     const model = 'claude-sonnet-5';
     const profile = resolveQualifiedAcpxProfile('claude', model);
-    // This existing verifier checks the pinned bridge, SDK, platform executable,
-    // and command lease. It never starts a provider session.
-    await probeAcpxClaudeInstallation(model);
+    // The vendored production sidecar binds package authority to serverRoot.
+    // An unbound probe could borrow a hoisted package the real launch rejects.
+    const installation = await verifyQualifiedAcpxInstallation(profile,
+      createAcpxPackageJsonResolver(server, join(server, 'package.json')));
+    const lease = await installation.openCommand();
+    await lease.close();
     readiness.claude = { agentServerPackage: profile.agentServerPackage, agentServerVersion: profile.agentServerVersion,
       agentRuntimePackage: profile.agentRuntimePackage, agentRuntimeVersion: profile.agentRuntimeVersion,
-      commandDigest: profile.commandDigest, installationIntegrityPassed: true, commandLeasePassed: true };
+      commandDigest: profile.commandDigest, packageAuthority: server,
+      installationIntegrityPassed: true, commandLeasePassed: true };
   } catch (error) { failures.push(`Claude: ${error.message}`); }
   if (failures.length) {
     const error = new Error(`Installed provider readiness failed: ${failures.join('; ')}`);
@@ -168,6 +172,17 @@ export function installedProbePaths(input = {}) {
   assert.ok(base.protocol === 'http:' && base.hostname === '127.0.0.1' && Number(base.port) >= 1024
     && !base.username && !base.password && base.pathname === '/' && !base.search && !base.hash, 'Installed probe requires an explicit loopback URL');
   return paths;
+}
+
+export function installedProbeMode(mode, sourceRevision) {
+  assert.ok(mode === undefined || ['offline', 'browser', 'host-source', 'browser-host-source'].includes(mode), 'Invalid installed probe mode');
+  const allowHostOnlyDaemon = mode === 'host-source' || mode === 'browser-host-source';
+  // The source control is separate from assembled public-package acceptance.
+  // inspectInstalledDaemon additionally binds this SHA to installed build-info
+  // and still verifies the selected binary, platform and metadata contracts.
+  if (allowHostOnlyDaemon) assert.match(sourceRevision ?? '', /^[a-f0-9]{40}$/, 'Host-source qualification requires an exact source receipt');
+  return { browser: mode === 'browser' || mode === 'browser-host-source', allowHostOnlyDaemon,
+    qualificationScope: allowHostOnlyDaemon ? 'exact-source host-only packaging control' : 'assembled public npm package' };
 }
 
 /** Real HTTP and installed-byte checks shared by the finite release fixture. */
@@ -304,8 +319,8 @@ async function run() {
     console.log(JSON.stringify({ ...ui, providerReadiness }));
     return;
   }
-  assert.ok((mode === undefined || mode === 'offline' || mode === 'browser') && !extraArguments.length, 'Invalid installed probe arguments');
-  const browser = mode === 'browser';
+  assert.ok(!extraArguments.length, 'Invalid installed probe arguments');
+  const { browser, allowHostOnlyDaemon, qualificationScope } = installedProbeMode(mode, sourceRevision);
   const paths = installedProbePaths(pathsFile ? JSON.parse(readFileSync(pathsFile, 'utf8')) : {});
   const cli = join(paths.consumer, 'node_modules/paperclipai/dist/index.js');
   const server = join(paths.consumer, 'node_modules/@paperclipai/server');
@@ -334,8 +349,9 @@ async function run() {
   try {
     const ui = await inspectInstalledUi({ base: paths.base, server, sourceRevision,
       assertRunning: () => { if (child.exitCode !== null || child.signalCode !== null) throw new Error('Installed CLI exited before its server became ready'); } });
-    const providerReadiness = await inspectInstalledProviderReadiness({ server, sourceRevision });
-    receipt = { cliVersion: version, cliSha256: sha256(readFileSync(cli)), installedCliStartupPassed: true, ...ui, providerReadiness, providerCalls: 0 };
+    const providerReadiness = await inspectInstalledProviderReadiness({ server, sourceRevision, allowHostOnlyDaemon });
+    receipt = { cliVersion: version, cliSha256: sha256(readFileSync(cli)), installedCliStartupPassed: true,
+      qualificationScope, ...ui, providerReadiness, providerCalls: 0 };
     if (browser) {
       const invitePath = output.match(/\/invite\/(pcp_bootstrap_[a-zA-Z0-9]+)/)?.[0];
       assert.ok(invitePath, 'The ordinary installed CLI must offer its bootstrap invite');

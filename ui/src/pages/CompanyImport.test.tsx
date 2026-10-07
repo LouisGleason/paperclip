@@ -85,6 +85,14 @@ vi.mock("../api/sidebarPreferences", () => ({
   sidebarPreferencesApi: mockSidebarPreferencesApi,
 }));
 
+vi.mock("../api/instanceSettings", () => ({
+  instanceSettingsApi: {
+    getExperimental: async () => ({ enableManagedSandboxOnly: false }),
+    getGeneral: async () => ({ executionMode: "any" }),
+    get: async () => ({ general: {}, experimental: {} }),
+  },
+}));
+
 vi.mock("../context/BreadcrumbContext", () => ({
   useBreadcrumbs: () => ({ setBreadcrumbs: vi.fn() }),
 }));
@@ -100,9 +108,11 @@ vi.mock("../context/CompanyContext", () => ({
 
 vi.mock("../context/ToastContext", () => ({
   useToastActions: () => ({ pushToast: mockPushToast }),
+  useOptionalToastActions: () => ({ pushToast: mockPushToast }),
 }));
 
 vi.mock("@/components/ui/tooltip", () => ({
+  TooltipProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
   Tooltip: ({ children }: { children: ReactNode }) => <>{children}</>,
   TooltipContent: ({ children }: { children: ReactNode }) => <span>{children}</span>,
   TooltipTrigger: ({ children }: { children: ReactNode }) => <>{children}</>,
@@ -1092,11 +1102,113 @@ describe("CompanyImport", () => {
     await settle();
 
     expect(lastImportMeta().adapterOverrides).toEqual({
-      coder: { adapterType: "codex_local", runner: "auto" },
+      coder: { adapterType: "codex_local", runner: "auto", adapterConfig: {} },
     });
   });
 
-  it("hides Paperclip Runner import configuration while its experimental flag is off", async () => {
+  it.each([
+    ["paperclip_runner", "paperclip"],
+    ["codex_local", "legacy"],
+  ] as const)("clears incompatible %s configuration when changing the imported harness", async (adapterType, runner) => {
+    const preview = buildMixedAdapterPreviewResult();
+    preview.manifest.agents[0] = {
+      ...preview.manifest.agents[0], adapterType, runner,
+      adapterConfig: { ...(adapterType === "paperclip_runner" ? { provider: "codex" } : {}),
+        model: "codex-specific-model", env: { CODEX_HOME: "/source/account" } },
+    };
+    mockCompaniesApi.importPreview.mockResolvedValue(preview);
+    mockAdaptersApi.list.mockResolvedValue([
+      { type: "paperclip_runner", disabled: false },
+      { type: "codex_local", disabled: false },
+      { type: "process", disabled: false },
+    ]);
+    await renderPage();
+    await enterGithubUrl();
+    await clickButton((text) => text === "Preview import");
+    const harness = findAdapterSelects()[0];
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!.call(harness, "process");
+      harness.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await clickButton((text) => text === "configure adapter");
+    await clickButton((text) => text === "Advanced");
+    const command = container.querySelector<HTMLInputElement>('input[placeholder="e.g. node, python"]');
+    expect(command).toBeTruthy();
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(command, "node");
+      command!.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await clickButton((text) => text.startsWith("Import 3 file"));
+    await settle();
+    expect(lastImportMeta().adapterOverrides).toMatchObject({
+      coder: { adapterType: "process", runner: "auto", adapterConfig: { command: "node" } },
+    });
+    const payload = JSON.stringify(lastImportMeta().adapterOverrides);
+    expect(payload).not.toContain("codex-specific-model");
+    expect(payload).not.toContain("/source/account");
+    expect(payload).not.toContain('"provider":"codex"');
+  });
+
+  it("preserves the imported legacy runner and account while configuring the same harness", async () => {
+    const preview = buildMixedAdapterPreviewResult();
+    preview.manifest.agents[0] = {
+      ...preview.manifest.agents[0], adapterType: "codex_local", runner: "legacy",
+      adapterConfig: { model: "codex-specific-model", env: { CODEX_HOME: "/source/account" } },
+    };
+    mockCompaniesApi.importPreview.mockResolvedValue(preview);
+    await renderPage();
+    await enterGithubUrl();
+    await clickButton((text) => text === "Preview import");
+    await clickButton((text) => text === "configure adapter");
+    await clickButton((text) => text === "Advanced");
+    const command = container.querySelector<HTMLInputElement>('input[placeholder="codex"]');
+    expect(command).toBeTruthy();
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(command, "/qa/codex");
+      command!.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await clickButton((text) => text.startsWith("Import 3 file"));
+    await settle();
+    expect(lastImportMeta().adapterOverrides).toMatchObject({ coder: {
+      adapterType: "codex_local", runner: "legacy", adapterConfig: {
+        command: "/qa/codex", model: "codex-specific-model", env: { CODEX_HOME: "/source/account" },
+      },
+    } });
+  });
+
+  it.each([
+    ["codex_local", "legacy"],
+    ["paperclip_runner", "paperclip"],
+  ] as const)("preserves the %s runner when a harness change is reverted", async (adapterType, runner) => {
+    const preview = buildMixedAdapterPreviewResult();
+    preview.manifest.agents[0] = {
+      ...preview.manifest.agents[0], adapterType, runner,
+      adapterConfig: { ...(adapterType === "paperclip_runner" ? { provider: "codex" } : {}),
+        model: "codex-specific-model", env: { CODEX_HOME: "/source/account" } },
+    };
+    mockCompaniesApi.importPreview.mockResolvedValue(preview);
+    mockAdaptersApi.list.mockResolvedValue([
+      { type: "paperclip_runner", disabled: false },
+      { type: "codex_local", disabled: false },
+      { type: "process", disabled: false },
+    ]);
+    await renderPage();
+    await enterGithubUrl();
+    await clickButton((text) => text === "Preview import");
+    const harness = findAdapterSelects()[0];
+    for (const type of ["process", "codex_local"]) {
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!.call(harness, type);
+        harness.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+    }
+    await clickButton((text) => text.startsWith("Import 3 file"));
+    await settle();
+    if (adapterType === "codex_local") expect(lastImportMeta().adapterOverrides).toBeUndefined();
+    else expect(lastImportMeta().adapterOverrides).toEqual({ coder: { adapterType: "codex_local", runner } });
+  });
+
+  it("keeps a disabled Paperclip Runner adapter out of the harness picker", async () => {
     mockAdaptersApi.list.mockResolvedValue([
       { type: "claude_local", disabled: false },
       { type: "codex_local", disabled: false },
@@ -1110,7 +1222,7 @@ describe("CompanyImport", () => {
     }
   });
 
-  it("keeps the runner out of the harness picker even when its old flag is enabled", async () => {
+  it("keeps an enabled Paperclip Runner adapter out of the harness picker", async () => {
     mockAdaptersApi.list.mockResolvedValue([
       { type: "claude_local", disabled: false },
       { type: "codex_local", disabled: false },
@@ -1140,7 +1252,7 @@ describe("CompanyImport", () => {
     // Only the unavailable agent is overridden; the claude_local agent still
     // carries no override and keeps its manifest adapter.
     expect(lastImportMeta().adapterOverrides).toEqual({
-      researcher: { adapterType: "claude_local", runner: "auto" },
+      researcher: { adapterType: "claude_local", runner: "auto", adapterConfig: {} },
     });
   });
 
@@ -1158,8 +1270,8 @@ describe("CompanyImport", () => {
     await settle();
 
     expect(lastImportMeta().adapterOverrides).toEqual({
-      researcher: { adapterType: "gemini_local", runner: "auto" },
-      coder: { adapterType: "gemini_local", runner: "auto" },
+      researcher: { adapterType: "gemini_local", runner: "auto", adapterConfig: {} },
+      coder: { adapterType: "gemini_local", runner: "auto", adapterConfig: {} },
     });
   });
 

@@ -143,6 +143,14 @@ ENV NODE_OPTIONS=--max-old-space-size=4096
 RUN pnpm --filter @paperclipai/server build
 RUN test -f server/dist/index.js || (echo "ERROR: server build output missing" && exit 1)
 RUN rm -rf packages/paperclip-runner/runner/target
+# Vendored local ACPX execution binds package authority to server/node_modules.
+# pnpm links into the workspace store cannot satisfy that boundary. Reuse the
+# public-package producer to materialize only this image's existing qualified
+# native target, with dependency scripts disabled and runtime authority intact.
+# ARM64 remains usable through legacy adapters while native qualification is
+# limited to the source-owned supported targets.
+ARG TARGETARCH
+RUN node scripts/prepare-bundled-package.mjs --docker-provider-graph /app/server "${TARGETARCH}"
 
 # Remote OpenCode and ACPX runs require a controller-owned provider pack to
 # verify the sandbox installation or stage matching assets. Ship it in the

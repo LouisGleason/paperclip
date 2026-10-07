@@ -6920,6 +6920,8 @@ export async function probeNativeRunnerEnvironment(options: {
   reasoningEffort?: string;
   environment: NodeJS.ProcessEnv;
   timeoutMs?: number;
+  /** The selected remote filesystem supplies this cwd; never inspect it on the controller. */
+  workingDirectory?: string;
   transportOptions?: CapabilityRunnerdCodexTransportOptions;
   onCodexCredentialRefresh?: (filename: string) => Promise<void>;
   onCleanupConfirmed?: () => Promise<void>;
@@ -6930,17 +6932,41 @@ export async function probeNativeRunnerEnvironment(options: {
   helloProbePassed: true;
 }> {
   const environment = { ...options.environment };
-  const workingDirectory = resolve(options.runtimeDirectory, "workspace");
-  mkdirSync(workingDirectory, { mode: 0o700 });
+  const remoteFilesystemRoot = options.transportOptions?.runnerFilesystemRoot;
+  if (options.workingDirectory !== undefined && !remoteFilesystemRoot) throw new Error("Native setup remote working directory requires a remote runner filesystem.");
+  const workingDirectory = options.workingDirectory ?? resolve(options.runtimeDirectory, "workspace");
+  if (!remoteFilesystemRoot) mkdirSync(workingDirectory, { mode: 0o700 });
+  const controller = new AbortController();
+  let registrationTeardownError: unknown;
+  let registrationOperation: Promise<unknown> | undefined;
   const sourceCodexHome = options.transportOptions?.sourceCodexHome ?? resolveSourceCodexHome(environment);
   // Never let an unbound home or an external-sandbox flag admit host state or
   // weaken this read-only probe. The normal materializer copies bound auth and
   // the managed provider projection into a new daemon-owned Codex home.
   delete environment.PAPERCLIP_RUNNER_EXTERNAL_SANDBOX;
-  environment.HOME = resolve(options.runtimeDirectory, "probe-home");
-  environment.CODEX_HOME = resolve(options.runtimeDirectory, "codex-home");
+  environment.HOME = resolve(remoteFilesystemRoot ?? options.runtimeDirectory, "probe-home");
+  environment.CODEX_HOME = resolve(remoteFilesystemRoot ?? options.runtimeDirectory, "codex-home");
+  environment.PAPERCLIP_WORKSPACE_CWD = workingDirectory;
   const bundle = createRunnerdCodexTransport({
     ...options.transportOptions,
+    ...(options.transportOptions?.controlPlaneRegistration ? { controlPlaneRegistration: (authority, identity) => {
+      const operation = (async () => {
+        controller.signal.throwIfAborted();
+        const registration = await options.transportOptions!.controlPlaneRegistration!(authority, identity);
+        if (controller.signal.aborted) {
+          try { await registration.release(); }
+          catch (error) { registrationTeardownError = error; throw error; }
+          controller.signal.throwIfAborted();
+        }
+        return registration;
+      })();
+      registrationOperation = operation;
+      return operation;
+    } } : {}),
+    ...(options.transportOptions?.runnerProcessLauncher ? { runnerProcessLauncher: spec => {
+      controller.signal.throwIfAborted();
+      return options.transportOptions!.runnerProcessLauncher!(spec);
+    } } : {}),
     provider: options.provider,
     sourceCodexHome: sourceCodexHome ?? "",
     stateDirectory: options.runtimeDirectory,
@@ -6967,8 +6993,8 @@ export async function probeNativeRunnerEnvironment(options: {
     environment,
     transportFactory: () => bundle.transport,
     requireProviderSessionIdentity: true,
+    ...(remoteFilesystemRoot ? { workingDirectoryAuthority: "remote_runner" as const } : {}),
   });
-  const controller = new AbortController();
   let rejectAborted!: (error: unknown) => void;
   const aborted = new Promise<never>((_resolve, reject) => { rejectAborted = reject; });
   const timer = setTimeout(() => {
@@ -7043,8 +7069,10 @@ export async function probeNativeRunnerEnvironment(options: {
       if (bundle.evidence().runnerPid !== null && !bundle.evidence().runnerExited) throw new Error("Native setup probe cleanup is incomplete.");
     } catch (error) { teardownErrors.push(error); }
     await operation.catch(() => undefined);
+    await registrationOperation?.catch(() => undefined);
+    if (registrationTeardownError !== undefined) teardownErrors.push(registrationTeardownError);
     if (bundle.evidence().runnerPid !== null && bundle.evidence().runnerExited && options.provider === "codex" && options.onCodexCredentialRefresh) {
-      try { await options.onCodexCredentialRefresh(resolve(options.runtimeDirectory, "codex-home", "auth.json")); }
+      try { await options.onCodexCredentialRefresh(resolve(remoteFilesystemRoot ?? options.runtimeDirectory, "codex-home", "auth.json")); }
       catch (error) { teardownErrors.push(error); }
     }
     if (!teardownErrors.length && options.onCleanupConfirmed) {

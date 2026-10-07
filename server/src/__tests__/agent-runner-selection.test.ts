@@ -42,9 +42,13 @@ describe("server-owned agent runner selection", () => {
     state.overrides.add("codex_local");
     expect(resolveNewAgentRunner({ adapterType: "codex_local" }).adapterType).toBe("codex_local");
   });
-  it("uses legacy on an unqualified execution platform", () => {
-    const input = { adapterType: "grok_local", target: { driver: "local", platform: "darwin", architecture: "x64" } };
-    expect(resolveNewAgentRunner(input).adapterType).toBe("grok_local");
+  it.each([
+    ["grok_local", "darwin", "x64"],
+    ...["codex_local", "claude_local", "opencode_local", "grok_local", "cursor"].map(harness => [harness, "linux", "arm64"]),
+  ])("uses legacy for %s on an unqualified %s/%s execution platform", (adapterType, platform, architecture) => {
+    const input = { adapterType, target: { driver: "local", platform, architecture } };
+    expect(agentRunnerAvailability(adapterType, input.target)).toEqual({ supportedRunners: ["legacy"], defaultRunner: "legacy" });
+    expect(resolveNewAgentRunner(input).adapterType).toBe(adapterType);
     expect(() => resolveNewAgentRunner({ ...input, runner: "paperclip" })).toThrow(/unavailable/);
   });
   it("does not fall back for unsupported custom settings or invalid native models", () => {

@@ -105,6 +105,11 @@ try {
   }
   const builtRevision = JSON.parse(readFileSync(join(repo, 'server/dist/build-info.json'), 'utf8')).commit;
   assert.equal(builtRevision, sourceRevision, 'Public packages must be built from the selected source revision');
+  // Canary's existing source-pack control builds only this host's daemon. The
+  // paired release qualification supplies validated three-target assets and
+  // must retain the full release-manifest requirement in every consumer.
+  const installedMode = env.PAPERCLIP_RELEASE_RUNNER_ASSETS ? 'offline' : 'host-source';
+  const installedBrowserMode = env.PAPERCLIP_RELEASE_RUNNER_ASSETS ? 'browser' : 'browser-host-source';
   if (env.PAPERCLIP_RELEASE_RUNNER_ASSETS) {
     for (const output of ['packages/paperclip-runner/dist', 'server/dist/vendor/paperclip-runner']) {
       run(process.execPath, [join(repo, 'scripts/release-runner-artifacts.mjs'), 'copy', sourceRevision,
@@ -247,7 +252,7 @@ try {
   // The pinned image's node user has a passwd entry required by initdb. Only
   // its private tmpfs holds instance state; the installed consumer is read-only.
   const cliProbeArgs = grokConsumerDockerArgs({ assets, consumer, cache, uid: 1000, gid: 1000,
-    command: ['node', '/packages/installed-cli-probe.mjs', releaseVersion, sourceRevision], temporarySizeMb: 1024, runtimeSmoke: true, containerName: offlineOwner });
+    command: ['node', '/packages/installed-cli-probe.mjs', releaseVersion, sourceRevision, installedMode], temporarySizeMb: 1024, runtimeSmoke: true, containerName: offlineOwner });
   offlineProbeStarted = true;
   const cliProbeOutput = run('docker', cliProbeArgs, root, { timeout: 135_000 }).toString().trim();
   const cliReceipt = JSON.parse(cliProbeOutput.split('\n').at(-1));
@@ -259,7 +264,7 @@ try {
     run('docker', ['network', 'create', browserOwner]);
     browserNetworkCreated = true;
     run('docker', grokConsumerDockerArgs({ assets, consumer, cache, uid: 1000, gid: 1000,
-      command: ['node', '/packages/installed-cli-probe.mjs', releaseVersion, sourceRevision, 'browser'],
+      command: ['node', '/packages/installed-cli-probe.mjs', releaseVersion, sourceRevision, installedBrowserMode],
       temporarySizeMb: 1024, runtimeSmoke: true, browserNetwork: browserOwner, containerName: browserOwner }));
     let ready;
     const deadline = Date.now() + 100_000;

@@ -582,6 +582,18 @@ interface AdapterPickerItem {
   fallbackAdapterType: string | null;
 }
 
+function importedAdapterConfigValues(agent: AdapterPickerItem | undefined, selectedType: string): CreateConfigValues {
+  const sameHarness = agent && agentHarnessType(selectedType, agent.adapterConfig)
+    === agentHarnessType(agent.adapterType, agent.adapterConfig);
+  return {
+    ...defaultCreateValues,
+    adapterType: selectedType,
+    runner: sameHarness ? agent.runner : "auto",
+    adapterSchemaValues: sameHarness ? agent.adapterConfig : {},
+    model: sameHarness ? String(agent.adapterConfig?.model ?? "") : "",
+  };
+}
+
 function AdapterPickerList({
   agents,
   adapterOptions,
@@ -617,9 +629,7 @@ function AdapterPickerList({
             const selectedType =
               adapterOverrides[agent.slug] ?? agent.fallbackAdapterType ?? agent.adapterType;
             const isExpanded = expandedSlugs.has(agent.slug);
-            const vals = configValues[agent.slug] ?? { ...defaultCreateValues, adapterType: selectedType,
-              runner: agent.runner, adapterSchemaValues: agent.adapterConfig,
-              model: String(agent.adapterConfig?.model ?? "") };
+            const vals = configValues[agent.slug] ?? importedAdapterConfigValues(agent, selectedType);
 
             return (
               <div key={agent.slug}>
@@ -1539,8 +1549,7 @@ export function CompanyImport() {
     const currentType = agent ? effectiveAdapterType(agent) : adapterOverrides[slug] ?? "claude_local";
     setAdapterConfigValues((prev) => ({
       ...prev,
-      [slug]: { ...(prev[slug] ?? { ...defaultCreateValues, adapterType: currentType,
-        runner: agent?.runner, adapterSchemaValues: agent?.adapterConfig ?? {}, model: String(agent?.adapterConfig?.model ?? "") }), ...patch },
+      [slug]: { ...(prev[slug] ?? importedAdapterConfigValues(agent, currentType)), ...patch },
     }));
   }
 
@@ -1626,7 +1635,12 @@ export function CompanyImport() {
       const selectedType = effectiveAdapterType(agent);
       const configVals = adapterConfigValues[agent.slug];
       if (selectedType === agent.adapterType && !configVals) continue;
-      const override: CompanyPortabilityAdapterOverride = { adapterType: configVals?.adapterType ?? selectedType, runner: configVals?.runner ?? "auto" };
+      const sameSelectedHarness = agentHarnessType(selectedType, agent.adapterConfig)
+        === agentHarnessType(agent.adapterType, agent.adapterConfig);
+      const override: CompanyPortabilityAdapterOverride = {
+        adapterType: configVals?.adapterType ?? selectedType,
+        runner: configVals?.runner ?? (sameSelectedHarness ? agent.runner : "auto") ?? "auto",
+      };
       if (configVals) {
         const uiAdapter = getUIAdapter(configVals.adapterType);
         const sameHarness = agentHarnessType(configVals.adapterType, configVals.adapterSchemaValues)
@@ -1637,6 +1651,8 @@ export function CompanyImport() {
           runner: configVals.runner ?? agent.runner ?? "auto",
         }).adapterConfig : {};
         override.adapterConfig = { ...sourceConfig, ...uiAdapter.buildAdapterConfig(configVals) };
+      } else if (!sameSelectedHarness) {
+        override.adapterConfig = {};
       }
       overrides[agent.slug] = override;
     }

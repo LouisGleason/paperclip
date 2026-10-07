@@ -407,7 +407,11 @@ const paperclipRunnerAdapter: ServerAdapterModule = {
       };
     }
     try {
-      await assertNativeRunnerSetupReady(context);
+      // SSH Codex's native hello stages and verifies the task's exact daemon
+      // and CLI. A preinstalled-only check would reject supported SSH hosts.
+      if (!(profile.provider === "codex" && context.executionTarget?.kind === "remote" && context.executionTarget.transport === "ssh")) {
+        await assertNativeRunnerSetupReady(context);
+      }
     } catch (error) {
       return {
         adapterType: "paperclip_runner", status: "fail" as const, testedAt: new Date().toISOString(),

@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { GROK_PUBLIC_INSTALL_IMAGE, GROK_PUBLIC_INSTALL_LIFECYCLE, grokConsumerDockerArgs, macPublicInstallLifecyclePolicy } from '../grok-public-install-sandbox.mjs';
-import { assertStandardImageIdentity, inspectInstalledDaemon, inspectInstalledProviderReadiness, inspectInstalledUi, inspectManagedServiceInstall, installedProbePaths, standardImageDockerArgs, standardImageRequest } from '../../tests/release-smoke/installed-cli-probe.mjs';
+import { assertStandardImageIdentity, inspectInstalledDaemon, inspectInstalledProviderReadiness, inspectInstalledUi, inspectManagedServiceInstall, installedProbeMode, installedProbePaths, standardImageDockerArgs, standardImageRequest } from '../../tests/release-smoke/installed-cli-probe.mjs';
 
 const paths = { assets: '/private/staging/assets', consumer: '/private/staging/consumer', cache: '/private/staging/cache', uid: 1001, gid: 1001 };
 const values = (args, flag) => args.flatMap((value, index) => value === flag ? [args[index + 1]] : []);
@@ -228,7 +228,7 @@ test('installed UI readiness checks a real HTTP response, exact serving commit, 
   }
 });
 
-test('installed provider readiness uses the production pinned Codex resolver and installed Claude verifier', async () => {
+test('installed provider readiness uses the production pinned Codex resolver and server-bound Claude verifier', async () => {
   // Unit fixtures exercise the probe contract. Actual package qualification
   // invokes these checks against the installed graph, never these fixtures.
   const root = realpathSync(await mkdtemp(join(tmpdir(), 'paperclip-provider-readiness-test-')));
@@ -254,9 +254,15 @@ test('installed provider readiness uses the production pinned Codex resolver and
         agentRuntimePackage:'@anthropic-ai/claude-agent-sdk',agentRuntimeVersion:'0.3.286',commandDigest:'sha256:fixture'};
     }`);
     await writeFile(join(installed, 'installation-integrity.js'), `import fs from 'node:fs';
-      export async function probeAcpxClaudeInstallation(model) {
+      export function createAcpxPackageJsonResolver(root,manifest) {
+        if(root!==${JSON.stringify(server)}||manifest!==${JSON.stringify(join(server, 'package.json'))})throw new Error('Wrong provider authority');
+        return name=>name;
+      }
+      export async function verifyQualifiedAcpxInstallation(profile,resolver) {
         if (fs.existsSync(${JSON.stringify(join(root, 'bad-claude'))})) throw new Error('ACPX claude runtime version mismatch');
-        fs.writeFileSync(${JSON.stringify(join(root, 'claude-model'))}, model);
+        if(resolver(profile.agentServerPackage)!==profile.agentServerPackage)throw new Error('Missing package resolver');
+        fs.writeFileSync(${JSON.stringify(join(root, 'claude-model'))}, profile.agentServerPackage);
+        return {openCommand:async()=>({close:async()=>{fs.writeFileSync(${JSON.stringify(join(root, 'claude-lease-closed'))},'closed');}})};
       }`);
     const daemon = await daemonFixture(root, server);
     const receipt = await inspectInstalledProviderReadiness({ server, commandPath: bin });
@@ -264,7 +270,9 @@ test('installed provider readiness uses the production pinned Codex resolver and
     assert.equal(receipt.codex.executable, join(bin, 'codex'));
     assert.equal(receipt.codex.version, 'codex-cli 0.160.0');
     assert.deepEqual(JSON.parse(readFileSync(join(root, 'codex-arguments.json'), 'utf8')), ['--version']);
-    assert.equal(readFileSync(join(root, 'claude-model'), 'utf8'), 'claude-sonnet-5');
+    assert.equal(readFileSync(join(root, 'claude-model'), 'utf8'), '@agentclientprotocol/claude-agent-acp');
+    assert.equal(readFileSync(join(root, 'claude-lease-closed'), 'utf8'), 'closed');
+    assert.equal(receipt.claude.packageAuthority, server);
     assert.equal(receipt.claude.agentRuntimeVersion, '0.3.286');
     assert.equal(receipt.claude.commandLeasePassed, true);
     assert.equal(receipt.runnerd.manifestVerified, true);
@@ -292,6 +300,27 @@ test('installed provider readiness uses the production pinned Codex resolver and
     await assert.rejects(inspectInstalledProviderReadiness({ server, commandPath: bin }), /Codex did not return its CLI version/);
     await assert.rejects(inspectInstalledProviderReadiness({ server: '../checkout' }), /Invalid installed server/);
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('only the explicit source-bound control permits a host-only daemon; assembled consumers require all three targets', () => {
+  const source = 'a'.repeat(40);
+  for (const mode of [undefined, 'offline', 'browser']) {
+    const options = installedProbeMode(mode, source);
+    assert.equal(options.allowHostOnlyDaemon, false);
+    assert.equal(options.qualificationScope, 'assembled public npm package');
+  }
+  for (const mode of ['host-source', 'browser-host-source']) {
+    const options = installedProbeMode(mode, source);
+    assert.equal(options.allowHostOnlyDaemon, true);
+    assert.equal(options.browser, mode === 'browser-host-source');
+    assert.equal(options.qualificationScope, 'exact-source host-only packaging control');
+    for (const invalid of [undefined, 'master', 'a'.repeat(39)]) assert.throws(() => installedProbeMode(mode, invalid), /exact source receipt/);
+  }
+  assert.throws(() => installedProbeMode('legacy', source), /Invalid installed probe mode/);
+  const verifier = readFileSync(new URL('../verify-grok-npm-install.mjs', import.meta.url), 'utf8');
+  assert.match(verifier, /assert\.equal\(builtRevision, sourceRevision[\s\S]*?const installedMode = env\.PAPERCLIP_RELEASE_RUNNER_ASSETS \? 'offline' : 'host-source'/);
+  assert.match(verifier, /const installedBrowserMode = env\.PAPERCLIP_RELEASE_RUNNER_ASSETS \? 'browser' : 'browser-host-source'/);
+  assert.match(verifier, /receipt\.releaseVersion, sourceRevision, 'offline', paths/);
 });
 
 test('installed daemon proof rejects source, target, digest, capability and resolver failures without ambient fallback', async () => {
