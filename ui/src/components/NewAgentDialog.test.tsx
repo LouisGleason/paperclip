@@ -77,10 +77,10 @@ async function name() {
     )!.set!.call(input, "Ada & Co");
     input.dispatchEvent(new Event("input", { bubbles: true }));
   });
-  await click("Choose adapter");
+  await click("Choose harness");
 }
 it("requires a name and an enabled adapter before navigating", async () => {
-  await click("Choose adapter");
+  await click("Choose harness");
   expect(document.body.textContent).toContain("Agent name");
   await name();
   expect(document.querySelector('input[value="claude_local"]')).toBeNull();
@@ -98,26 +98,16 @@ it("requires a name and an enabled adapter before navigating", async () => {
   expect(query.get("name")).toBe("Ada & Co");
   expect(query.get("adapterType")).toBe("codex_local");
 });
-it("offers native Codex, Claude ACPX, and OpenCode runners", async () => {
+it("offers harnesses without a runner tile or second provider picker", async () => {
   await name();
-  await act(async () =>
-    (
-      document.querySelector(
-        'input[value="paperclip_runner"]',
-      ) as HTMLInputElement
-    ).click(),
-  );
-  const options = [...document.querySelectorAll("option")].map(
-    (option) => option.textContent,
-  );
-  expect(options).toContain("Codex (app server)");
-  expect(options).toContain("Claude (ACPX)");
-  expect(options).toContain("OpenCode");
-  expect(options.join(" ")).not.toContain("ACPX Codex");
+  expect(document.querySelector('input[value="codex_local"]')).not.toBeNull();
+  expect(document.querySelector('input[value="paperclip_runner"]')).toBeNull();
+  expect(document.querySelector("details:not([open]) select")).not.toBeNull();
+  expect(document.querySelector("select option[value=codex]")).toBeNull();
 });
 
 it.each([false, undefined])(
-  "hides the runner unless explicitly enabled (%s)",
+  "hides the runner tile regardless of the obsolete flag (%s)",
   async (enableNativeRunner) => {
     await act(async () => {
       cache.setQueryData(queryKeys.instance.experimentalSettings, {
@@ -132,7 +122,7 @@ it.each([false, undefined])(
   },
 );
 
-it.each([true, false, undefined])("gates the Cloud native runner on explicit enablement (%s)", async (enableNativeRunner) => {
+it.each([true, false, undefined])("shows Cloud harnesses regardless of the obsolete flag (%s)", async (enableNativeRunner) => {
   await act(async () => {
     cache.setQueryData(queryKeys.instance.experimentalSettings, { enableNativeRunner });
     cache.setQueryData(queryKeys.health, {
@@ -161,7 +151,7 @@ it.each([true, false, undefined])("gates the Cloud native runner on explicit ena
     [...document.querySelectorAll<HTMLInputElement>('input[type="radio"]')].map(
       (input) => input.value,
     ),
-  ).toEqual(["claude_local", "codex_local", "opencode_local", "grok_local", ...(enableNativeRunner ? ["paperclip_runner"] : [])]);
+  ).toEqual(["claude_local", "codex_local", "opencode_local", "grok_local"]);
   await act(async () =>
     document.querySelector<HTMLInputElement>('input[value="grok_local"]')!.click(),
   );

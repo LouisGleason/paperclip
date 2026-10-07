@@ -19,6 +19,7 @@ const companySvc = {
 
 const agentSvc = {
   list: vi.fn(),
+  getById: vi.fn(async (id: string) => (await agentSvc.list()).find((agent: { id: string }) => agent.id === id) ?? null),
   create: vi.fn(),
   update: vi.fn(),
 };
@@ -103,6 +104,7 @@ const agentInstructionsSvc = {
 };
 
 const instanceSettingsSvc = {
+  get: vi.fn(async () => ({ defaultEnvironmentId: null })),
   getExperimental: vi.fn(async () => ({ enableNativeRunner: false })),
 };
 
@@ -1885,7 +1887,7 @@ describe("company portability", () => {
           },
         },
       }),
-      { strictMode: false, adapterType: "codex_local" },
+      { strictMode: false, adapterType: "paperclip_runner" },
     );
     expect(agentSvc.create).toHaveBeenCalledWith("company-1", expect.objectContaining({
       adapterConfig: expect.objectContaining({
@@ -3735,6 +3737,7 @@ describe("company portability", () => {
       adapterOverrides: {
         claudecoder: {
           adapterType: "codex_local",
+          runner: "legacy",
           adapterConfig: {
             dangerouslyBypassApprovalsAndSandbox: true,
             instructionsFilePath: "/tmp/should-not-survive.md",
@@ -3842,6 +3845,7 @@ describe("company portability", () => {
       adapterOverrides: {
         claudecoder: {
           adapterType: "codex_local",
+          runner: "legacy",
           adapterConfig: {
             extraArgs: [],
             args: ["--legacy-arg"],
@@ -5522,6 +5526,7 @@ describe("company portability", () => {
       adapterOverrides: {
         claudecoder: {
           adapterType: "codex_local",
+          runner: "legacy",
           adapterConfig: {
             dangerouslyBypassApprovalsAndSandbox: true,
           },
@@ -5842,6 +5847,7 @@ describe("company portability", () => {
       adapterOverrides: {
         claudecoder: {
           adapterType: "codex_local",
+          runner: "legacy",
           adapterConfig: {
             model: "gpt-5.4",
           },
@@ -6030,7 +6036,7 @@ describe("company portability", () => {
     expect(preview.plan.issuePlans).toHaveLength(0);
   });
 
-  it("rejects runner imports while disabled and accepts the same selection when enabled", async () => {
+  it("accepts runner imports independently of the deprecated experimental flag", async () => {
     const portability = companyPortabilityService({} as any);
     const exported = await portability.exportBundle("company-1", {
       include: { company: false, agents: true, projects: false, issues: false },
@@ -6058,11 +6064,8 @@ describe("company portability", () => {
       },
     };
 
-    await expect(portability.importBundle(request, "user-1")).rejects.toMatchObject({
-      status: 422,
-      details: { code: "paperclip_runner_rollout_disabled" },
-    });
-    expect(agentSvc.create).not.toHaveBeenCalled();
+    await portability.importBundle(request, "user-1");
+    expect(agentSvc.create).toHaveBeenCalledWith("company-1", expect.objectContaining({ adapterType: "paperclip_runner", runner: "paperclip" }));
 
     instanceSettingsSvc.getExperimental.mockResolvedValue({ enableNativeRunner: true });
     await portability.importBundle({

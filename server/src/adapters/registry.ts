@@ -1,4 +1,5 @@
 import type { AdapterRuntimeCommandSpec, ServerAdapterModule } from "./types.js";
+import { assertNativeRunnerSetupReady, assertRemoteAcpxSetupReady } from "../services/native-runtime/setup-readiness.js";
 import { parseAdapterModelsEnv } from "../services/adapter-models-env.js";
 import { stampClaudeAgentIdHeader } from "./claude-agent-id-header.js";
 import {
@@ -405,6 +406,15 @@ const paperclipRunnerAdapter: ServerAdapterModule = {
         }],
       };
     }
+    try {
+      await assertNativeRunnerSetupReady(context);
+    } catch (error) {
+      return {
+        adapterType: "paperclip_runner", status: "fail" as const, testedAt: new Date().toISOString(),
+        checks: [{ code: "paperclip_runner_runtime_unavailable", level: "error" as const,
+          message: error instanceof Error ? error.message : "Paperclip Runner could not start. Install it or select Legacy runner in Advanced." }],
+      };
+    }
     if (profile.provider === "acpx") {
       if (["copilot", "pi"].includes(profile.acpxAgent)) {
         // The profile resolver already validated the isolated host's exact
@@ -428,10 +438,11 @@ const paperclipRunnerAdapter: ServerAdapterModule = {
           if (!((os === "Linux" && arch === "x86_64") || (os === "Darwin" && (arch === "arm64" || (profile.acpxAgent !== "grok" && arch === "x86_64"))))) {
             throw new Error(`ACPX ${profile.acpxAgent} requires a qualified Linux x64 or macOS architecture.`);
           }
+          await assertRemoteAcpxSetupReady(context, profile.acpxAgent, profile.model);
           return {
-            adapterType: "paperclip_runner", status: "warn" as const, testedAt: new Date().toISOString(),
-            checks: [{ code: "acpx_remote_runtime_unverified", level: "warn" as const,
-              message: "The remote platform is supported. Runtime package integrity and readiness must still be verified by the remote runner before launch." }],
+            adapterType: "paperclip_runner", status: "pass" as const, testedAt: new Date().toISOString(),
+            checks: [{ code: "acpx_runtime_ready", level: "info" as const,
+              message: `Paperclip Runner and ACPX ${profile.acpxAgent} are installed and verified in the selected environment.` }],
           };
         }
         const { probeAcpxClaudeInstallation, probeAcpxGrokInstallation, probeAcpxCursorInstallation } = await import("../vendor/paperclip-runner/live/index.js");
@@ -1158,6 +1169,10 @@ export function setOverridePaused(type: string, paused: boolean): boolean {
 /** Check whether the external override for a builtin type is currently paused. */
 export function isOverridePaused(type: string): boolean {
   return pausedOverrides.has(type);
+}
+
+export function hasActiveAdapterOverride(type: string): boolean {
+  return builtinFallbacks.has(type) && !pausedOverrides.has(type);
 }
 
 /** Get the set of types whose overrides are currently paused. */

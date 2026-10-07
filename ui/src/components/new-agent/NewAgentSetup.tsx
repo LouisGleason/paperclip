@@ -1,3 +1,4 @@
+import { agentRunner, agentHarnessType, paperclipRunnerProfileForHarness, type AgentRunnerChoice } from "@paperclipai/shared";
 import { useConnectionModels } from "../ai-connections/useConnectionModels";
 import { AgentCharacter } from "../AgentCharacter";
 import { useAgentAppearanceDraft } from "../../hooks/useAgentAppearanceDraft";
@@ -84,11 +85,12 @@ export function NewAgentSetup() {
     );
   return (
     <Setup
-      key={`${selectedCompanyId}:${params.get("name")}:${params.get("adapterType")}:${params.get("runnerProvider")}`}
+      key={`${selectedCompanyId}:${params.get("name")}:${params.get("adapterType")}:${params.get("runnerProvider")}:${params.get("runner")}`}
       companyId={selectedCompanyId}
       name={params.get("name") ?? ""}
       adapterType={params.get("adapterType") ?? ""}
       runnerProvider={params.get("runnerProvider") ?? "codex"}
+      initialRunner={params.get("runner") === "legacy" ? "legacy" : params.get("runner") === "paperclip" || params.get("adapterType") === "paperclip_runner" ? "paperclip" : "auto"}
       createdAgentId={params.get("createdAgentId")}
     />
   );
@@ -97,30 +99,36 @@ export function NewAgentSetup() {
 function Setup({
   companyId,
   name,
-  adapterType,
-  runnerProvider,
+  adapterType: requestedAdapter,
+  runnerProvider: requestedProvider,
+  initialRunner,
   createdAgentId,
 }: {
   companyId: string;
   name: string;
   adapterType: string;
   runnerProvider: string;
+  initialRunner: AgentRunnerChoice;
   createdAgentId: string | null;
 }) {
   const navigate = useNavigate();
   const cache = useQueryClient();
   const { openNewIssue } = useDialogActions();
   const appearanceDraft = useAgentAppearanceDraft(`${companyId}:new-agent`);
-  const isRunner = adapterType === "paperclip_runner";
-  const brandType = isRunner
-    ? runnerProvider === "grok"
-      ? "grok_local"
-      : runnerProvider === "claude"
-      ? "claude_local"
-      : runnerProvider === "opencode"
-        ? "opencode_local"
-        : "codex_local"
-    : adapterType;
+  const adapters = useQuery({ queryKey: queryKeys.adapters.all, queryFn: adaptersApi.list });
+  const [runner, setRunner] = useState<AgentRunnerChoice>(initialRunner);
+  const brandType = agentHarnessType(requestedAdapter, {
+    provider: ["claude", "grok", "cursor"].includes(requestedProvider) ? "acpx" : requestedProvider,
+    acpxAgent: requestedProvider,
+  });
+  const managedHarness = ["claude_managed", "aws_agentcore"].includes(brandType);
+  const [managedProfileId, setManagedProfileId] = useState("");
+  const [retentionAcknowledged, setRetentionAcknowledged] = useState(false);
+  const profile = paperclipRunnerProfileForHarness(brandType);
+  const registryRunner = adapters.data?.find(adapter => adapter.type === brandType)?.defaultRunner;
+  const isRunner = runner === "paperclip" || (runner === "auto" && Boolean(profile) && registryRunner !== "legacy");
+  const adapterType = isRunner ? "paperclip_runner" : brandType;
+  const runnerProvider = profile?.acpxAgent ?? profile?.provider ?? requestedProvider;
   const connectionAdapter =
     brandType === "claude_local" || brandType === "codex_local" || brandType === "grok_local"
       ? brandType
@@ -130,7 +138,7 @@ function Setup({
   const providerKeys = setupProviderKeys(brandType);
   const chooseProvider = multiProvider || brandType === "hermes_local";
   const hasCredentialField =
-    chooseProvider || Boolean(SETUP_CREDENTIAL_KEYS[adapterType]);
+    chooseProvider || Boolean(SETUP_CREDENTIAL_KEYS[brandType]);
   const showModel = !["cursor_cloud", "hermes_gateway"].includes(adapterType);
   const [gatewayUrl, setGatewayUrl] = useState("");
   const [kimiModel, setKimiModel] = useState("");
@@ -139,8 +147,8 @@ function Setup({
   const [screen, setScreen] = useState<"connect" | "runtime" | "saved">(
     createdAgentId ? "saved" : connectionAdapter ? "connect" : "runtime",
   );
-  const [model, setModel] = useState("");
-  const efforts = isRunner ? [] : setupEfforts(adapterType, model);
+  const [model, setModel] = useState(brandType === "claude_managed" ? "claude-sonnet-5" : brandType === "aws_agentcore" ? "global.anthropic.claude-sonnet-4-6" : "");
+  const efforts = isRunner && brandType !== "codex_local" ? [] : setupEfforts(brandType, model);
   const [effort, setEffort] = useState("");
   const [modelOpen, setModelOpen] = useState(false);
   const [environmentOverride, setEnvironmentOverride] = useState("");
@@ -195,10 +203,6 @@ function Setup({
     resetTest();
     setScreen("connect");
   };
-  const adapters = useQuery({
-    queryKey: queryKeys.adapters.all,
-    queryFn: adaptersApi.list,
-  });
   const agents = useQuery({
     queryKey: queryKeys.agents.list(companyId),
     queryFn: () => agentsApi.list(companyId),
@@ -225,7 +229,7 @@ function Setup({
   });
   const models = useQuery({
     queryKey: queryKeys.agents.adapterModels(companyId, brandType, null, aiBinding?.provider),
-    queryFn: () => agentsApi.adapterModels(companyId, brandType, { provider: aiBinding?.provider }),
+    queryFn: () => agentsApi.adapterModels(companyId, managedHarness ? "paperclip_runner" : brandType, { provider: managedHarness ? brandType : aiBinding?.provider }),
     enabled: Boolean(brandType) && showModel && !connectionModels,
     retry: false,
   });
@@ -278,7 +282,7 @@ function Setup({
     environment?.driver === "sandbox" &&
     caps.data?.sandboxProviders?.[sandboxProvider]?.supportsLoginPty === true;
   const envKey =
-    SETUP_CREDENTIAL_KEYS[adapterType] ?? providerKeys[provider] ?? "API_KEY";
+    SETUP_CREDENTIAL_KEYS[brandType] ?? providerKeys[provider] ?? "API_KEY";
   const savedKey = userSecrets.data?.find(
     (entry) => entry.definition.key === envKey && entry.secret,
   );
@@ -306,13 +310,13 @@ function Setup({
     adapterType === "kimi_local" && Boolean(apiKey.trim() || selectedBinding);
   const cloud = Boolean(useCloudInstance());
   const available =
-    isNewAgentAdapterAllowed(adapterType, {
+    (managedHarness ? !cloud : isNewAgentAdapterAllowed(brandType, {
       cloud,
       nativeRunnerEnabled: experimental.data?.enableNativeRunner === true,
-    }) &&
+    })) &&
     adapters.data?.some(
       (adapter) =>
-        adapter.type === adapterType &&
+        adapter.type === (managedHarness ? "paperclip_runner" : brandType) &&
         adapter.loaded &&
         !adapter.disabled &&
         !getAdapterDisplay(adapterType).comingSoon,
@@ -351,8 +355,8 @@ function Setup({
       ...(isRunner
         ? {
             adapterSchemaValues: {
-              provider: (runnerProvider === "claude" || runnerProvider === "grok") ? "acpx" : runnerProvider,
-              ...((runnerProvider === "claude" || runnerProvider === "grok") ? { acpxAgent: runnerProvider } : {}),
+              provider: (["claude", "grok", "cursor"].includes(runnerProvider)) ? "acpx" : runnerProvider,
+              ...((["claude", "grok", "cursor"].includes(runnerProvider)) ? { acpxAgent: runnerProvider } : {}),
             },
           }
         : {}),
@@ -360,10 +364,13 @@ function Setup({
     const config = getUIAdapter(adapterType).buildAdapterConfig(values);
     if (isRunner)
       Object.assign(config, {
-        provider: (runnerProvider === "claude" || runnerProvider === "grok") ? "acpx" : runnerProvider,
-        ...((runnerProvider === "claude" || runnerProvider === "grok") ? { acpxAgent: runnerProvider } : {}),
+        provider: (["claude", "grok", "cursor"].includes(runnerProvider)) ? "acpx" : runnerProvider,
+        ...((["claude", "grok", "cursor"].includes(runnerProvider)) ? { acpxAgent: runnerProvider } : {}),
         ...(model ? { model } : {}),
       });
+    if (managedHarness) Object.assign(config, brandType === "claude_managed"
+      ? { managedProfileId: managedProfileId.trim(), managedAgentsRetentionAcknowledged: retentionAcknowledged }
+      : { agentCoreProfileId: managedProfileId.trim() });
     if (!aiBinding && !nextConnection?.aiConnection && hasCredentialField && binding) {
       if (adapterType === "hermes_gateway") config.apiKey = binding;
       else
@@ -443,6 +450,7 @@ function Setup({
         companyId,
         adapterType,
         providerAdapter: brandType,
+        runner,
         adapterConfig: config,
         testCredentials: pendingCredentials(nextConnection),
         aiConnection: runtimeAiBinding ?? nextConnection?.aiConnection,
@@ -515,6 +523,7 @@ function Setup({
         ...(leader ? { reportsTo: leader.id } : {}),
         adapterType,
         adapterConfig: config,
+        runner,
         defaultEnvironmentId:
           environmentOverride ||
           (forced.forced || managedOnly ? environmentId : null),
@@ -534,7 +543,7 @@ function Setup({
       appearanceDraft.clear();
       setScreen("saved");
       navigate(
-        `/agents/new?${new URLSearchParams({ name: response.agent.name, adapterType, runnerProvider, createdAgentId: response.agent.id })}`,
+        `/agents/new?${new URLSearchParams({ name: response.agent.name, adapterType: brandType, runner: agentRunner(response.agent.adapterType), createdAgentId: response.agent.id })}`,
         { replace: true },
       );
       cache.setQueryData(
@@ -647,14 +656,7 @@ function Setup({
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <AdapterMark type={brandType} />
               <span>{getAdapterDisplay(brandType).label}</span>
-              {isRunner && (
-                <span>
-                  ·{" "}
-                  {runnerProvider === "codex"
-                    ? "Native app server runner"
-                    : "Paperclip Runner"}
-                </span>
-              )}
+
             </div>
           </div>
         </header>
@@ -793,7 +795,7 @@ function Setup({
                       </h2>
                       <dl className="grid grid-cols-2 gap-4 text-sm">
                         <dt className="text-muted-foreground">Adapter</dt>
-                        <dd>{getAdapterDisplay(adapterType).label}</dd>
+                        <dd>{getAdapterDisplay(brandType).label}</dd>
                         {showModel && (
                           <>
                             <dt className="text-muted-foreground">Model</dt>
@@ -845,6 +847,24 @@ function Setup({
                       Configure your agent
                     </h2>
                     <fieldset disabled={busy} className="space-y-8">
+                      {profile && <details className="space-y-3">
+                        <summary className="cursor-pointer text-sm text-muted-foreground">Advanced</summary>
+                        <Field label="Runner">
+                          <NativeSelect value={isRunner ? "paperclip" : "legacy"} onChange={event => { setRunner(event.target.value as AgentRunnerChoice); resetTest(); }}>
+                            <option value="paperclip">Paperclip Runner{registryRunner !== "legacy" ? " (default)" : ""}</option>
+                            <option value="legacy">Legacy runner{registryRunner === "legacy" ? " (default)" : ""}</option>
+                          </NativeSelect>
+                        </Field>
+                      </details>}
+                      {managedHarness && <section className="space-y-3">
+                        <Field label={brandType === "claude_managed" ? "Managed Agent profile" : "AgentCore profile"}>
+                          <Input aria-label="Managed profile" value={managedProfileId} onChange={event => { setManagedProfileId(event.target.value); resetTest(); }} placeholder="Qualified organization profile ID or key" />
+                        </Field>
+                        {brandType === "claude_managed" && <label className="flex items-start gap-2 text-sm">
+                          <input type="checkbox" checked={retentionAcknowledged} onChange={event => { setRetentionAcknowledged(event.target.checked); resetTest(); }} />
+                          <span>Acknowledge managed retention. Claude Managed is a stateful beta service and is not eligible for ZDR or HIPAA modes.</span>
+                        </label>}
+                      </section>}
                       <section className="space-y-5">
                         {!connectionAdapter && aiProviderForAdapter(brandType) && (
                           <AiConnectionField companyId={companyId} agentName={name} adapterType={brandType} model={model} environmentId={environmentId ?? undefined} value={aiBinding}
@@ -866,7 +886,7 @@ function Setup({
                                   setModel(connectionModels?.resolveModel(value) ?? value);
                                   if (
                                     effort &&
-                                    !setupEfforts(adapterType, value).includes(
+                                    !setupEfforts(brandType, value).includes(
                                       effort,
                                     )
                                   )
@@ -913,9 +933,9 @@ function Setup({
                             )}
                           </div>
                         )}
-                        {!aiBinding && SETUP_LOGIN_HINTS[adapterType] && (
+                        {!aiBinding && SETUP_LOGIN_HINTS[brandType] && (
                           <p className="text-sm text-muted-foreground">
-                            {SETUP_LOGIN_HINTS[adapterType]}
+                            {SETUP_LOGIN_HINTS[brandType]}
                           </p>
                         )}
                         {hasCredentialField && !aiBinding && (

@@ -1,6 +1,9 @@
+import { adaptersApi } from "../api/adapters";
+import { agentHarnessType, agentRunner, paperclipRunnerProfileForHarness } from "@paperclipai/shared";
+import { resolveAgentRunnerConfig } from "@paperclipai/adapter-utils";
 import { useConnectionModels } from "./ai-connections/useConnectionModels";
 import { aiRoutingHarness } from "@paperclipai/shared";
-import { AiConnectionField } from "./ai-connections/AiConnectionField";
+import { AiConnectionField, aiProviderForAdapter } from "./ai-connections/AiConnectionField";
 import { aiConnectionBindingSchema, aiRuntimeConnectionBindingSchema } from "@paperclipai/shared";
 import { testAgentSetup } from "@/lib/test-agent-setup";
 import { setupEfforts } from "../lib/agent-setup-fields";
@@ -358,6 +361,8 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
 
   // Sync disabled adapter types from server so dropdown filters them out.
   const disabledTypes = useDisabledAdaptersSync();
+  const { data: runnerAdapters } = useQuery({ queryKey: queryKeys.adapters.all, queryFn: adaptersApi.list });
+  const [runnerSelectionError, setRunnerSelectionError] = useState<string | null>(null);
 
   const { data: availableSecrets = [] } = useQuery({
     queryKey: selectedCompanyId ? queryKeys.secrets.list(selectedCompanyId) : ["secrets", "none"],
@@ -398,16 +403,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
     queryFn: () => instanceSettingsApi.getExperimental(),
     retry: false,
   });
-  const adapterPickerDisabledTypes = useMemo(() => {
-    const next = new Set(disabledTypes);
-    // Fail closed while settings load. Existing native agents still render
-    // their current value in edit mode, but the picker does not offer a fresh
-    // native selection until the explicit experimental opt-in is known true.
-    if (experimentalSettings?.enableNativeRunner !== true) {
-      next.add("paperclip_runner");
-    }
-    return next;
-  }, [disabledTypes, experimentalSettings?.enableNativeRunner]);
+  const adapterPickerDisabledTypes = disabledTypes;
   const environmentsEnabled = experimentalSettings?.enableEnvironments === true;
   // Managed-sandbox-only policy: every agent runs in the platform-managed
   // environment, so the form hides each host filesystem path and each
@@ -896,12 +892,14 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
       : eff("adapterConfig", "provider", config.provider === "acpx" && config.acpxAgent === "codex" ? "codex" : config.provider ?? "codex"))
     : undefined;
   const modelProvider = adapterType === "opencode_local" && aiConnectionBindingSchema.safeParse(
-    (overlay.runtime.runtimeConfig as Record<string, unknown> | undefined)?.aiConnection ?? runtimeConfig.aiConnection,
+    ((overlay.runtime.runtimeConfig as Record<string, unknown> | undefined) ?? runtimeConfig).aiConnection,
   ).data?.provider === "openrouter" ? "openrouter" : runnerProvider;
-  const connectionModels = useConnectionModels(selectedCompanyId, isCreate ? undefined : aiConnectionBindingSchema.safeParse((overlay.runtime.runtimeConfig as Record<string, unknown> | undefined)?.aiConnection ?? runtimeConfig.aiConnection).data, aiRoutingHarness(adapterType, runnerProvider, eff("adapterConfig", "acpxAgent", config.acpxAgent)));
+  const connectionModels = useConnectionModels(selectedCompanyId, isCreate ? undefined : aiConnectionBindingSchema.safeParse(((overlay.runtime.runtimeConfig as Record<string, unknown> | undefined) ?? runtimeConfig).aiConnection).data, aiRoutingHarness(adapterType, runnerProvider, eff("adapterConfig", "acpxAgent", config.acpxAgent)));
   // Fetch adapter models for the effective provider, including unsaved changes.
+  const modelHarness = agentHarnessType(adapterType, isCreate ? props.values.adapterSchemaValues : { ...config, ...overlay.adapterConfig });
+  const catalogAdapterType = ["claude_managed", "aws_agentcore"].includes(modelHarness) ? adapterType : modelHarness;
   const modelQueryKey = selectedCompanyId
-    ? queryKeys.agents.adapterModels(selectedCompanyId, adapterType, currentDefaultEnvironmentId || null, modelProvider)
+    ? queryKeys.agents.adapterModels(selectedCompanyId, catalogAdapterType, currentDefaultEnvironmentId || null, modelProvider)
     : ["agents", "none", "adapter-models", adapterType];
   const {
     data: fetchedModels,
@@ -909,7 +907,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
     isLoading: fetchingModels,
   } = useQuery({
     queryKey: modelQueryKey,
-    queryFn: () => agentsApi.adapterModels(selectedCompanyId!, adapterType, {
+    queryFn: () => agentsApi.adapterModels(selectedCompanyId!, catalogAdapterType, {
       environmentId: currentDefaultEnvironmentId || null,
       provider: modelProvider,
     }),
@@ -968,6 +966,27 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
   // Section toggle state — advanced always starts collapsed
   const [runPolicyAdvancedOpen, setRunPolicyAdvancedOpen] = useState(false);
   const [configurationAdvancedOpen, setConfigurationAdvancedOpen] = useState(false);
+  function selectHarness(harness: string) {
+                  try {
+                    const model = "";
+                    const resolved = ["claude_managed", "aws_agentcore"].includes(harness)
+                      ? { adapterType: "paperclip_runner", adapterConfig: { provider: harness, model: harness === "aws_agentcore" ? "global.anthropic.claude-sonnet-4-6" : "claude-sonnet-5", lifecycleMode: "per_turn" } }
+                      : harness === "cursor" && runnerAdapters?.find(a => a.type === harness)?.defaultRunner !== "legacy"
+                      ? { adapterType: "paperclip_runner", adapterConfig: { provider: "acpx", acpxAgent: "cursor", model: "", lifecycleMode: "per_turn" } }
+                      : resolveAgentRunnerConfig({ adapterType: harness, adapterConfig: { model }, nativeSupported: runnerAdapters?.find(a => a.type === harness)?.defaultRunner !== "legacy" });
+                    setRunnerSelectionError(null);
+                    if (isCreate) set!({ ...defaultCreateValues, adapterType: resolved.adapterType, model: String(resolved.adapterConfig.model ?? ""), adapterSchemaValues: resolved.adapterConfig });
+                    else setOverlay(prev => {
+                      const currentRuntime = (prev.runtime.runtimeConfig as Record<string, unknown> | undefined) ?? runtimeConfig;
+                      const binding = aiRuntimeConnectionBindingSchema.safeParse(currentRuntime.aiConnection).data;
+                      const keepBinding = !binding || binding.mode === "router" || binding.provider === aiProviderForAdapter(harness);
+                      return { ...prev, adapterType: resolved.adapterType, adapterConfig: resolved.adapterConfig,
+                        runtime: keepBinding ? prev.runtime : { ...prev.runtime, runtimeConfig: { ...currentRuntime, aiConnection: null } } };
+                    });
+                  } catch (error) { setRunnerSelectionError(error instanceof Error ? error.message : "Could not select this harness"); }
+
+  }
+
   const configSchema = useConfigSchema(adapterType);
   const renderAdapterFields = (section: AdapterConfigSection) => (
     <>
@@ -1081,9 +1100,9 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
             : adapterConfig.provider === "acpx" && adapterConfig.acpxAgent === "claude" ? "claude_local"
               : adapterType
           : adapterType;
-        return testAgentSetup({ companyId: selectedCompanyId, adapterType, providerAdapter, adapterConfig, agentId, aiConnection, environmentId });
+        return testAgentSetup({ companyId: selectedCompanyId, adapterType, runner: isCreate ? props.values.runner : agentRunner(adapterType), providerAdapter, adapterConfig, agentId, aiConnection, environmentId });
       }
-      return agentsApi.testEnvironment(selectedCompanyId, adapterType, { adapterConfig, agentId, aiConnection, environmentId });
+      return agentsApi.testEnvironment(selectedCompanyId, adapterType, { runner: isCreate ? props.values.runner : agentRunner(adapterType), adapterConfig, agentId, aiConnection, environmentId });
     },
   });
   const [testActionPending, setTestActionPending] = useState(false);
@@ -1129,8 +1148,11 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
   useEffect(() => {
     resetTestEnvironmentRef.current();
     setTestActionError(null);
+  }, [adapterType, modelHarness, effectiveLoginEnvironmentId, isCreate ? props.values.runner : undefined]);
+
+  useEffect(() => {
     clearClaudeLoginClaimRef.current();
-  }, [adapterType, effectiveLoginEnvironmentId]);
+  }, [modelHarness, effectiveLoginEnvironmentId]);
 
   // Show the login affordance only for a current sandbox adapter that declares a
   // login capability, and whose most recent Test result carries the canonical
@@ -1159,7 +1181,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
     environmentCapabilities?.sandboxProviders?.[effectiveLoginProvider]?.supportsLoginPty === true;
   const loginNeedsPty = adapterCaps.login != null;
   const showAdapterLogin =
-    (isCreate || !((overlay.runtime.runtimeConfig as Record<string, unknown> | undefined)?.aiConnection ?? runtimeConfig.aiConnection)) &&
+    (isCreate || !(((overlay.runtime.runtimeConfig as Record<string, unknown> | undefined) ?? runtimeConfig).aiConnection)) &&
     adapterSupportsSandboxLogin &&
     effectiveLoginEnvironment?.driver === "sandbox" &&
     Boolean(effectiveLoginEnvironmentId) &&
@@ -1264,7 +1286,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
     setRefreshingModels(true);
     setRefreshModelsError(null);
     try {
-      const refreshed = await agentsApi.adapterModels(selectedCompanyId, adapterType, { refresh: true, environmentId: currentDefaultEnvironmentId || null, provider: modelProvider });
+      const refreshed = await agentsApi.adapterModels(selectedCompanyId, catalogAdapterType, { refresh: true, environmentId: currentDefaultEnvironmentId || null, provider: modelProvider });
       queryClient.setQueryData(modelQueryKey, refreshed);
     } catch (error) {
       setRefreshModelsError(error instanceof Error ? error.message : "Failed to refresh adapter models.");
@@ -1274,7 +1296,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
   }
 
   const thinkingEffortKey =
-    adapterType === "codex_local"
+    modelHarness === "codex_local"
       ? "modelReasoningEffort"
       : adapterType === "cursor"
         ? "mode"
@@ -1283,7 +1305,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
           : adapterType === "grok_local" ? "reasoningEffort"
           : adapterType === "pi_local" ? "thinking" : "effort";
   const thinkingEffortOptions =
-    adapterType === "codex_local"
+    modelHarness === "codex_local"
       ? codexReasoningEffortOptions(currentModelId, "Auto").map((option) => ({
           id: option.value,
           label: option.label,
@@ -1304,7 +1326,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                 : claudeThinkingEffortOptions;
   const currentThinkingEffort = isCreate
     ? val!.thinkingEffort
-    : adapterType === "codex_local"
+    : modelHarness === "codex_local"
       ? eff(
           "adapterConfig",
           "modelReasoningEffort",
@@ -1317,7 +1339,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
           : eff("adapterConfig", thinkingEffortKey, String(config[thinkingEffortKey] ?? ""));
   const showThinkingEffort = adapterType !== "gemini_local"
     && adapterType !== "cursor_cloud"
-    && adapterType !== "paperclip_runner";
+    && (adapterType !== "paperclip_runner" || modelHarness === "codex_local");
   const codexSearchEnabled = adapterType === "codex_local"
     ? (isCreate ? Boolean(val!.search) : eff("adapterConfig", "search", Boolean(config.search)))
     : false;
@@ -1603,73 +1625,41 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
         </div>
         <div className={cn(cards ? "border border-border rounded-lg p-4 space-y-3" : "px-4 pb-3 space-y-3")}>
           {showAdapterTypeField && (
-            <Field label="Adapter type" hint={help.adapterType}>
+            <Field label="Harness" hint={help.adapterType}>
               <AdapterTypeDropdown
-                value={adapterType}
+                value={agentHarnessType(adapterType, isCreate ? props.values.adapterSchemaValues : { ...config, ...overlay.adapterConfig })}
                 disabledTypes={adapterPickerDisabledTypes}
-                onChange={(t) => {
-                  if (isCreate) {
-                    // Reset all adapter-specific fields to defaults when switching adapter type
-                    const { adapterType: _at, ...defaults } = defaultCreateValues;
-                    const nextValues: CreateConfigValues = { ...defaults, adapterType: t };
-                    if (t === "codex_local") {
-                      nextValues.dangerouslyBypassSandbox =
-                        DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX;
-                    } else if (t === "gemini_local") {
-                      nextValues.model = DEFAULT_GEMINI_LOCAL_MODEL;
-                    } else if (t === "kimi_local") {
-                      nextValues.model = DEFAULT_KIMI_LOCAL_MODEL;
-                    } else if (t === "cursor") {
-                      nextValues.model = DEFAULT_CURSOR_LOCAL_MODEL;
-                    } else if (t === "opencode_local") {
-                      nextValues.model = DEFAULT_OPENCODE_LOCAL_MODEL;
-                    } else if (t === "paperclip_runner") {
-                      nextValues.model = DEFAULT_CODEX_LOCAL_MODEL;
-                    }
-                    set!(nextValues);
-                  } else {
-                    // Clear all adapter config and explicitly blank out model + effort/mode keys
-                    // so the old adapter's values don't bleed through via eff()
-                    setOverlay((prev) => ({
-                      ...prev,
-                      adapterType: t,
-                      adapterConfig: {
-                        model:
-                          t === "gemini_local"
-                            ? DEFAULT_GEMINI_LOCAL_MODEL
-                            : t === "kimi_local"
-                              ? DEFAULT_KIMI_LOCAL_MODEL
-                            : t === "opencode_local"
-                              ? DEFAULT_OPENCODE_LOCAL_MODEL
-                            : t === "cursor"
-                              ? DEFAULT_CURSOR_LOCAL_MODEL
-                            : t === "paperclip_runner"
-                              ? resolvePaperclipRunnerTransitionModel(adapterType, config.model)
-                              : "",
-                        effort: "",
-                        modelReasoningEffort: "",
-                        variant: "",
-                        mode: "",
-                        ...(t === "codex_local"
-                          ? {
-                              dangerouslyBypassApprovalsAndSandbox:
-                                DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
-                            }
-                          : t === "paperclip_runner"
-                            ? {
-                                ...paperclipRunnerTransitionConfig(adapterType, eff("adapterConfig", "model", config.model)),
-                              }
-                          : {}),
-                      },
-                    }));
-                  }
-                }}
+                onChange={selectHarness}
               />
             </Field>
           )}
 
+          <details className="space-y-3">
+            <summary className="cursor-pointer text-sm text-muted-foreground">Advanced</summary>
+            {paperclipRunnerProfileForHarness(modelHarness) && <Field label="Runner"><select aria-label="Runner" className={inputClass} value={isCreate ? props.values.runner ?? (props.values.adapterType === "paperclip_runner" ? "paperclip" : "auto") : agentRunner(adapterType)} onChange={event => {
+              try {
+              const selectedRunner = event.target.value as "auto" | "paperclip" | "legacy";
+              const resolved = resolveAgentRunnerConfig({ adapterType, adapterConfig: isCreate ? getUIAdapter(adapterType).buildAdapterConfig(props.values) : { ...config, ...overlay.adapterConfig }, runner: selectedRunner });
+              setRunnerSelectionError(null);
+              if (isCreate) set!({ runner: selectedRunner, adapterType: resolved.adapterType, model: String(resolved.adapterConfig.model ?? ""), adapterSchemaValues: resolved.adapterConfig });
+              else setOverlay(prev => ({ ...prev, adapterType: resolved.adapterType, adapterConfig: resolved.adapterConfig }));
+              } catch (error) { setRunnerSelectionError(error instanceof Error ? error.message : "Could not change runner"); }
+            }}>
+              {isCreate && <option value="auto">Automatic (default)</option>}
+              <option value="paperclip">Paperclip Runner{runnerAdapters?.find(a => a.type === modelHarness)?.defaultRunner !== "legacy" ? " (default)" : ""}</option><option value="legacy">Legacy runner</option>
+            </select></Field>}
+            {showAdapterTypeField && !adapterPickerDisabledTypes.has("paperclip_runner") && <Field label="Managed harness" hint="Requires a qualified organization profile.">
+              <select className={inputClass} value={["claude_managed", "aws_agentcore"].includes(modelHarness) ? modelHarness : ""} onChange={event => { if (event.target.value) selectHarness(event.target.value); }}>
+                <option value="">Choose a managed harness…</option>
+                <option value="claude_managed">Claude Managed</option>
+                <option value="aws_agentcore">AWS AgentCore</option>
+              </select>
+            </Field>}
+          </details>
+
+          {runnerSelectionError && <p role="alert" className="text-sm text-destructive">{runnerSelectionError}</p>}
           {!isCreate && selectedCompanyId && <AiConnectionField companyId={selectedCompanyId} agentId={props.agent.id} agentName={props.agent.name} adapterType={aiRoutingHarness(adapterType, eff("adapterConfig", "provider", config.provider), eff("adapterConfig", "acpxAgent", config.acpxAgent))}
-            routerAdapterType={adapterType} value={aiRuntimeConnectionBindingSchema.safeParse((overlay.runtime.runtimeConfig as Record<string, unknown> | undefined)?.aiConnection ?? runtimeConfig.aiConnection).data}
+            routerAdapterType={adapterType} value={aiRuntimeConnectionBindingSchema.safeParse(((overlay.runtime.runtimeConfig as Record<string, unknown> | undefined) ?? runtimeConfig).aiConnection).data}
             model={String(eff("adapterConfig", "model", config.model) ?? "")} environmentId={currentDefaultEnvironmentId || undefined} legacy
             onChange={binding => mark("runtime", "runtimeConfig", { ...runtimeConfig, aiConnection: binding })} />}
 
@@ -3660,7 +3650,9 @@ export function AdapterTypeDropdown({
   value,
   onChange,
   disabledTypes,
+  includeManagedHarnesses = false,
 }: {
+  includeManagedHarnesses?: boolean;
   value: string;
   onChange: (type: string) => void;
   disabledTypes: Set<string>;
@@ -3669,10 +3661,10 @@ export function AdapterTypeDropdown({
   const selectedDisplay = getAdapterDisplay(value);
   const adapterList = useMemo(
     () =>
-      listAdapterOptions((type) => adapterLabels[type] ?? getAdapterLabel(type)).filter(
-        (item) => !disabledTypes.has(item.value),
+      [...listAdapterOptions((type) => adapterLabels[type] ?? getAdapterLabel(type)), ...(includeManagedHarnesses ? ["claude_managed", "aws_agentcore"].map(value => ({ value, label: getAdapterLabel(value), comingSoon: false, hidden: false, experimental: false })) : [])].filter(
+        (item) => item.value !== "paperclip_runner" && !disabledTypes.has(item.value),
       ),
-    [disabledTypes],
+    [disabledTypes, includeManagedHarnesses],
   );
 
   return (
@@ -3680,6 +3672,7 @@ export function AdapterTypeDropdown({
       <PopoverTrigger asChild>
         <button
           type="button"
+          aria-label="Harness"
           data-size="default"
           className={cn(selectTriggerClassName, "w-full")}
         >

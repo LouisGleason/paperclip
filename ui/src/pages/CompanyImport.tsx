@@ -1,3 +1,5 @@
+import { resolveAgentRunnerConfig } from "@paperclipai/adapter-utils";
+import { agentHarnessType } from "@paperclipai/shared";
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
@@ -557,7 +559,7 @@ function ConflictResolutionList({
 // ── Adapter type options for import ───────────────────────────────────
 
 const FALLBACK_IMPORT_ADAPTER_TYPE = "claude_local";
-const IMPORT_ADAPTER_OPTIONS: { value: string; label: string }[] = listUIAdapters().map((adapter) => ({
+const IMPORT_ADAPTER_OPTIONS: { value: string; label: string }[] = listUIAdapters().filter(adapter => adapter.type !== "paperclip_runner").map((adapter) => ({
   value: adapter.type,
   label: adapterLabels[adapter.type] ?? getAdapterLabel(adapter.type),
 }));
@@ -569,6 +571,8 @@ interface AdapterPickerItem {
   name: string;
   /** Adapter type from the package manifest (the source's adapter). */
   adapterType: string;
+  adapterConfig: Record<string, unknown>;
+  runner?: import("@paperclipai/shared").AgentRunnerChoice;
   /**
    * Set when the manifest adapter is not installed on the destination: the
    * adapter type the agent falls back to unless the user picks another one.
@@ -613,7 +617,9 @@ function AdapterPickerList({
             const selectedType =
               adapterOverrides[agent.slug] ?? agent.fallbackAdapterType ?? agent.adapterType;
             const isExpanded = expandedSlugs.has(agent.slug);
-            const vals = configValues[agent.slug] ?? { ...defaultCreateValues, adapterType: selectedType };
+            const vals = configValues[agent.slug] ?? { ...defaultCreateValues, adapterType: selectedType,
+              runner: agent.runner, adapterSchemaValues: agent.adapterConfig,
+              model: String(agent.adapterConfig.model ?? "") };
 
             return (
               <div key={agent.slug}>
@@ -630,7 +636,7 @@ function AdapterPickerList({
                   <ArrowRight className="h-3 w-3 shrink-0 text-muted-foreground" />
                   <select
                     className="min-w-0 flex-1 rounded-md border border-border bg-transparent px-2 py-1 text-xs outline-none focus:border-foreground"
-                    value={selectedType}
+                    value={agentHarnessType(selectedType, agent.adapterConfig)}
                     onChange={(e) => onChangeAdapter(agent.slug, e.target.value)}
                   >
                     {adapterOptions.map((opt) => (
@@ -1010,7 +1016,7 @@ export function CompanyImport() {
   const ceoAdapterType = useMemo(() => {
     if (!companyAgents) return "claude_local";
     const ceo = companyAgents.find((a) => a.role === "ceo");
-    return ceo?.adapterType ?? "claude_local";
+    return ceo ? agentHarnessType(ceo.adapterType, ceo.adapterConfig) : "claude_local";
   }, [companyAgents]);
 
   // Fetch the destination's installed adapters so imported agents keep their
@@ -1028,17 +1034,11 @@ export function CompanyImport() {
     if (!installedAdapters) return null;
     return new Set(installedAdapters.filter((a) => !a.disabled).map((a) => a.type));
   }, [installedAdapters]);
-  // Native runner is the one adapter that fails closed in the importer. Other
-  // adapter choices preserve the importer's existing fail-open behavior when
-  // availability cannot be read, but Paperclip Runner only appears after the
-  // server explicitly reports that its experimental flag is enabled.
-  const nativeRunnerAvailable =
-    availableAdapterTypes?.has("paperclip_runner") === true;
   const importAdapterOptions = useMemo(
     () => IMPORT_ADAPTER_OPTIONS.filter(
-      (option) => option.value !== "paperclip_runner" || nativeRunnerAvailable,
+      (option) => !availableAdapterTypes || availableAdapterTypes.has(option.value),
     ),
-    [nativeRunnerAvailable],
+    [availableAdapterTypes],
   );
 
   const localZipHelpText =
@@ -1539,7 +1539,8 @@ export function CompanyImport() {
     const currentType = agent ? effectiveAdapterType(agent) : adapterOverrides[slug] ?? "claude_local";
     setAdapterConfigValues((prev) => ({
       ...prev,
-      [slug]: { ...(prev[slug] ?? { ...defaultCreateValues, adapterType: currentType }), ...patch },
+      [slug]: { ...(prev[slug] ?? { ...defaultCreateValues, adapterType: currentType,
+        runner: agent?.runner, adapterSchemaValues: agent?.adapterConfig ?? {}, model: String(agent?.adapterConfig.model ?? "") }), ...patch },
     }));
   }
 
@@ -1590,16 +1591,7 @@ export function CompanyImport() {
     if (!importPreview) return [];
     return importPreview.manifest.agents.map((a) => {
       let fallbackAdapterType: string | null = null;
-      if (a.adapterType === "paperclip_runner" && !nativeRunnerAvailable) {
-        const firstEnabledLegacyAdapter = availableAdapterTypes
-          ? [...availableAdapterTypes].find((type) => type !== "paperclip_runner") ?? null
-          : null;
-        fallbackAdapterType =
-          ceoAdapterType !== "paperclip_runner" &&
-          (!availableAdapterTypes || availableAdapterTypes.has(ceoAdapterType))
-            ? ceoAdapterType
-            : firstEnabledLegacyAdapter ?? FALLBACK_IMPORT_ADAPTER_TYPE;
-      } else if (availableAdapterTypes && !availableAdapterTypes.has(a.adapterType)) {
+      if (a.adapterType !== "paperclip_runner" && availableAdapterTypes && !availableAdapterTypes.has(a.adapterType)) {
         // The fallback must itself be installed: the CEO's adapter when it is,
         // else any installed adapter, else null so the manifest adapter stands
         // and the server's unknown-adapter rejection is the backstop.
@@ -1612,10 +1604,12 @@ export function CompanyImport() {
         slug: a.slug,
         name: a.name,
         adapterType: a.adapterType,
+        adapterConfig: a.adapterConfig,
+        runner: a.runner,
         fallbackAdapterType,
       };
     });
-  }, [importPreview, availableAdapterTypes, ceoAdapterType, nativeRunnerAvailable]);
+  }, [importPreview, availableAdapterTypes, ceoAdapterType]);
 
   /** The adapter type an imported agent will actually use: an explicit user pick, else the availability fallback, else the manifest adapter. */
   function effectiveAdapterType(agent: AdapterPickerItem): string {
@@ -1632,10 +1626,17 @@ export function CompanyImport() {
       const selectedType = effectiveAdapterType(agent);
       const configVals = adapterConfigValues[agent.slug];
       if (selectedType === agent.adapterType && !configVals) continue;
-      const override: CompanyPortabilityAdapterOverride = { adapterType: selectedType };
+      const override: CompanyPortabilityAdapterOverride = { adapterType: configVals?.adapterType ?? selectedType, runner: configVals?.runner ?? "auto" };
       if (configVals) {
-        const uiAdapter = getUIAdapter(selectedType);
-        override.adapterConfig = uiAdapter.buildAdapterConfig(configVals);
+        const uiAdapter = getUIAdapter(configVals.adapterType);
+        const sameHarness = agentHarnessType(configVals.adapterType, configVals.adapterSchemaValues)
+          === agentHarnessType(agent.adapterType, agent.adapterConfig);
+        const sourceConfig = sameHarness ? resolveAgentRunnerConfig({
+          adapterType: agent.adapterType,
+          adapterConfig: agent.adapterConfig,
+          runner: configVals.runner ?? agent.runner ?? "auto",
+        }).adapterConfig : {};
+        override.adapterConfig = { ...sourceConfig, ...uiAdapter.buildAdapterConfig(configVals) };
       }
       overrides[agent.slug] = override;
     }

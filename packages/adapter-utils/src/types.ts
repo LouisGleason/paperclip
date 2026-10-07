@@ -723,6 +723,7 @@ export interface CLIAdapterModule {
 
 export interface CreateConfigValues {
   adapterType: string;
+  runner?: import("@paperclipai/shared").AgentRunnerChoice;
   codexPermissionMode?: "never" | "on-request" | "untrusted";
   paperclipRunnerLifecycleMode?: "per_turn" | "warm";
   paperclipRunnerIdleTimeoutMs?: number;

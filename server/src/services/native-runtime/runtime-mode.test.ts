@@ -43,12 +43,12 @@ describe("resolveNativeRuntimeMode", () => {
     }
   });
 
-  it("rejects a fresh Paperclip Runner start while the rollout flag is disabled", () => {
-    expect(() => resolveNativeRuntimeMode({
+  it("starts a fresh Paperclip Runner even with the retired flag disabled", () => {
+    expect(resolveNativeRuntimeMode({
       ...eligible,
       enabled: false,
-    })).toThrow(expect.objectContaining({
-      code: "paperclip_runner_rollout_disabled",
+    })).toEqual(expect.objectContaining({
+      kind: "native",
     }));
   });
 
@@ -189,7 +189,7 @@ describe("resolveNativeRuntimeMode", () => {
     }));
   });
 
-  it("keeps a persisted active run native while the global flag rejects a fresh runner start", () => {
+  it("keeps both persisted and fresh runs native regardless of the retired flag", () => {
     const disabled = { ...eligible, enabled: false };
     expect(resolveHeartbeatNativeRuntimeMode({
       ...disabled,
@@ -203,11 +203,11 @@ describe("resolveNativeRuntimeMode", () => {
       reason: "eligible_opt_in",
       authorityDecision: expect.objectContaining({ reasonCode: "live_continuation_registered" }),
     }));
-    expect(() => resolveHeartbeatNativeRuntimeMode({
+    expect(resolveHeartbeatNativeRuntimeMode({
       ...disabled,
       persisted: { runtimeMode: null, runtimeModeReason: null, runtimeModeResolvedAt: null },
-    })).toThrow(expect.objectContaining({
-      code: "paperclip_runner_rollout_disabled",
+    })).toEqual(expect.objectContaining({
+      kind: "native",
     }));
   });
 
@@ -456,10 +456,10 @@ describe("resolveHeartbeatRuntimeMode compatibility", () => {
       reason: "persisted_native_selection",
       provider: "codex",
     });
-    expect(() => resolveHeartbeatRuntimeMode({
+    expect(resolveHeartbeatRuntimeMode({
       ...compatibilityInput,
       enabled: false,
       adapterType: "paperclip_runner",
-    })).toThrow(NativeRunnerSelectionError);
+    })).toMatchObject({ kind: "native" });
   });
 });

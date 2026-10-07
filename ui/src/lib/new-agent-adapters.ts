@@ -10,10 +10,9 @@ export function isNewAgentAdapterAllowed(
   type: string,
   {
     cloud,
-    nativeRunnerEnabled,
   }: { cloud: boolean; nativeRunnerEnabled: boolean },
 ) {
-  if (type === "paperclip_runner") return nativeRunnerEnabled;
+  if (type === "paperclip_runner") return false;
   if (cloud) return CLOUD_ADAPTERS.has(type);
   return true;
 }

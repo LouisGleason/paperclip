@@ -169,7 +169,7 @@ vi.mock("../adapters/use-adapter-capabilities", () => ({
 }));
 
 vi.mock("../adapters/use-disabled-adapters", () => ({
-  useDisabledAdaptersSync: () => [],
+  useDisabledAdaptersSync: () => new Set<string>(),
 }));
 
 vi.mock("./MarkdownEditor", () => ({
@@ -264,6 +264,7 @@ async function renderForm(
   agentOverrides: Partial<Agent> = {},
   options: {
     showAdapterTestEnvironmentButton?: boolean;
+    showAdapterTypeField?: boolean;
     content?: "configuration" | "secrets";
     environmentVariablesPlacement?: "configuration" | "secrets";
     hideInlineSave?: boolean;
@@ -301,7 +302,7 @@ async function renderForm(
               onDirtyChange={options.onDirtyChange}
               onSaveActionChange={options.onSaveActionChange}
               onCancelActionChange={options.onCancelActionChange}
-              showAdapterTypeField={false}
+              showAdapterTypeField={options.showAdapterTypeField ?? false}
               showAdapterTestEnvironmentButton={options.showAdapterTestEnvironmentButton ?? false}
             />
           </TooltipProvider>
@@ -789,7 +790,7 @@ describe("AgentConfigForm environment selector", () => {
 
   it.each([
     ["Codex", "codex", undefined, DEFAULT_CODEX_LOCAL_MODEL],
-    ["ACP agents", "acpx", "claude", "claude-sonnet-5"],
+    ["Claude Code", "acpx", "claude", "claude-sonnet-5"],
     ["Claude Managed", "claude_managed", undefined, "claude-sonnet-5"],
   ])("saves the %s harness default without the previous OpenCode model prefix", async (label, provider, acpxAgent, model) => {
     const accountList = vi.spyOn(aiConnectionsApi, "list").mockResolvedValue({
@@ -802,19 +803,24 @@ describe("AgentConfigForm environment selector", () => {
         adapterType: "paperclip_runner",
         adapterConfig: { provider: "opencode", model: "openrouter/anthropic/claude-sonnet-4.6" },
         runtimeConfig: { aiConnection: { mode: "responsible_user", provider: "openrouter", method: "api_key" } },
-      });
+      }, { showAdapterTypeField: true });
       roots.push(result.root);
+      if (provider === "claude_managed") {
+        const select = result.container.querySelector<HTMLSelectElement>('select:has(option[value="claude_managed"])')!;
+        await act(async () => { select.value = provider; select.dispatchEvent(new Event("change", { bubbles: true })); });
+      } else {
       await act(async () => {
-        result.container.querySelector('[aria-label="Harness"]')!
-          .dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+        result.container.querySelector<HTMLButtonElement>('[aria-label="Harness"]')!
+          .click();
       });
       await flushReact();
-      const option = [...document.querySelectorAll<HTMLElement>('[role="option"]')]
+      const option = [...document.querySelectorAll<HTMLElement>("button")]
         .find(element => element.textContent === label)!;
       expect(option).toBeTruthy();
       await act(async () => {
-        option.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+        option.click();
       });
+      }
       await flushReact();
       await clickByText(result.container, "Save");
       expect(result.onSave).toHaveBeenCalledWith(expect.objectContaining({
@@ -849,7 +855,7 @@ describe("AgentConfigForm environment selector", () => {
     roots.push(result.root);
 
     expect(result.container.textContent).not.toContain("Environment override");
-    expect(result.container.querySelector("select")).toBeNull();
+    expect(result.container.querySelector('select:not([aria-label="Runner"])')).toBeNull();
   });
 
   it("renders GPT-6 Astra and its model-specific reasoning efforts", async () => {

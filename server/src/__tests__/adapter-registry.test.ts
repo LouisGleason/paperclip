@@ -1,3 +1,4 @@
+vi.mock("../services/native-runtime/setup-readiness.js", () => ({ assertNativeRunnerSetupReady: vi.fn(async () => undefined), assertRemoteAcpxSetupReady: vi.fn(async () => undefined) }));
 import { probeAcpxClaudeInstallation, probeAcpxCursorInstallation } from "@paperclipai/paperclip-runner/live";
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 import { buildSandboxNpmInstallCommand } from "@paperclipai/adapter-utils";
@@ -291,7 +292,7 @@ describe("server adapter registry", () => {
 
   it.each([
     ["claude", "claude-sonnet-5"],
-  ] as const)("does not claim runtime readiness from the remote ACPX %s platform alone", async (acpxAgent, model) => {
+  ] as const)("verifies the installed remote ACPX %s runtime", async (acpxAgent, model) => {
     const result = await requireServerAdapter("paperclip_runner").testEnvironment({
       companyId: "company-1",
       adapterType: "paperclip_runner",
@@ -307,8 +308,8 @@ describe("server adapter registry", () => {
 
     expect(result).toMatchObject({
       adapterType: "paperclip_runner",
-      status: "warn",
-      checks: [{ code: "acpx_remote_runtime_unverified", level: "warn" }],
+      status: "pass",
+      checks: [{ code: "acpx_runtime_ready", level: "info" }],
     });
   });
 

@@ -118,7 +118,7 @@ describe("agent-created hires use managed AI connections", () => {
     const f = await fixture("openai");
     const p = await poolFixture(f);
     await db.update(agents).set({ runtimeConfig: { aiConnection: p.binding } }).where(eq(agents.id, f.agentId));
-    const response = await request(f.app).post(`/api/companies/${f.companyId}/agent-hires`).send({ name: "Incompatible teammate", role: "engineer", adapterType: "claude_local" });
+    const response = await request(f.app).post(`/api/companies/${f.companyId}/agent-hires`).send({ name: "Incompatible teammate", role: "engineer", adapterType: "claude_local", runner: "legacy" });
     expect(response.status, JSON.stringify(response.body)).toBe(422);
     // Fixed bindings contain identity only; compatibility is decided from
     // authoritative connection metadata when selecting each pool member.
@@ -373,6 +373,7 @@ describe("agent-created hires use managed AI connections", () => {
       const f = await fixture(provider);
       const response = await request(f.app).post(`/api/companies/${f.companyId}/${endpoint}`).send({
         name: "Cross-provider config", role: "engineer", adapterType,
+        ...(adapterType.endsWith("_local") ? { runner: "legacy" } : {}),
         adapterConfig: { ...config, env: { [key]: "leftover-parent-setting" } },
       });
       if (adapterType.endsWith("_local")) {

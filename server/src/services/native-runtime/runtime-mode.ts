@@ -115,12 +115,6 @@ export function resolveNativeRuntimeMode(input: {
       reason: "direct_adapter",
     };
   }
-  if (!input.enabled) {
-    throw ineligible(
-      "paperclip_runner_rollout_disabled",
-      "Paperclip Runner is experimental and disabled on this instance.",
-    );
-  }
   let runnerProfile: PaperclipRunnerProviderProfile;
   try {
     runnerProfile = resolvePaperclipRunnerProviderProfile(input.adapterConfig);

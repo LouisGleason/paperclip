@@ -51,7 +51,7 @@ import { aiConnectionBindingSchema, aiRuntimeConnectionBindingSchema, type AiCon
 import { aiConnectionRouterService, AiConnectionPoolExhausted, applyAiConnectionRouterTaskSettings } from "./ai-connection-router.js";
 import { aiConnectionSessionCompatibilityInputs, managedAiSessionIdentityCompatible } from "./ai-connection-session.js";
 import { executionBlockerPredicate, getExecutionBlocker } from "./execution-blocker.js";
-import { CONVERSATION_CONTINUATION_POLICY, claimedAdapterType, runUsedConversationAdapter, hasConversationContinuationPolicy, isConversationAdapter } from "./conversation-continuation.js";
+import { CONVERSATION_CONTINUATION_POLICY, recordedRunAdapterTypeColumn, claimedAdapterType, runUsedConversationAdapter, hasConversationContinuationPolicy, isConversationAdapter } from "./conversation-continuation.js";
 import { recordExecutionWait } from "./execution-wait.js";
 import { getNativeReviewAssignment, readNativeReviewAssignmentContext } from "./native-runtime/native-review-participant.js";
 import { claimQueuedNativeReviewRun } from "./native-runtime/native-review-dispatch.js";
@@ -3334,6 +3334,7 @@ const heartbeatRunProcessGroupIdColumn =
   heartbeatRuns.processGroupId ?? sql<number | null>`NULL`.as("processGroupId");
 
 const heartbeatRunListColumns = {
+  adapterType: recordedRunAdapterTypeColumn,
   id: heartbeatRuns.id,
   responsibleUserId: heartbeatRuns.responsibleUserId,
   companyId: heartbeatRuns.companyId,
@@ -3590,12 +3591,14 @@ const heartbeatRunExecutionEvidenceColumn = sql<Record<string, unknown> | null>`
 
 const heartbeatRunSafeColumns = {
   ...getTableColumns(heartbeatRuns),
+  adapterType: recordedRunAdapterTypeColumn,
   processGroupId: heartbeatRunProcessGroupIdColumn,
   resultJson: heartbeatRunSafeResultJsonColumn,
 } as const;
 
 const heartbeatRunSqlAsciiSafeColumns = {
   ...getTableColumns(heartbeatRuns),
+  adapterType: recordedRunAdapterTypeColumn,
   processGroupId: heartbeatRunProcessGroupIdColumn,
   error: sql<string | null>`NULL`.as("error"),
   resultJson: sql<Record<string, unknown> | null>`NULL`.as("resultJson"),

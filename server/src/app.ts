@@ -971,9 +971,7 @@ export async function createApp(
   );
   api.use(
     adapterRoutes({
-      getNativeRunnerEnabled: async () =>
-        (await instanceSettingsService(db).getExperimental())
-          .enableNativeRunner === true,
+      getNativeRunnerEnabled: async () => true,
     }),
   );
   api.use(

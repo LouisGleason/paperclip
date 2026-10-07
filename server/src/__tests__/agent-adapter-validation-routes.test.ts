@@ -671,7 +671,7 @@ describe("agent routes adapter validation", () => {
     expect(res.status, JSON.stringify(res.body)).toBe(201);
   });
 
-  it("rejects a new paperclip_runner selection while the rollout flag is off", async () => {
+  it("allows a new paperclip_runner selection regardless of the retired flag", async () => {
     const app = await createApp();
     const res = await requestApp(app, (baseUrl) =>
       request(baseUrl)
@@ -679,9 +679,8 @@ describe("agent routes adapter validation", () => {
         .send({ name: "Native Codex", adapterType: "paperclip_runner" }),
     );
 
-    expect(res.status, JSON.stringify(res.body)).toBe(422);
-    expect(res.body.details).toMatchObject({ code: "paperclip_runner_rollout_disabled" });
-    expect(mockAgentService.create).not.toHaveBeenCalled();
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect(mockAgentService.create).toHaveBeenCalled();
   });
 
   it("allows a new paperclip_runner selection while the rollout flag is on", async () => {

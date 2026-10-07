@@ -1,3 +1,4 @@
+import { agentHarnessType, agentRunner, paperclipRunnerProfileForHarness, type AgentRunnerChoice } from "@paperclipai/shared";
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -65,8 +66,9 @@ export function ConfigureBuiltInAgentModal({
   const { definition } = state;
 
   const [adapterType, setAdapterType] = useState<string>(
-    () => state.agent?.adapterType ?? defaultAdapterType(state),
+    () => state.agent ? agentHarnessType(state.agent.adapterType, state.agent.adapterConfig) : defaultAdapterType(state),
   );
+  const [runner, setRunner] = useState<AgentRunnerChoice>(() => state.agent ? agentRunner(state.agent.adapterType) : "auto");
   const [model, setModel] = useState<string>(() => {
     const config = state.agent?.adapterConfig;
     const configuredModel = typeof config === "object" && config !== null
@@ -125,10 +127,14 @@ export function ConfigureBuiltInAgentModal({
 
   const provision = useMutation({
     mutationFn: async () => {
-      const adapterConfig: Record<string, unknown> = {};
+      const adapterConfig: Record<string, unknown> = state.agent
+        && agentHarnessType(state.agent.adapterType, state.agent.adapterConfig) === adapterType
+        ? { ...state.agent.adapterConfig } : {};
       if (model.trim()) adapterConfig.model = model.trim();
       const result = await builtInAgentsApi.provision(companyId, definition.key, {
-        adapterType,
+        adapterType: state.agent && agentHarnessType(state.agent.adapterType, state.agent.adapterConfig) === adapterType
+          ? state.agent.adapterType : adapterType,
+        runner,
         adapterConfig,
         ...(budgetMonthlyCents !== undefined ? { budgetMonthlyCents } : {}),
       });
@@ -163,7 +169,7 @@ export function ConfigureBuiltInAgentModal({
             board.
           </InlineBanner>
 
-          <Field label="Adapter type">
+          <Field label="Harness">
             <AdapterTypeDropdown
               value={adapterType}
               onChange={(next) => {
@@ -174,6 +180,12 @@ export function ConfigureBuiltInAgentModal({
             />
           </Field>
 
+          {paperclipRunnerProfileForHarness(adapterType) && <details className="space-y-3">
+            <summary className="cursor-pointer text-sm text-muted-foreground">Advanced</summary>
+            <Field label="Runner"><select className="w-full rounded-md border border-border bg-background px-3 py-2" value={runner === "legacy" ? "legacy" : "paperclip"} onChange={event => setRunner(event.target.value as AgentRunnerChoice)}>
+              <option value="paperclip">Paperclip Runner (default)</option><option value="legacy">Legacy runner</option>
+            </select></Field>
+          </details>}
           {modelRequired && (
             // ModelDropdown supplies its own "Model" Field label + hint.
             <ModelDropdown

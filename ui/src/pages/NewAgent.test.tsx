@@ -272,11 +272,11 @@ describe("New agent setup", () => {
     await click("Finish setup");
     expect(api.hire.mock.calls[0][1].defaultEnvironmentId).toBe("grok-sandbox");
   });
-  it.each([false, true])("blocks direct runner setup links when the experiment is disabled (cloud=%s)", async (cloud) => {
+  it.each([false, true])("accepts old runner setup links regardless of the obsolete flag (cloud=%s)", async (cloud) => {
     cache.setQueryData(queryKeys.health, { status: "ok", cloud: { managed: cloud } });
     settings.getExperimental.mockResolvedValue({ enableNativeRunner: false });
     await render("paperclip_runner");
-    expect(container.textContent).toContain("This adapter is unavailable");
+    expect(container.textContent).not.toContain("This adapter is unavailable");
     expect(api.hire).not.toHaveBeenCalled();
   });
   it("blocks direct setup links for unsupported Cloud adapters", async () => {
@@ -320,11 +320,11 @@ describe("New agent setup", () => {
         provider: "xai", method: "api_key", apiKey: "example-test-secret",
       }));
     }
-    const model = adapterType === "paperclip_runner" ? "grok-4.7" : "grok-code-fast-1";
+    const model = "grok-4.7";
     await fill("Model", model);
     await click("Run test");
     const binding = { provider: "xai", method, mode: "responsible_user" };
-    expect(api.testEnvironment).toHaveBeenLastCalledWith("company-1", adapterType, expect.objectContaining({
+    expect(api.testEnvironment).toHaveBeenLastCalledWith("company-1", "paperclip_runner", expect.objectContaining({
       environmentId: "sandbox-1",
       adapterConfig: expect.objectContaining({ model, ...(adapterType === "paperclip_runner" ? { provider: "acpx", acpxAgent: "grok", acpxPermissionMode: "approve-all" } : {}) }),
       aiConnection: binding,
@@ -333,7 +333,7 @@ describe("New agent setup", () => {
     await click("Finish setup");
     expect(api.hire).toHaveBeenCalledTimes(1);
     expect(api.hire.mock.calls[0][1]).toMatchObject({
-      adapterType,
+      adapterType: "paperclip_runner",
       defaultEnvironmentId: "sandbox-1",
       adapterConfig: { model, ...(adapterType === "paperclip_runner" ? { provider: "acpx", acpxAgent: "grok", acpxPermissionMode: "approve-all" } : {}) },
       runtimeConfig: { aiConnection: binding, heartbeat: { enabled: false } },
@@ -385,6 +385,7 @@ describe("New agent setup", () => {
     ["hermes_local", "OPENROUTER_API_KEY"],
   ])("provides %s credentials to tests and stores only a secret reference", async (adapter, key) => {
     await render(adapter);
+    if (adapter === "cursor") await fill("Model", "claude-sonnet-5");
     await fill(key, "adapter-test-key");
     await click("Finish setup");
     expect(api.testEnvironment.mock.calls[0][2].testCredentials).toEqual({ [key]: "adapter-test-key" });
@@ -485,14 +486,14 @@ describe("New agent setup", () => {
       await connect(adapter === "claude_local" ? "Claude" : "OpenAI");
       expect(api.testEnvironment).toHaveBeenCalledWith(
         "company-1",
-        adapter,
+        "paperclip_runner",
         expect.objectContaining({ environmentId: "local-1" }),
       );
       await click("Finish setup");
       expect(api.hire).toHaveBeenCalledTimes(1);
       expect(api.hire.mock.calls[0][1]).toMatchObject({
         name: "Atlas",
-        adapterType: adapter,
+        adapterType: "paperclip_runner",
         reportsTo: "ceo",
         runtimeConfig: { heartbeat: { enabled: false } },
       });
@@ -685,7 +686,7 @@ describe("New agent setup", () => {
     }));
     await click("Finish setup");
     expect(api.hire.mock.calls[0][1]).toEqual(expect.objectContaining({
-      adapterType: "opencode_local",
+      adapterType: "paperclip_runner",
       runtimeConfig: expect.objectContaining({ aiConnection: binding }),
       adapterConfig: expect.objectContaining({ model }),
     }));

@@ -57,7 +57,8 @@ export function AgentBasicsDialog({
   });
   const [name, setName] = useState("");
   const [adapterType, setAdapterType] = useState(initialAdapter);
-  const [runnerProvider, setRunnerProvider] = useState("codex");
+  const managedHarness = ["claude_managed", "aws_agentcore"].includes(adapterType);
+  const runnerProvider = managedHarness ? adapterType : "";
   const [step, setStep] = useState<"name" | "adapter">("name");
   const {
     data: adapters,
@@ -70,6 +71,7 @@ export function AgentBasicsDialog({
   });
   const choices = (adapters ?? []).filter(
     (adapter) =>
+      adapter.type !== "paperclip_runner" &&
       adapter.loaded &&
       !adapter.disabled &&
       isNewAgentAdapterAllowed(adapter.type, {
@@ -79,7 +81,8 @@ export function AgentBasicsDialog({
       !["process", "http"].includes(adapter.type) &&
       !getAdapterDisplay(adapter.type).comingSoon,
   );
-  const validAdapter = choices.some((adapter) => adapter.type === adapterType);
+  const managedAvailable = !cloud && adapters?.some(adapter => adapter.type === "paperclip_runner" && adapter.loaded && !adapter.disabled);
+  const validAdapter = choices.some((adapter) => adapter.type === adapterType) || (managedAvailable && managedHarness);
   return (
     <Dialog
       open={open}
@@ -106,7 +109,7 @@ export function AgentBasicsDialog({
           <span
             className={cn(step === "adapter" && "font-medium text-foreground")}
           >
-            2. Adapter
+            2. Harness
           </span>
         </div>
         <form
@@ -116,7 +119,7 @@ export function AgentBasicsDialog({
             if (!name.trim()) return;
             if (step === "name") setStep("adapter");
             else if (validAdapter)
-              onContinue({ name: name.trim(), adapterType, runnerProvider });
+              onContinue({ name: name.trim(), adapterType: managedHarness ? "paperclip_runner" : adapterType, runnerProvider });
           }}
         >
           <div className="flex min-h-0 flex-col gap-7 overflow-y-auto px-6 pb-8 sm:px-10">
@@ -126,7 +129,7 @@ export function AgentBasicsDialog({
                 <DialogTitle className="text-3xl font-semibold tracking-tight">
                   {step === "name"
                     ? "Meet your next agent"
-                    : "Choose an adapter"}
+                    : "Choose a harness"}
                 </DialogTitle>
                 <DialogDescription className="text-base">
                   {step === "name"
@@ -162,10 +165,10 @@ export function AgentBasicsDialog({
               </div>
             ) : (
               <fieldset className="space-y-4">
-                <legend className="sr-only">Adapter</legend>
+                <legend className="sr-only">Harness</legend>
                 {isPending && (
                   <p role="status" className="text-sm text-muted-foreground">
-                    Loading adapters…
+                    Loading harnesses…
                   </p>
                 )}
                 {error && (
@@ -209,23 +212,17 @@ export function AgentBasicsDialog({
                     );
                   })}
                 </div>
-                {validAdapter && adapterType === "paperclip_runner" && (
-                  <label className="flex flex-col gap-2 text-sm font-medium">
-                    Runner
-                    <select
-                      className="rounded-md border border-border bg-background px-3 py-2"
-                      value={runnerProvider}
-                      onChange={(event) =>
-                        setRunnerProvider(event.target.value)
-                      }
-                    >
-                      <option value="codex">Codex (app server)</option>
-                      <option value="claude">Claude (ACPX)</option>
-                      <option value="grok">Grok Build (ACPX)</option>
-                      <option value="opencode">OpenCode</option>
+                {managedAvailable && <details className="space-y-3">
+                  <summary className="cursor-pointer text-sm text-muted-foreground">Advanced</summary>
+                  <label className="flex flex-col gap-2 text-sm">Managed harness
+                    <select className="rounded-md border border-border bg-background px-3 py-2" value={managedHarness ? adapterType : ""} onChange={event => setAdapterType(event.target.value)}>
+                      <option value="">Choose a managed harness…</option>
+                      <option value="claude_managed">Claude Managed</option>
+                      <option value="aws_agentcore">AWS AgentCore</option>
                     </select>
                   </label>
-                )}
+                  <p className="text-xs text-muted-foreground">Requires a qualified organization profile.</p>
+                </details>}
               </fieldset>
             )}
           </div>
@@ -248,7 +245,7 @@ export function AgentBasicsDialog({
               type="submit"
               disabled={!name.trim() || (step === "adapter" && !validAdapter)}
             >
-              {step === "name" ? "Choose adapter" : "Configure agent"}
+              {step === "name" ? "Choose harness" : "Configure agent"}
               <ArrowRight className="size-4" />
             </Button>
           </div>

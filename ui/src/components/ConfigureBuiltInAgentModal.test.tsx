@@ -154,6 +154,7 @@ describe("ConfigureBuiltInAgentModal (PAP-12978)", () => {
     await flushReact();
 
     expect(provisionMock).toHaveBeenCalledWith("c1", "briefs", {
+      runner: "auto",
       adapterType: "codex_local",
       adapterConfig: { model: "gpt-5" },
     });
@@ -184,6 +185,7 @@ describe("ConfigureBuiltInAgentModal (PAP-12978)", () => {
     await flushReact();
 
     expect(provisionMock).toHaveBeenCalledWith("c1", "briefs", {
+      runner: "auto",
       adapterType: "claude_local",
       adapterConfig: { model: "claude-haiku-4-5" },
     });
@@ -241,6 +243,7 @@ describe("ConfigureBuiltInAgentModal (PAP-12978)", () => {
 
     expect(provisionMock).toHaveBeenCalled();
     expect(provisionMock).toHaveBeenCalledWith("c1", "briefs", {
+      runner: "auto",
       adapterType: "codex_local",
       adapterConfig: { model: "gpt-5" },
       budgetMonthlyCents: 5000,
@@ -268,6 +271,7 @@ describe("ConfigureBuiltInAgentModal (PAP-12978)", () => {
     await flushReact();
 
     expect(provisionMock).toHaveBeenCalledWith("c1", "briefs", {
+      runner: "auto",
       adapterType: "process",
       adapterConfig: {},
     });

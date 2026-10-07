@@ -2051,3 +2051,8 @@ as free-form text in the instance database. Legacy agents use the default
 in standard, ask, and planning modes. Submission never changes task disposition
 or routes feedback externally. See [Agent commentary](agent-commentary.md) for
 authentication, replay, document-sized limits, inspection, and deletion semantics.
+
+
+### Harness and runner selection
+
+New agents select a harness and default to Paperclip Runner on qualified targets; unsupported combinations use the existing adapter. Existing agents preserve their saved execution choice. Advanced provides an explicit legacy override. See [the runner contract](agent-runners.md) for supported harnesses, request fields, compatibility and approval/import behavior.

@@ -1,3 +1,5 @@
+import { agentRunnerAvailability } from "../services/agent-runner-selection.js";
+import type { AgentRunnerAvailability } from "@paperclipai/shared";
 /**
  * @fileoverview Adapter management REST API routes
  *
@@ -123,7 +125,7 @@ interface AdapterCapabilities {
   login?: AdapterLoginProjection;
 }
 
-interface AdapterInfo {
+interface AdapterInfo extends AgentRunnerAvailability {
   type: string;
   label: string;
   source: "builtin" | "external";
@@ -196,6 +198,7 @@ export function buildAdapterCapabilities(adapter: ServerAdapterModule): AdapterC
 function buildAdapterInfo(adapter: ServerAdapterModule, externalRecord: AdapterPluginRecord | undefined, disabledSet: Set<string>): AdapterInfo {
   const fromDisk = externalRecord ? readAdapterPackageVersionFromDisk(externalRecord) : undefined;
   return {
+    ...agentRunnerAvailability(adapter.type),
     type: adapter.type,
     label: adapter.type, // ServerAdapterModule doesn't have a separate "label" field; type serves as label
     source: externalRecord ? "external" : "builtin",
