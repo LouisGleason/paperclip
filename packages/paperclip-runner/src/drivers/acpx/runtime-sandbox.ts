@@ -30,7 +30,7 @@ import {
 import { createSanitizedAcpxSpawnInput } from "./environment.js";
 import { cursorInstructionBinding } from "./cursor-instructions.js";
 import { parseHermesConfig } from "./hermes-config.js";
-import { claudePaperclipPermissionRules } from "./permission-policy.js";
+import { claudePaperclipPermissionRules, paperclipReadOnlyToolRules } from "./permission-policy.js";
 import type { QualifiedAcpxAgent } from "./qualified-profiles.js";
 import {
   resolveAcpxRuntimeRoot,
@@ -506,6 +506,7 @@ export async function prepareAcpxRuntimeSandbox(input: {
       PAPERCLIP_HERMES_SYSTEM_INSTRUCTIONS: policy.systemInstructions,
       PAPERCLIP_HERMES_POLICY: JSON.stringify({ readOnly: policy.readOnly, readRoots: policy.readRoots, protectedPaths, permissionMode: input.binding.permissionMode,
         paperclipReadTools: claudePaperclipPermissionRules(input.tools ?? [], "approve-reads"),
+        paperclipReadOnlyTools: paperclipReadOnlyToolRules(input.tools ?? []),
         paperclipAutomaticTools: claudePaperclipPermissionRules(input.tools ?? [], input.binding.permissionMode),
       }),
     } : {}),
