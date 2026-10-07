@@ -11,7 +11,7 @@ import { accessApi } from "@/api/access";
 import { chatEndpointsApi } from "@/api/chatEndpoints";
 import { githubChatApi } from "@/api/githubChat";
 import { Button } from "@/components/ui/button";
-import { Copy, MoreHorizontal } from "lucide-react";
+import { Copy, HelpCircle, MoreHorizontal } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -23,6 +23,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { ToggleSwitch } from "@/components/ui/toggle-switch";
 import { Link } from "@/lib/router";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 export const githubSelectClass =
   "w-full rounded-md border border-input bg-background px-3 py-2 text-sm";
@@ -34,9 +39,35 @@ const eventLabels = {
   mention: "Mention",
   comment: "Follow-up comment",
 };
+function GitHubHelp({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Tooltip open={open} onOpenChange={setOpen}>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          aria-label={`About ${label}`}
+          className="inline-flex shrink-0 items-center text-muted-foreground hover:text-foreground"
+          onClick={() => setOpen(true)}
+        >
+          <HelpCircle className="size-4" />
+        </button>
+      </TooltipTrigger>
+      <TooltipContent className="max-w-xs">{children}</TooltipContent>
+    </Tooltip>
+  );
+}
+
 export function GitHubToggle({
   label,
   description,
+  help,
   checked,
   onChange,
   ariaLabel,
@@ -44,6 +75,7 @@ export function GitHubToggle({
 }: {
   label: string;
   description?: string;
+  help?: string;
   checked: boolean;
   onChange: (checked: boolean) => void;
   ariaLabel?: string;
@@ -52,7 +84,10 @@ export function GitHubToggle({
   return (
     <div className="flex items-center justify-between gap-4 py-2">
       <div className="min-w-0">
-        <p className="break-words text-sm font-medium">{label}</p>
+        <div className="flex items-center gap-2">
+          <p className="break-words text-sm font-medium">{label}</p>
+          {help && <GitHubHelp label={label}>{help}</GitHubHelp>}
+        </div>
         {description && (
           <p className="mt-1 text-xs text-muted-foreground">{description}</p>
         )}
@@ -392,12 +427,13 @@ export function GitHubPolicyEditor({
             <h3 className="text-sm font-medium">Formal review actions</h3>
             <GitHubToggle
               label="Allow approvals"
-              description="The agent must choose this action. A 5/5 score does not approve a PR."
+              help="Lets the agent submit an Approve review on GitHub after a complete assessment. The agent must explicitly choose it; a 5/5 score or passing check does not approve the PR. Off still allows scores, comments, and checks."
               checked={policy.allowApprove}
               onChange={(value) => set("allowApprove", value)}
             />
             <GitHubToggle
               label="Allow request changes"
+              help="Lets the agent submit a Request changes review on GitHub after a complete assessment. This is a formal review decision and may prevent merging under your repository rules. Off still allows findings, comments, and a failing check."
               checked={policy.allowRequestChanges}
               onChange={(value) => set("allowRequestChanges", value)}
             />
@@ -597,8 +633,9 @@ export function GitHubAccessEditor({
                 </DropdownMenu>
               </div>
               <GitHubToggle
-                label="Automatic events"
-                ariaLabel={`Automatic events for @${person.login}`}
+                label="Run automatically"
+                ariaLabel={`Run automatically for @${person.login}`}
+                help="Lets PRs and issues authored by this person start work without mentioning the bot. Only events enabled in Settings run. Turn this off to keep this person’s use mention-only."
                 checked={person.automaticReviews}
                 onChange={(value) =>
                   onChange({
@@ -699,7 +736,7 @@ export function GitHubAccessEditor({
           )}
       </div>
       <Button variant="ghost" size="sm" onClick={() => setKind("guest")}>
-        Allow external contributor
+        Add external contributor
       </Button>
       {kind === "guest" && (
         <div className="space-y-4 rounded-lg border border-border p-4">
@@ -782,26 +819,41 @@ export function GitHubAccessEditor({
                 })
               }
             >
-              Allow this account
+              Add contributor
             </Button>
           </div>
         </div>
       )}
       <details className="text-sm">
         <summary className="cursor-pointer text-muted-foreground">
-          Automatic task ownership
+          Automatic task responsibility
         </summary>
         <div className="mt-4 space-y-2">
           {activeMembers.length === 1 && responsible ? (
             <p>
-              Responsible member:{" "}
+              <span className="inline-flex items-center gap-2">
+                Responsible member{" "}
+                <GitHubHelp label="Responsible member">
+                  The Paperclip member accountable for automatically created
+                  tasks. This does not change the GitHub author or grant the bot
+                  access to the member’s personal credentials.
+                </GitHubHelp>
+              </span>
+              :{" "}
               {responsible.user?.name ??
                 responsible.user?.email ??
                 responsible.principalId}
             </p>
           ) : (
             <>
-              <Label htmlFor="github-responsible">Responsible member</Label>
+              <div className="flex items-center gap-2">
+                <Label htmlFor="github-responsible">Responsible member</Label>
+                <GitHubHelp label="Responsible member">
+                  The Paperclip member accountable for automatically created
+                  tasks. This does not change the GitHub author or grant the bot
+                  access to the member’s personal credentials.
+                </GitHubHelp>
+              </div>
               <select
                 id="github-responsible"
                 className={githubSelectClass}
@@ -829,8 +881,8 @@ export function GitHubAccessEditor({
             </>
           )}
           <p className="text-xs text-muted-foreground">
-            Accountable for automatic tasks. GitHub authors remain recorded
-            separately.
+            Automatically created tasks are attributed to this member in
+            Paperclip. The GitHub author is recorded separately.
           </p>
         </div>
       </details>

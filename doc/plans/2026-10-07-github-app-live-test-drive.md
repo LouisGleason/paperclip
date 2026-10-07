@@ -285,3 +285,43 @@ head presentation, and GitHub thread labels. The affected management, setup,
 AgentMail, sidebar, and shared UI-contract group has 47 passing tests. Repository
 typecheck/build, Storybook build, and token gates pass. The earlier full-suite
 failure and outstanding current-head CI/review remain as recorded above.
+
+### Independent GitHub setting and review detail qualification
+
+GitHub review bots now use their own default-off instance experimental setting.
+The shared validator, persisted settings, managed feature catalog, setup and
+management routes, catalog, agent channels, task controls, identity-link admission,
+and agent connector discovery use that setting independently from chat connectors.
+Existing event delivery is not paused merely by hiding the UI.
+
+The same local test drive was restarted and inspected with **GitHub review bots
+on and Chat connectors off**. Connectors showed both GitHub tools and the dedicated
+review bot. Opening Animal Bot still reached Settings and Access. Reviews showed
+the two real commit assessments as separate rows. Each row opened its own detail
+URL with the exact commit, Markdown summary, rationale, coverage, and task/run,
+GitHub comment, and check links. Reload retained the detail route; All reviews
+returned to the list. The detail kept the Reviews contextual navigation. Desktop
+and 390px list/detail layouts were inspected.
+
+Formal approval and request-changes controls retain their off defaults and have
+tooltips describing explicit actions after a completed assessment, independent
+of scores and checks. **Run automatically** explains each person's authored
+PR/issue scheduling and preserves mention-only access when disabled. The
+responsible-member tooltip explains Paperclip accountability without personal
+credential delegation. The tooltips were opened in the live UI, including the
+approval tooltip at 390px. **Add external contributor** replaces the old label.
+The normal bot-tools switch is removed; saved disabled restrictions remain
+disabled until an explicit repair is saved. No bot configuration was changed
+by this walkthrough. A final read found revision 7 with a separately saved
+PR-opened prompt change relative to the previous revision-6 snapshot; that edit
+was preserved. Tools, repository access, and formal review permissions remain
+unchanged.
+
+Focused verification: 388 UI tests and 134 backend/shared settings and identity
+tests pass. The added connector-discovery integration test passes with a disposable
+local PostgreSQL database; the sandbox-only attempt skipped because it could not
+open the database port. The management UI group was rerun after the final tooltip
+copy edit and passes. Repository typecheck/build, production Storybook build,
+and token gates pass; the final discovery change also received focused server
+typecheck/build. These checks do not qualify a new provider or model run. The
+earlier full-suite failure and outstanding current-head CI/review still apply.

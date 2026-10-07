@@ -217,23 +217,28 @@ export function GitHubBotManagement({
               configuration={config}
               onChange={edit}
             />
-            <section className="space-y-3">
-              <h2 className="text-base font-semibold">Agent tools</h2>
-              <GitHubToggle
-                label="Use this bot’s GitHub tools"
-                description="Limited to enabled repositories and this bot’s tasks. Tool policies still apply."
-                checked={config.toolsEnabled}
-                onChange={(toolsEnabled) => edit({ ...config, toolsEnabled })}
-              />
-              {endpoint.connectionId && (
-                <Link
-                  className="text-xs text-muted-foreground underline underline-offset-4"
-                  to={`/apps/${endpoint.connectionId}`}
+            {!config.toolsEnabled && (
+              <div className="space-y-2">
+                <p className="text-sm text-muted-foreground">
+                  This saved bot has GitHub tools disabled, so it cannot start
+                  work or respond.
+                </p>
+                <Button
+                  variant="outline"
+                  onClick={() => edit({ ...config, toolsEnabled: true })}
                 >
-                  Manage tool permissions
-                </Link>
-              )}
-            </section>
+                  Enable bot tools
+                </Button>
+              </div>
+            )}
+            {endpoint.connectionId && (
+              <Link
+                className="text-xs text-muted-foreground underline underline-offset-4"
+                to={`/apps/${endpoint.connectionId}`}
+              >
+                Manage tool permissions
+              </Link>
+            )}
           </>
         ) : (
           <>
@@ -360,18 +365,13 @@ export function GitHubBotManagement({
   );
 }
 
-export function groupGitHubReviews(reviews: GitHubTaskReview[]) {
-  const groups = new Map<string, GitHubTaskReview[]>();
-  for (const review of [...reviews].sort(
+export function orderedGitHubReviews(reviews: GitHubTaskReview[]) {
+  return [...reviews].sort(
     (a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt),
-  )) {
-    const key = `${review.repositoryId}:${review.pullNumber}`;
-    groups.set(key, [...(groups.get(key) ?? []), review]);
-  }
-  return [...groups.values()];
+  );
 }
 
-function ReviewResult({ review }: { review: GitHubTaskReview }) {
+export function gitHubReviewResultLabel(review: GitHubTaskReview) {
   const completed = review.state === "completed" && review.assessment?.complete;
   const conclusion = review.conclusion
     ? {
@@ -390,20 +390,30 @@ function ReviewResult({ review }: { review: GitHubTaskReview }) {
     superseded: "Superseded",
     manual_required: "Action required",
   }[review.state];
+  return completed ? `${review.assessment!.score}/5 · ${conclusion}` : state;
+}
+
+function ReviewResult({ review }: { review: GitHubTaskReview }) {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-baseline justify-between gap-3">
         <span className="text-sm font-medium">
-          {completed ? `${review.assessment!.score}/5 · ${conclusion}` : state}
+          {gitHubReviewResultLabel(review)}
         </span>
         <span className="text-xs text-muted-foreground">
           Commit <code>{review.headSha.slice(0, 7)}</code> ·{" "}
           {formatDateTime(review.updatedAt)}
         </span>
       </div>
-      <MarkdownBody className="text-sm">
-        {review.assessment?.summary ?? review.event.title}
-      </MarkdownBody>
+      {review.assessment ? (
+        <MarkdownBody className="text-sm">
+          {review.assessment.summary}
+        </MarkdownBody>
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          No assessment has been submitted yet.
+        </p>
+      )}
       <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
         <Link
           className="underline underline-offset-4"
@@ -432,11 +442,8 @@ function ReviewResult({ review }: { review: GitHubTaskReview }) {
           </a>
         )}
       </div>
-      <details className="text-sm">
-        <summary className="cursor-pointer text-muted-foreground">
-          Review details
-        </summary>
-        <div className="mt-3 space-y-2">
+      <section className="space-y-4 text-sm" aria-label="Review evidence">
+        <div className="space-y-3">
           {review.runId && (
             <Link
               className="text-xs underline underline-offset-4"
@@ -447,7 +454,25 @@ function ReviewResult({ review }: { review: GitHubTaskReview }) {
           )}
           {review.assessment && (
             <>
+              <h3 className="font-medium">Rationale</h3>
               <MarkdownBody>{review.assessment.rationale}</MarkdownBody>
+              {review.assessment.findings.length > 0 && (
+                <section className="space-y-3">
+                  <h3 className="font-medium">Findings</h3>
+                  {review.assessment.findings.map((finding) => (
+                    <div
+                      key={finding.key}
+                      className="space-y-2 border-l border-border pl-4"
+                    >
+                      <p className="break-all font-mono text-xs">
+                        {finding.path}:{finding.line} · {finding.severity}
+                      </p>
+                      <MarkdownBody>{finding.body}</MarkdownBody>
+                    </div>
+                  ))}
+                </section>
+              )}
+              <h3 className="font-medium">Coverage</h3>
               <p className="text-xs text-muted-foreground">
                 {review.assessment.coverage.reviewedPaths.length} files reviewed
                 · {review.assessment.coverage.omittedPaths.length} omitted
@@ -460,12 +485,18 @@ function ReviewResult({ review }: { review: GitHubTaskReview }) {
             </>
           )}
         </div>
-      </details>
+      </section>
     </div>
   );
 }
 
-export function GitHubReviewList({ reviews }: { reviews: GitHubTaskReview[] }) {
+export function GitHubReviewList({
+  endpointId,
+  reviews,
+}: {
+  endpointId: string;
+  reviews: GitHubTaskReview[];
+}) {
   if (!reviews.length)
     return (
       <EmptyState
@@ -475,70 +506,118 @@ export function GitHubReviewList({ reviews }: { reviews: GitHubTaskReview[] }) {
       />
     );
   return (
-    <div className="divide-y divide-border border-y border-border">
-      {groupGitHubReviews(reviews).map(([latest, ...history]) => (
-        <article
-          key={`${latest.repositoryId}:${latest.pullNumber}`}
-          className="space-y-4 py-5"
-        >
-          <div className="space-y-1">
-            <a
-              className="text-sm font-semibold hover:underline"
-              href={`https://github.com/${latest.repository}/pull/${latest.pullNumber}`}
-              target="_blank"
-              rel="noreferrer"
-            >
-              {latest.event.title || `Pull request #${latest.pullNumber}`}
-            </a>
-            <p className="break-all text-xs text-muted-foreground">
-              {latest.repository} #{latest.pullNumber}
-            </p>
-          </div>
-          <ReviewResult review={latest} />
-          {history.length > 0 && (
-            <details className="text-sm">
-              <summary className="cursor-pointer text-muted-foreground">
-                {history.length} earlier{" "}
-                {history.length === 1 ? "review" : "reviews"}
-              </summary>
-              <div className="mt-4 space-y-6 border-l border-border pl-4">
-                {history.map((review) => (
-                  <ReviewResult key={review.id} review={review} />
-                ))}
-              </div>
-            </details>
-          )}
-        </article>
+    <ul
+      aria-label="Reviews"
+      className="divide-y divide-border border-y border-border"
+    >
+      {orderedGitHubReviews(reviews).map((review) => (
+        <li key={review.id}>
+          <Link
+            to={`/apps/chat/${endpointId}/reviews/${review.id}`}
+            className="flex flex-wrap items-center gap-x-6 gap-y-2 py-4 text-sm hover:bg-accent/50"
+          >
+            <div className="min-w-0 flex-1 basis-48 space-y-1">
+              <p className="break-words font-medium">
+                {review.event.title || `Pull request #${review.pullNumber}`}
+              </p>
+              <p className="break-all text-xs text-muted-foreground">
+                {review.repository} #{review.pullNumber} ·{" "}
+                <code>{review.headSha.slice(0, 7)}</code>
+              </p>
+            </div>
+            <div className="space-y-1 text-right">
+              <p className="font-medium">{gitHubReviewResultLabel(review)}</p>
+              <time
+                className="text-xs text-muted-foreground"
+                dateTime={review.createdAt}
+              >
+                {formatDateTime(review.createdAt)}
+              </time>
+            </div>
+          </Link>
+        </li>
       ))}
-    </div>
+    </ul>
   );
 }
 
-export function GitHubReviews({ endpointId }: { endpointId: string }) {
+export function GitHubReviewDetail({
+  endpointId,
+  review,
+}: {
+  endpointId: string;
+  review: GitHubTaskReview;
+}) {
+  return (
+    <article className="max-w-3xl space-y-6">
+      <Link
+        className="text-sm text-muted-foreground hover:underline"
+        to={`/apps/chat/${endpointId}/reviews`}
+      >
+        ← All reviews
+      </Link>
+      <header className="space-y-2">
+        <h2 className="text-lg font-semibold">
+          {review.event.title || `Pull request #${review.pullNumber}`}
+        </h2>
+        <a
+          className="break-all text-sm text-muted-foreground hover:underline"
+          href={`https://github.com/${review.repository}/pull/${review.pullNumber}`}
+          target="_blank"
+          rel="noreferrer"
+        >
+          {review.repository} #{review.pullNumber}
+        </a>
+      </header>
+      <ReviewResult review={review} />
+    </article>
+  );
+}
+
+export function GitHubReviews({
+  endpointId,
+  reviewId,
+}: {
+  endpointId: string;
+  reviewId?: string;
+}) {
   const query = useQuery({
     queryKey: ["github-bot-reviews", endpointId],
     queryFn: () => githubChatApi.reviews(endpointId),
     refetchInterval: 5000,
   });
-  return (
-    <section className="space-y-4">
-      <p className="text-sm text-muted-foreground">
-        Latest review for each pull request. Results apply to the commit shown.
+  if (query.isError)
+    return (
+      <p role="alert" className="text-sm text-destructive">
+        Reviews could not be loaded.{" "}
+        <Button variant="link" onClick={() => void query.refetch()}>
+          Try again
+        </Button>
       </p>
-      {query.isError ? (
-        <p role="alert" className="text-sm text-destructive">
-          Reviews could not be loaded.{" "}
-          <Button variant="link" onClick={() => void query.refetch()}>
-            Try again
-          </Button>
+    );
+  if (query.isPending)
+    return (
+      <p role="status" className="text-sm text-muted-foreground">
+        Loading reviews…
+      </p>
+    );
+  if (reviewId) {
+    const review = query.data.find((review) => review.id === reviewId);
+    return review ? (
+      <GitHubReviewDetail endpointId={endpointId} review={review} />
+    ) : (
+      <div className="space-y-3">
+        <p role="alert" className="text-sm text-muted-foreground">
+          This review was not found in this connection.
         </p>
-      ) : query.isPending ? (
-        <p role="status" className="text-sm text-muted-foreground">
-          Loading reviews…
-        </p>
-      ) : (
-        <GitHubReviewList reviews={query.data} />
-      )}
-    </section>
-  );
+        <Link
+          to={`/apps/chat/${endpointId}/reviews`}
+          className="text-sm underline"
+        >
+          All reviews
+        </Link>
+      </div>
+    );
+  }
+  return <GitHubReviewList endpointId={endpointId} reviews={query.data} />;
 }

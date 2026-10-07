@@ -67,13 +67,6 @@ describe("chat connector UI contract", () => {
     expect(detail).toContain("Not observed");
   });
 
-  it("lists every supported provider in the agent channel empty state", () => {
-    const panel = source("../../../components/chat/AgentChannelsPanel.tsx");
-    expect(panel).toContain(
-      "Connect AgentMail, Slack, GitHub Code Review Bot, Discord, Microsoft Teams, or Telegram from",
-    );
-  });
-
   it("keeps provider capabilities automatic and settings focused on plausible reach", () => {
     const detail = source("./ChatEndpointDetail.tsx");
     const setup = source("./ChatEndpointSetup.tsx");

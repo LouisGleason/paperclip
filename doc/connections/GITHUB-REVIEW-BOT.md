@@ -11,6 +11,10 @@ required GitHub checks, read
 
 ## Set up a bot
 
+Enable **GitHub review bots** in instance **Experimental** settings, then open
+the GitHub Code Review Bot connector. This default-off setting is independent of
+**Chat connectors**. Hiding either feature does not pause existing provider delivery.
+
 1. Choose the bot agent. Prefer a
    [low-trust review agent](https://docs.paperclip.ing/administration/trust-and-low-trust-review/)
    with an isolated sandbox and a scoped task boundary. Standard-trust agents
@@ -62,13 +66,16 @@ selected environment.
 - **Settings:** edit instructions, choose when the bot runs, and set review output.
   Event-specific instructions, filters, formal approvals, and repository overrides
   are available in disclosures.
-- **Access:** choose enabled repositories, allowed people, each person’s automatic
-  events, and the bot’s GitHub tools. Repository switches save immediately. Other
+- **Access:** choose enabled repositories, allowed people, and each person's
+  **Run automatically** setting. Repository switches save immediately. Other
   changes use **Save changes**. A linked account alone does not grant selected-member
-  access. External contributors still require a sponsor and restricted permissions.
-- **Reviews:** see the latest review for each pull request. The result names the
-  reviewed commit; earlier reviews remain in history. A previous passing result
-  does not stand in for a pending review of a newer commit.
+  access. **Add external contributor** still requires a sponsor and restricted
+  permissions. Bot tools are enabled during setup; a previously disabled connection
+  exposes an explicit repair action without silently changing its permissions.
+- **Reviews:** see every assessment as one row, newest first. Open a row for its
+  summary, commit, findings, coverage, and task/run/publication links. Each review
+  has its own URL. A previous passing result does not stand in for a pending review
+  of a newer commit.
 - **Conversations:** follow the task title to Paperclip or the repository/thread
   label to GitHub.
 
@@ -88,7 +95,13 @@ for that person are a separate choice. Guests receive no company membership or
 sponsor credentials. Authority is checked again before tool calls and
 publication, so revocation also affects queued or ongoing work.
 
-Automatic events use the configured responsible member. The PR author and
+**Run automatically** allows the person's authored PRs and issues to trigger
+the automatic events selected in Settings. Turning it off keeps authorized
+mentions available while avoiding work on every PR or issue.
+
+Automatic tasks use the configured responsible Paperclip member for accountability,
+not that member's personal GitHub credentials. A member named **Board** in a local
+test drive is still the responsible user, not a separate GitHub actor. The PR author and
 webhook sender are recorded independently. Follow-ups preserve task ownership
 while checking the current requester's authority.
 
@@ -145,7 +158,12 @@ hostname, or the connector's Reviews page when no task has been created yet.
 
 Formal **APPROVE** and **REQUEST_CHANGES** are separate governed tools, each off
 by default. Enabling either does not automatically perform it. A score of 5/5
-alone never approves a PR.
+alone never approves a PR. The agent must finish an assessment and explicitly
+choose the allowed action. **Allow approvals** permits a formal ready-to-merge
+decision; **Allow request changes** permits a formal change request, which can
+prevent merging when the repository's review rules require resolution. Keeping
+these off leaves scores, comments, and checks available while making formal
+review decisions opt-in. The controls include contextual tooltips.
 
 To enforce the rating at merge time, configure GitHub branch protection or a
 ruleset to require **Paperclip Review**, selecting this bot App as the source

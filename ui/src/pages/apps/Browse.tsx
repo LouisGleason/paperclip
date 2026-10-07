@@ -40,7 +40,7 @@ import {
   normalizeConnectionQuery,
 } from "@paperclipai/shared";
 import { useNavigate } from "@/lib/router";
-import { useChatConnectorsEnabled } from "@/hooks/useChatConnectorsEnabled";
+import { useChatConnectorsEnabled, chatProviderVisible } from "@/hooks/useChatConnectorsEnabled";
 import { useMemoryConnectorsEnabled } from "@/hooks/useMemoryConnectorsEnabled";
 import { appCopyFor } from "@/lib/app-gallery-copy";
 import { useCompany } from "@/context/CompanyContext";
@@ -332,7 +332,7 @@ export function Browse({ renderAccountDetails = (connection) => connection.conne
   const { selectedCompanyId } = useCompany();
   const assistantConnections = useAssistantConnections();
   const { userId: viewingUserId, settled: identitySettled } = useAccountIdentity();
-  const { enabled: chatConnectorsEnabled } = useChatConnectorsEnabled();
+  const { enabled: chatConnectorsEnabled, githubEnabled } = useChatConnectorsEnabled();
   const { enabled: memoryConnectorsEnabled } = useMemoryConnectorsEnabled();
   const { setBreadcrumbs } = useBreadcrumbs();
   const [query, setQuery] = useState("");
@@ -486,7 +486,7 @@ export function Browse({ renderAccountDetails = (connection) => connection.conne
     if (!memoryConnectorsEnabled && isMemoryConnectorId(appDefinitionSlug(entry))) return false;
     const definition = getAppStoreDefinition(appDefinitionSlug(entry));
     return (
-      appDefinitionSlug(entry) === "agentmail" || chatConnectorsEnabled ||
+      chatProviderVisible(appDefinitionSlug(entry), chatConnectorsEnabled, githubEnabled) ||
       !definition?.methods.some((method) => method.purpose === "channel") ||
       appSupportsToolCatalogSetup(definition)
     );
@@ -536,7 +536,7 @@ export function Browse({ renderAccountDetails = (connection) => connection.conne
         slug,
         name: appDefinitionName(entry),
         description:
-          !chatConnectorsEnabled && slug !== "agentmail" && chatProviderForSlug(slug)
+          !chatProviderVisible(slug, chatConnectorsEnabled, githubEnabled) && chatProviderForSlug(slug)
             ? appCopyFor(slug).tagline
             : appDefinitionDescription(entry),
         brandKey: slug,
@@ -581,7 +581,7 @@ export function Browse({ renderAccountDetails = (connection) => connection.conne
           "Chat with agents from Telegram direct messages, groups, and topics.",
       },
     ] as const;
-    for (const item of nativeChatApps.filter(item => item.slug === "agentmail" || chatConnectorsEnabled)) {
+    for (const item of nativeChatApps.filter(item => chatProviderVisible(item.slug, chatConnectorsEnabled, githubEnabled))) {
       if (rowsBySlug.has(item.slug)) continue;
       rowsBySlug.set(item.slug, {
         key: `native-chat:${item.slug}`,
@@ -678,7 +678,7 @@ export function Browse({ renderAccountDetails = (connection) => connection.conne
       });
     }
 
-    for (const endpoint of (chatEndpointsQuery.data ?? []).filter(endpoint => endpoint.provider === "agentmail" || chatConnectorsEnabled)) {
+    for (const endpoint of (chatEndpointsQuery.data ?? []).filter(endpoint => chatProviderVisible(endpoint.provider, chatConnectorsEnabled, githubEnabled))) {
       if (endpoint.status === "archived") continue;
       let target = [...rowsBySlug.values()].find(
         (row) => chatProviderForSlug(row.slug) === endpoint.provider,
@@ -754,6 +754,7 @@ export function Browse({ renderAccountDetails = (connection) => connection.conne
     applicationsQuery.data,
     chatEndpointsQuery.data,
     chatConnectorsEnabled,
+    githubEnabled,
     connectionsQuery.data,
     gallery,
     galleryQuery.data,
@@ -930,6 +931,7 @@ export function Browse({ renderAccountDetails = (connection) => connection.conne
               onRequestRemove={target => void requestConnectionRemoval(target)}
               preselectedAgentId={preselectedChatAgentId}
               chatConnectorsEnabled={chatConnectorsEnabled}
+              githubReviewBotsEnabled={githubEnabled}
               onConnectAggregator={connectAggregator}
               onManageAggregator={(app, connectionId) => setAggregatorToManage({ app, connectionId })}
               onRefreshAggregator={connectionId => refreshAggregator.mutate(connectionId)}
@@ -1026,6 +1028,7 @@ export function ConnectorCard({
   onRequestRemove,
   preselectedAgentId,
   chatConnectorsEnabled,
+  githubReviewBotsEnabled = false,
   onConnectAggregator,
   onManageAggregator,
   onRefreshComposio,
@@ -1044,6 +1047,7 @@ export function ConnectorCard({
   onRequestRemove: (target: ConnectionRemovalTarget) => void;
   preselectedAgentId?: string | null;
   chatConnectorsEnabled: boolean;
+  githubReviewBotsEnabled?: boolean;
   onConnectAggregator?: (app: AggregatorAppCatalogEntry) => void;
   onManageAggregator?: (app: AggregatorAppCatalogEntry, connectionId?: string) => void;
   onRefreshComposio?: (connectionId: string) => void;
@@ -1056,7 +1060,7 @@ export function ConnectorCard({
 }) {
   const action = connectorAction(
     row,
-    chatConnectorsEnabled,
+    chatProviderVisible(row.slug, chatConnectorsEnabled, githubReviewBotsEnabled),
     preselectedAgentId,
   );
   const upstreamAccounts = (row.upstreamApps ?? []).flatMap(snapshot => {

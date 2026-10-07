@@ -11,6 +11,7 @@ import {
 import {
   GitHubRepositoryAccess,
   GitHubReviewList,
+  GitHubReviewDetail,
 } from "@/pages/apps/chat/GitHubBotManagement";
 import { ChatConversationList } from "@/pages/apps/chat/ChatConversationList";
 import {
@@ -30,7 +31,7 @@ const meta = {
     docs: {
       description: {
         component:
-          "Production pages and components. Start with **01 Journey / Settings**, then use the actual contextual sidebar to visit Access, Reviews, and Conversations. Try editing instructions, switch tabs, and save or discard the shared draft. **02 States** covers empty, loading, recoverable error, long content, and mobile. **03 Components** isolates the policy editor, people access, repository access, latest review/history, pending current commit, and conversations. Provider operations use isolated fixture APIs; these stories are not live GitHub evidence.",
+          "Production pages and components. Start with **01 Journey / Settings**, then use the actual contextual sidebar to visit Access, Reviews, and Conversations. Try editing instructions, switch tabs, and save or discard the shared draft. **02 States** covers empty, loading, recoverable error, long content, and mobile. **03 Components** isolates the policy editor, people access, repository access, review rows and detail, pending review, and conversations. Provider operations use isolated fixture APIs; these stories are not live GitHub evidence.",
       },
     },
   },
@@ -46,6 +47,10 @@ const meta = {
       <PluginLauncherProvider>
         <Routes>
           <Route path="/:companyPrefix" element={<Layout />}>
+            <Route
+              path="apps/chat/:endpointId/reviews/:reviewId"
+              element={<ChatEndpointDetail />}
+            />
             <Route
               path="apps/chat/:endpointId/:tab"
               element={<ChatEndpointDetail />}
@@ -153,14 +158,16 @@ export const RepositoryAccess: Story = {
   render: () => component(<Repositories />),
 };
 export const ReviewHistory: Story = {
-  name: "03 Components / Latest review and history",
-  render: () => component(<GitHubReviewList reviews={reviews} />),
+  name: "03 Components / Review rows",
+  render: () =>
+    component(<GitHubReviewList endpointId={endpoint.id} reviews={reviews} />),
 };
 export const PendingReview: Story = {
   name: "03 Components / Pending current commit",
   render: () =>
     component(
       <GitHubReviewList
+        endpointId={endpoint.id}
         reviews={[
           {
             ...reviews[0],
@@ -177,4 +184,16 @@ export const ConversationRows: Story = {
   name: "03 Components / Conversation rows",
   render: () =>
     component(<ChatConversationList rows={conversations} provider="github" />),
+};
+
+export const ReviewDetailJourney: Story = {
+  name: "01 Journey / Review detail",
+  parameters: route(`reviews/${reviews[0].id}`),
+};
+export const ReviewDetail: Story = {
+  name: "03 Components / Review detail",
+  render: () =>
+    component(
+      <GitHubReviewDetail endpointId={endpoint.id} review={reviews[0]} />,
+    ),
 };

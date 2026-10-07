@@ -87,6 +87,7 @@ function defaultExperimentalSettings(): InstanceExperimentalSettingsPayload {
     enableMcpAggregators: true,
     enablePublicMcp: false,
     enableChatConnectors: false,
+    enableGitHubReviewBots: false,
     enableMemoryConnectors: false,
     enablePipelines: false,
     enableCases: false,
@@ -280,6 +281,18 @@ describe("InstanceExperimentalSettings — Conference Room Chat card (PAP-11233)
       expect(mockInstanceSettingsApi.updateExperimental).toHaveBeenLastCalledWith({ enableChatConnectors: enabled });
       expect(container.querySelector(selector)?.getAttribute("aria-checked")).toBe(String(enabled));
       expect(currentExperimentalSettings.enableApps).toBe(true);
+    }
+  });
+
+  it("toggles GitHub review bots without enabling chat connectors", async () => {
+    await renderPage();
+    const selector = 'button[aria-label="Toggle GitHub review bots experimental setting"]';
+    expect(container.querySelector(selector)?.getAttribute("aria-checked")).toBe("false");
+    for (const enabled of [true, false]) {
+      await act(() => container.querySelector<HTMLButtonElement>(selector)!.click());
+      await flushReact();
+      expect(mockInstanceSettingsApi.updateExperimental).toHaveBeenLastCalledWith({ enableGitHubReviewBots: enabled });
+      expect(currentExperimentalSettings.enableChatConnectors).toBe(false);
     }
   });
 

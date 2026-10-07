@@ -9,7 +9,7 @@ import {
   type GitHubTaskReview,
 } from "@paperclipai/shared";
 import { ChatEndpointDetail } from "./ChatEndpointDetail";
-import { GitHubReviewList, groupGitHubReviews } from "./GitHubBotManagement";
+import { GitHubReviewList, orderedGitHubReviews } from "./GitHubBotManagement";
 import { GitHubPolicyEditor } from "./GitHubBotConfiguration";
 import { conversationDestination } from "./ChatConversationList";
 import { queryKeys } from "@/lib/queryKeys";
@@ -17,6 +17,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 
 const mocks = vi.hoisted(() => ({
   tab: "settings",
+  reviewId: undefined as string | undefined,
   get: vi.fn(),
   config: vi.fn(),
   save: vi.fn(),
@@ -56,7 +57,11 @@ vi.mock("@/components/MarkdownBody", () => ({
   ),
 }));
 vi.mock("@/lib/router", () => ({
-  useParams: () => ({ endpointId: "bot", tab: mocks.tab }),
+  useParams: () => ({
+    endpointId: "bot",
+    tab: mocks.tab,
+    reviewId: mocks.reviewId,
+  }),
   useNavigate: () => vi.fn(),
   Link: ({
     children,
@@ -108,6 +113,7 @@ describe("GitHub bot management", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.tab = "settings";
+    mocks.reviewId = undefined;
     mocks.get.mockResolvedValue(endpoint);
     mocks.config.mockResolvedValue({
       revision: 4,
@@ -216,7 +222,7 @@ describe("GitHub bot management", () => {
     await input(container.querySelector("textarea")!, "Edited instructions");
     await render("access");
     await vi.waitFor(() => expect(container.textContent).toContain("@maya"));
-    await click("Automatic events for @maya");
+    await click("Run automatically for @maya");
     await render("reviews");
     await render("settings");
     expect(container.querySelector("textarea")?.value).toBe(
@@ -312,11 +318,52 @@ describe("GitHub bot management", () => {
     expect(mocks.save.mock.calls[0][2].memberAccess).toBe("all_linked");
     expect(mocks.save.mock.calls[0][2].people[0].automaticReviews).toBe(false);
   });
+  it("does not show an off switch or silently enable a retained disabled bot", async () => {
+    mocks.config.mockResolvedValue({
+      revision: 4,
+      configuration: { ...base, toolsEnabled: false },
+    });
+    await render("access");
+    expect(
+      container.querySelector('[aria-label="Use this bot’s GitHub tools"]'),
+    ).toBeNull();
+    expect(container.textContent).toContain("cannot start work or respond");
+    await render("settings");
+    await input(container.querySelector("textarea")!, "Edited instructions");
+    await click("Save changes");
+    await vi.waitFor(() => expect(mocks.save).toHaveBeenCalled());
+    expect(mocks.save.mock.calls[0][2].toolsEnabled).toBe(false);
+  });
+  it("loads a direct review URL and keeps unknown reviews within the current connection", async () => {
+    mocks.reviewId = "review-1";
+    mocks.reviews.mockResolvedValue([
+      review("review-1", "repo", 1, "2026-10-07T10:00:00Z"),
+    ]);
+    await render("reviews");
+    await vi.waitFor(() =>
+      expect(container.textContent).toContain(
+        "No assessment has been submitted yet.",
+      ),
+    );
+    expect(
+      container.querySelector('a[href="/apps/chat/bot/reviews"]')?.textContent,
+    ).toContain("All reviews");
+    mocks.reviewId = "foreign";
+    await render("reviews");
+    await vi.waitFor(() =>
+      expect(container.textContent).toContain("not found in this connection"),
+    );
+    expect(container.textContent).not.toContain(
+      "No assessment has been submitted yet.",
+    );
+  });
   it("keeps saved automatic triggers when changing to mentions-only", async () => {
     const change = vi.fn();
     await act(async () =>
       root.render(
-        <GitHubPolicyEditor policy={base.defaults} onChange={change} />,
+        <TooltipProvider>
+          <GitHubPolicyEditor policy={base.defaults} onChange={change} />
+        </TooltipProvider>,
       ),
     );
     await input(
@@ -355,7 +402,7 @@ function review(
   } as GitHubTaskReview;
 }
 describe("review history and thread labels", () => {
-  it("groups by repository and PR and orders by creation, not late updates to an older head", () => {
+  it("keeps every review in creation order, independent of late updates to an older head", () => {
     const old = review(
       "old",
       "repo",
@@ -365,9 +412,10 @@ describe("review history and thread labels", () => {
     );
     const current = review("current", "repo", 1, "2026-10-07T11:00:00Z");
     const other = review("other", "another-repo", 1, "2026-10-07T12:00:00Z");
-    expect(groupGitHubReviews([old, current, other])).toEqual([
-      [other],
-      [current, old],
+    expect(orderedGitHubReviews([old, current, other])).toEqual([
+      other,
+      current,
+      old,
     ]);
   });
   it("does not present a previous passing score as the pending current commit’s result", async () => {
@@ -388,18 +436,22 @@ describe("review history and thread labels", () => {
     const root = createRoot(container);
     try {
       await act(async () =>
-        root.render(<GitHubReviewList reviews={[old, current]} />),
+        root.render(
+          <GitHubReviewList endpointId="bot" reviews={[old, current]} />,
+        ),
       );
-      const article = container.querySelector("article")!;
-      const latest = article.cloneNode(true) as HTMLElement;
-      latest.querySelectorAll("details").forEach((details) => details.remove());
-      expect(latest.textContent).not.toContain("5/5");
-      expect(latest.textContent).toContain("Queued");
-      const history = [...article.querySelectorAll("details")].find((e) =>
-        e.querySelector("summary")?.textContent?.includes("earlier review"),
+      const rows = [...container.querySelectorAll("li")];
+      expect(rows).toHaveLength(2);
+      expect(rows[0].textContent).toContain("Queued");
+      expect(rows[0].textContent).not.toContain("5/5");
+      expect(rows[0].querySelector("a")?.getAttribute("href")).toBe(
+        "/apps/chat/bot/reviews/current",
       );
-      expect(history?.textContent).toContain("5/5 · Passed");
-      expect(history?.open).toBe(false);
+      expect(rows[1].textContent).toContain("5/5 · Passed");
+      expect(rows[1].querySelector("a")?.getAttribute("href")).toBe(
+        "/apps/chat/bot/reviews/old",
+      );
+      expect(container.querySelector("details")).toBeNull();
     } finally {
       await act(async () => root.unmount());
     }

@@ -92,16 +92,27 @@ export function chatChannelRoutes(db: Db, options: ChatChannelRouteOptions) {
   const access = accessService(db);
   const github = githubChatManagementService(db, options.fetch);
 
-  async function assertIdentityLinkAccess(req: ExpressRequest): Promise<string> {
+  async function assertIdentityLinkAccess(req: ExpressRequest) {
     assertBoard(req);
     const userId = actorUserId(req);
     if (!userId) throw badRequest("A signed-in Paperclip user is required");
     // Enforce rollout here: invited nonmembers cannot read the board's
     // experimental-settings API. A private token never bypasses this gate.
-    if (!(await instanceSettingsService(db).getExperimental()).enableChatConnectors) {
+    const experimental = await instanceSettingsService(db).getExperimental();
+    if (!experimental.enableChatConnectors && !experimental.enableGitHubReviewBots) {
       throw forbidden("Chat connectors are not enabled on this instance");
     }
-    return userId;
+    return { userId, experimental };
+  }
+
+  function assertIdentityProviderEnabled(
+    provider: string,
+    experimental: { enableChatConnectors: boolean; enableGitHubReviewBots: boolean },
+  ) {
+    const enabled = provider === "agentmail" || (provider === "github"
+      ? experimental.enableGitHubReviewBots
+      : experimental.enableChatConnectors);
+    if (!enabled) throw forbidden("This connector is not enabled on this instance");
   }
 
   async function assertConnectionManager(
@@ -353,18 +364,22 @@ export function chatChannelRoutes(db: Db, options: ChatChannelRouteOptions) {
     "/chat-identity-links/confirm",
     validate(confirmChatIdentityLinkSchema),
     async (req, res) => {
-      const userId = await assertIdentityLinkAccess(req);
+      const { userId, experimental } = await assertIdentityLinkAccess(req);
+      const preview = await service.previewIdentityLink(req.body.token, userId);
+      assertIdentityProviderEnabled(preview.provider, experimental);
       res.json(await service.confirmIdentityLink(req.body.token, userId));
     },
   );
 
   router.post("/chat-identity-links/request-access", validate(confirmChatIdentityLinkSchema), async (req, res) => {
-    const userId = await assertIdentityLinkAccess(req);
+    const { userId, experimental } = await assertIdentityLinkAccess(req);
+    const preview = await service.previewIdentityLink(req.body.token, userId);
+    assertIdentityProviderEnabled(preview.provider, experimental);
     res.json(await service.requestIdentityAccess(req.body.token, userId, req.ip ?? "unknown"));
   });
 
   router.get("/chat-identity-links/preview", async (req, res) => {
-    const userId = await assertIdentityLinkAccess(req);
+    const { userId, experimental } = await assertIdentityLinkAccess(req);
     const token = typeof req.query.token === "string" ? req.query.token : "";
     if (token.length < 32 || token.length > 4096)
       throw badRequest("A valid identity-link token is required");
@@ -379,6 +394,7 @@ export function chatChannelRoutes(db: Db, options: ChatChannelRouteOptions) {
       req, res, Promise.resolve(invitation), "Identity-link request not found",
     );
     if (!preview) return;
+    assertIdentityProviderEnabled(preview.provider, experimental);
     res.json(preview);
   });
 

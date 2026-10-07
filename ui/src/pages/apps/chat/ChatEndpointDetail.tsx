@@ -227,10 +227,12 @@ export function connectionHealthPresentation(
 }
 
 export function ChatEndpointDetail() {
-  const { endpointId = "", tab = "settings" } = useParams<{
+  const { endpointId = "", tab: routeTab, reviewId } = useParams<{
     endpointId: string;
     tab?: string;
+    reviewId?: string;
   }>();
+  const tab = reviewId ? "reviews" : (routeTab ?? "settings");
   const activeTab = tabs.includes(tab as ChatTab) ? (tab as ChatTab) : null;
   const navigate = useNavigate();
   const { setBreadcrumbs } = useBreadcrumbs();
@@ -260,14 +262,14 @@ export function ChatEndpointDetail() {
         label: `${endpoint.assignedAgentName} · ${providerNames[endpoint.provider]}`,
         href: `/apps/chat/${endpoint.id}/settings`,
       },
-      {
+      ...(reviewId ? [{ label: "Reviews", href: `/apps/chat/${endpoint.id}/reviews` }, { label: "Review" }] : [{
         label:
           tabItems.find((item) => item.value === activeTab)?.label ??
           "Settings",
-      },
+      }]),
     ]);
     return () => setBreadcrumbs([]);
-  }, [activeTab, endpoint, setBreadcrumbs]);
+  }, [activeTab, endpoint, reviewId, setBreadcrumbs]);
 
   if (!activeTab)
     return <Navigate replace to={`/apps/chat/${endpointId}/settings`} />;
@@ -339,7 +341,7 @@ export function ChatEndpointDetail() {
         <GitHubBotManagement key={endpoint.id} endpoint={endpoint} view={activeTab === "access" ? "access" : "settings"} />
       </div>}
       {activeTab === "settings" && endpoint.provider !== "github" && <Settings endpointId={endpoint.id} endpoint={endpoint} />}
-      {activeTab === "reviews" && endpoint.provider === "github" && <GitHubReviews endpointId={endpoint.id} />}
+      {activeTab === "reviews" && endpoint.provider === "github" && <GitHubReviews endpointId={endpoint.id} reviewId={reviewId} />}
 {activeTab === "access" && endpoint.provider === "agentmail" && <EmailAccess endpoint={endpoint} />}
 {activeTab === "access" && endpoint.provider !== "github" && endpoint.provider !== "agentmail" && (
         <Access
