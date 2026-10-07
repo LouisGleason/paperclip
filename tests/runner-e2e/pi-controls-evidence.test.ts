@@ -200,7 +200,7 @@ describe("Pi controls catalog admission", () => {
     }
     const hashes = Object.fromEntries(runnerSuites.filter(s => ["pi-native", "native-active-stop", "extended-harnesses", "rich-acp-warm-continuity"].includes(s.id)).map(s => [s.id, suiteDefinitionHash(s)]));
     expect(hashes).toEqual({
-      "pi-native": "d548c42dea357803ef4bc652929d1b6f7f1e970a69a96370322d7415c6815b7a",
+      "pi-native": "e60021e6959cb2ed9b50b3d5b734b6ad5a78bafc7aca1ea1fca456fb3191f318",
       "native-active-stop": "2d4fdeeb75bd531b309bd1b35cfa5680ceefdeee6b7155b068dd011ce9901980",
       "rich-acp-warm-continuity": "45d0f6a824b061464fa18cb24b1414502b52959d5f47646cfc5079cbb8f2d98b",
       "extended-harnesses": "77cc19a12c07411bca5f29f48162467bb291d0f47fd567cc1993151cf5c6c989",
