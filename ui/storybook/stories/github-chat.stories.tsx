@@ -3,7 +3,7 @@ import { expect, userEvent, within } from "storybook/test";
 import { GitHubChatPreview } from "../prototypes/github-chat/GitHubChatPreview";
 
 const meta = {
-  title: "Apps/GitHub chat & reviews",
+  title: "Historical/GitHub chat prototypes",
   component: GitHubChatPreview,
   parameters: {
     layout: "fullscreen",

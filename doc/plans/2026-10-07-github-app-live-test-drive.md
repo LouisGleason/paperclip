@@ -253,3 +253,35 @@ Qualification limits: personal-account setup, delayed organization approval and 
 ### Cleanup completed
 
 Closed disposable issues 1, 2 and 4 and PR 3 without merging. Deleted only the test branch. Retained the App, original connection, bot, vault and test-drive data. The public relay/tunnel was stopped. The private test drive remains available on port 3110 for inspection. Fixes and qualification record were pushed to draft PR #15416; current-head CI/review remain outstanding.
+
+
+### Management page hierarchy qualification
+
+The connected bot now separates instructions, triggers, and review output in
+Settings from repository, people, and tool permissions in Access. Each linked
+person appears once. Advanced controls are disclosed. Settings and Access share
+one versioned draft across all connection tabs. Reviews show the latest assessment
+per repository/PR and preserve earlier commit evidence in history. Conversation
+titles link directly to tasks; provider labels link directly to their threads.
+
+Walkthrough: Connectors → search GitHub → Animal Bot → Settings → Access → Reviews
+→ Conversations. A harmless trailing newline was saved from Access after editing
+Settings, persisted after a reload, and then was removed through the UI. Redacted
+API snapshots confirm the full configuration returned exactly to its original
+value (revision 4 → 6). Repository and people permissions were not changed.
+
+The real instance was inspected at its desktop width, 820px, and 390px with the
+actual mobile shell. Review history expanded correctly and the ASCII animal
+rendered as a code block. Production Storybook fixtures verified a saved edit,
+a pending current commit with its previous passing score hidden, a recoverable
+configuration failure, and a mobile empty conversation state. These fixtures do
+not qualify any new provider execution. Screenshots and configuration comparisons
+are in the existing local E2E evidence directory.
+
+Focused UI checks cover draft retention, revision conflicts, isolated repository
+updates, override preservation/unique field IDs, implicit linked-member event
+configuration, mentions-only trigger preservation, latest-review ordering, pending
+head presentation, and GitHub thread labels. The affected management, setup,
+AgentMail, sidebar, and shared UI-contract group has 47 passing tests. Repository
+typecheck/build, Storybook build, and token gates pass. The earlier full-suite
+failure and outstanding current-head CI/review remain as recorded above.

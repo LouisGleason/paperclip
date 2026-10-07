@@ -53,8 +53,6 @@ describe("chat connector UI contract", () => {
       expect(detail).toContain(`"${tab}"`);
     }
     expect(detail).not.toContain('"overview"');
-    expect(detail).toContain("Open {providerNames[provider]}");
-    expect(detail).toContain("Open task");
     expect(detail.toLowerCase()).not.toContain("detach");
   });
 

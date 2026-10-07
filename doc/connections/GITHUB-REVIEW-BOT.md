@@ -33,8 +33,8 @@ required GitHub checks, read
 New connections default to authorized mentions, advisory reviews, linked-member
 access, guests off, and enabled bot GitHub tools. Existing instructions, explicit
 behavior, and narrower saved repository restrictions remain intact. Later
-repository additions require enablement in connection settings. Advanced review
-rules and prompts also live in settings.
+repository additions require enablement in Access. Advanced review rules and
+prompts live in Settings.
 
 Local instances receive public callbacks and signed events through an enrolled
 Paperclip Cloud connector, using outbound requests instead of a public tunnel.
@@ -56,6 +56,25 @@ Runner prerequisite, not an automatic connector installation step.
 Connection setup reports tool/runtime support and isolation separately; an actual test
 task is still required to prove that the chosen provider can execute in the
 selected environment.
+
+## Manage a connected bot
+
+- **Settings:** edit instructions, choose when the bot runs, and set review output.
+  Event-specific instructions, filters, formal approvals, and repository overrides
+  are available in disclosures.
+- **Access:** choose enabled repositories, allowed people, each person’s automatic
+  events, and the bot’s GitHub tools. Repository switches save immediately. Other
+  changes use **Save changes**. A linked account alone does not grant selected-member
+  access. External contributors still require a sponsor and restricted permissions.
+- **Reviews:** see the latest review for each pull request. The result names the
+  reviewed commit; earlier reviews remain in history. A previous passing result
+  does not stand in for a pending review of a newer commit.
+- **Conversations:** follow the task title to Paperclip or the repository/thread
+  label to GitHub.
+
+Settings and Access share unsaved edits while you switch connection tabs. Save
+before reloading or leaving the connection. No permissions change merely by
+opening a tab or configuring an implicit linked member’s individual event settings.
 
 ## Who can start work
 

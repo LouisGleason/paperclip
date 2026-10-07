@@ -5,6 +5,8 @@ import { SlackAvatarSettings } from "./SlackAvatarStep";
 import { agentsApi } from "@/api/agents";
 import { agentAvatarUrl } from "@/lib/agent-avatar-url";
 import { resolveAgentAppearance } from "@paperclipai/shared";
+import { AgentAvatar } from "@/components/AgentAvatar";
+import { ChatConversationList } from "./ChatConversationList";
 import { GitHubBotManagement, GitHubReviews } from "./GitHubBotManagement";
 import { EmailEndpointSettings } from "./EmailEndpointSetup";
 import { EmailConnectionAccess } from "@/components/EmailConnectionAccess";
@@ -243,6 +245,11 @@ export function ChatEndpointDetail() {
         : false,
   });
   const endpoint = endpointQuery.data;
+  const avatarAgent = useQuery({
+    queryKey: queryKeys.agents.detail(endpoint?.assignedAgentId ?? ""),
+    queryFn: () => agentsApi.get(endpoint!.assignedAgentId),
+    enabled: endpoint?.provider === "github",
+  });
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
 
   useEffect(() => {
@@ -291,12 +298,14 @@ export function ChatEndpointDetail() {
   return (
     <div className="max-w-5xl space-y-6 pb-12">
       <header className="flex flex-wrap items-start justify-between gap-4">
-        <div>
+        <div className="flex min-w-0 items-center gap-3">
+          {endpoint.provider === "github" && <AgentAvatar agent={avatarAgent.data ?? { id: endpoint.assignedAgentId, name: endpoint.assignedAgentName }} size={40} />}
+          <div className="min-w-0">
           <h1 className="text-xl font-bold">
-            {endpoint.assignedAgentName} in {providerNames[endpoint.provider]}
+            {endpoint.provider === "github" ? <Link to={`/agents/${endpoint.assignedAgentId}`} className="hover:underline">{endpoint.assignedAgentName}</Link> : `${endpoint.assignedAgentName} in ${providerNames[endpoint.provider]}`}
           </h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {endpoint.providerAccountLabel ?? (endpoint.provider === "agentmail" ? endpoint.botExternalId ?? "Email connection" : "Chat connection")}
+          <p className="mt-1 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+            {endpoint.provider === "github" ? <><AppLogo name="GitHub" brandKey="github" compact className="size-4! rounded-sm bg-transparent" />{endpoint.botLabel ?? endpoint.botUsername ?? "GitHub"}{endpoint.providerAccountLabel && <span>· {endpoint.providerAccountLabel}</span>}</> : endpoint.providerAccountLabel ?? (endpoint.provider === "agentmail" ? endpoint.botExternalId ?? "Email connection" : "Chat connection")}
           </p>
           {endpoint.provider === "imessage-photon" && endpoint.botExternalId && endpoint.photonAllocation !== "shared" && (
             <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
@@ -308,6 +317,7 @@ export function ChatEndpointDetail() {
               <span role="status" className="text-muted-foreground">{copyStatus}</span>
             </div>
           )}
+          </div>
         </div>
         <div className="flex items-center gap-2">
           {setupIncomplete ? (
@@ -325,14 +335,11 @@ export function ChatEndpointDetail() {
           {endpoint.status !== "active" && <StatusBadge status={endpoint.status} />}
         </div>
       </header>
-      {activeTab === "settings" && (
-        <>
-{endpoint.provider === "github" && <GitHubBotManagement endpoint={endpoint} view="settings" />}
-{endpoint.provider !== "github" && <Settings endpointId={endpoint.id} endpoint={endpoint} />}
-</>
-      )}
+      {endpoint.provider === "github" && <div hidden={activeTab !== "settings" && activeTab !== "access"}>
+        <GitHubBotManagement key={endpoint.id} endpoint={endpoint} view={activeTab === "access" ? "access" : "settings"} />
+      </div>}
+      {activeTab === "settings" && endpoint.provider !== "github" && <Settings endpointId={endpoint.id} endpoint={endpoint} />}
       {activeTab === "reviews" && endpoint.provider === "github" && <GitHubReviews endpointId={endpoint.id} />}
-{activeTab === "access" && endpoint.provider === "github" && <GitHubBotManagement endpoint={endpoint} view="access" />}
 {activeTab === "access" && endpoint.provider === "agentmail" && <EmailAccess endpoint={endpoint} />}
 {activeTab === "access" && endpoint.provider !== "github" && endpoint.provider !== "agentmail" && (
         <Access
@@ -769,43 +776,14 @@ function Conversations({
     queryFn: () => chatEndpointsApi.listConversations(endpointId),
     ...liveChatQueryOptions,
   });
-  const rows = query.data ?? [];
   return (
     <section className="space-y-4">
-      <div>
-        <h2 className="text-lg font-semibold">Conversations</h2>
-      </div>
       {query.isPending ? <p role="status" className="text-sm text-muted-foreground">Loading conversations…</p> : query.isError ? (
         <div className="space-y-3">
           <p role="alert" className="text-sm text-destructive">Conversations could not be loaded.</p>
           <Button variant="outline" onClick={() => void query.refetch()}>Try again</Button>
         </div>
-      ) : rows.length === 0 ? (
-        <p className="rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground">
-          {provider === "agentmail"
-            ? "No email conversations yet. Send an email to this agent’s address to start one."
-            : "No conversations yet. Address the agent in an enabled destination to start one."}
-        </p>
-      ) : (
-        <ul aria-label="Conversations" className="divide-y divide-border overflow-x-auto border-y border-border">
-          {rows.map((row) => (
-            <li key={row.id} className="flex min-w-xl items-center gap-3 px-2 py-3 text-sm transition-colors hover:bg-accent/50">
-              <AppLogo name={providerNames[provider]} brandKey={provider} compact className="size-5! rounded-sm bg-transparent" />
-              <div className="flex min-w-0 max-w-56 items-center gap-2">
-                <span className="truncate font-medium" title={row.externalLabel}>{row.externalLabel}</span>
-                {row.externalUrl && <a href={row.externalUrl} target="_blank" rel="noreferrer" className="inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground hover:text-foreground hover:underline">Open {providerNames[provider]}<ExternalLink className="size-3" /></a>}
-              </div>
-              <span aria-hidden="true" className="text-muted-foreground">·</span>
-              <div className="flex min-w-0 flex-1 items-center gap-2">
-                <span className="truncate" title={row.issueTitle ?? undefined}>{row.issueTitle ?? "Waiting for task"}</span>
-                {row.issueId && <Link to={`/issues/${row.issueId}`} className="inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground hover:text-foreground hover:underline">Open task<ExternalLink className="size-3" /></Link>}
-              </div>
-              <span className="hidden shrink-0 text-xs text-muted-foreground xl:inline">{row.issueIdentifier}</span>
-              {row.state !== "active" && <StatusBadge status={row.state} />}
-            </li>
-          ))}
-        </ul>
-      )}
+      ) : <ChatConversationList rows={query.data} provider={provider} />}
     </section>
   );
 }

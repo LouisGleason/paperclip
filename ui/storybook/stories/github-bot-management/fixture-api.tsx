@@ -1,0 +1,130 @@
+import { useLayoutEffect, useState, type ReactNode } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { queryKeys } from "@/lib/queryKeys";
+import {
+  endpoint,
+  agent,
+  configuration,
+  resources,
+  reviews,
+  conversations,
+  links,
+  members,
+} from "./fixtures";
+
+export type FixtureState = "populated" | "empty" | "loading" | "error" | "long";
+/** Only fixture IDs are intercepted. All shell requests use Storybook's shared API fixtures. */
+export function FixtureApi({
+  state = "populated",
+  children,
+}: {
+  state?: FixtureState;
+  children: ReactNode;
+}) {
+  const [client] = useState(() => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+    });
+    client.setQueryData(queryKeys.chatEndpoints.detail(endpoint.id), endpoint);
+    client.setQueryData(queryKeys.agents.detail(agent.id), agent);
+    client.setQueryData(["github-members", endpoint.companyId], members);
+    return client;
+  });
+  const [ready, setReady] = useState(false);
+  useLayoutEffect(() => {
+    const original = window.fetch;
+    let saved = { revision: 2, configuration: structuredClone(configuration) };
+    let repos = structuredClone(resources);
+    let identities = structuredClone(links);
+    const failedPaths = new Set<string>();
+    window.fetch = async (input, init) => {
+      const raw =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url;
+      const path = new URL(raw, window.location.origin).pathname;
+      if (!path.includes(`/chat-endpoints/${endpoint.id}`))
+        return original(input, init);
+      if (state === "loading") return new Promise<Response>(() => {});
+      if (
+        state === "error" &&
+        (path.endsWith("/configuration") || path.endsWith("/resources")) &&
+        !failedPaths.has(path)
+      ) {
+        failedPaths.add(path);
+        return Response.json(
+          { error: "Could not reach GitHub. Try again." },
+          { status: 503 },
+        );
+      }
+      const body = init?.body ? JSON.parse(String(init.body)) : {};
+      if (path.endsWith("/configuration")) {
+        if (init?.method === "PUT")
+          saved = {
+            revision: saved.revision + 1,
+            configuration: body.configuration,
+          };
+        return Response.json(saved);
+      }
+      if (path.endsWith("/repositories/refresh")) return Response.json(repos);
+      if (path.endsWith("/resources")) {
+        if (init?.method === "PUT")
+          repos = repos.map((r) => ({
+            ...r,
+            enabled:
+              body.resources?.find(
+                (change: { id: string; enabled: boolean }) =>
+                  change.id === r.id,
+              )?.enabled ?? r.enabled,
+          }));
+        const rows =
+          state === "empty"
+            ? []
+            : state === "long"
+              ? repos.map((r) => ({
+                  ...r,
+                  label: `acme/platform-services-production-web-${r.id}-accessibility-improvements`,
+                }))
+              : repos;
+        return Response.json({ items: rows });
+      }
+      if (path.endsWith("/reviews"))
+        return Response.json(state === "empty" ? [] : reviews);
+      if (path.endsWith("/activity"))
+        return Response.json({ items: [], nextCursor: null });
+      if (path.endsWith("/conversations"))
+        return Response.json({
+          items:
+            state === "empty"
+              ? []
+              : state === "long"
+                ? conversations.map((r) => ({
+                    ...r,
+                    issueTitle: `${r.issueTitle} for every keyboard, screen reader, and narrow screen entry point`,
+                  }))
+                : conversations,
+        });
+      if (path.endsWith("/principals"))
+        return Response.json({ items: state === "empty" ? [] : identities });
+      if (path.endsWith("/link") && init?.method === "DELETE") {
+        identities = identities.filter(
+          (link) => !path.includes(link.principalId),
+        );
+        return Response.json({ success: true });
+      }
+      if (path.endsWith("/people/lookup"))
+        return Response.json({ githubUserId: "44", login: body.login });
+      return Response.json(endpoint);
+    };
+    setReady(true);
+    return () => {
+      window.fetch = original;
+      client.clear();
+    };
+  }, [client, state]);
+  return ready ? (
+    <QueryClientProvider client={client}>{children}</QueryClientProvider>
+  ) : null;
+}
