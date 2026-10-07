@@ -200,6 +200,18 @@ afterEach(async () => {
   container.remove();
 });
 describe("New agent setup", () => {
+  it("sends the AgentCore retention acknowledgement with its qualified profile", async () => {
+    await render("paperclip_runner", "aws_agentcore");
+    await fill("Managed profile", "qualified-agentcore-profile");
+    const acknowledgement = [...container.querySelectorAll("label")].find(label => label.textContent?.includes("Acknowledge AgentCore retention"))?.querySelector<HTMLInputElement>('input[type="checkbox"]');
+    expect(acknowledgement).toBeTruthy();
+    await act(async () => acknowledgement!.click());
+    await click("Run test");
+    expect(api.testEnvironment).toHaveBeenCalledWith("company-1", "paperclip_runner", expect.objectContaining({
+      adapterConfig: expect.objectContaining({ provider: "aws_agentcore", agentCoreProfileId: "qualified-agentcore-profile", agentCoreRetentionAcknowledged: true }),
+    }));
+  });
+
   it.each(["claude_local", "codex_local"])("can choose a sign-in environment in Configure before connecting %s", async (adapterType) => {
     settings.get.mockResolvedValue({ defaultEnvironmentId: "no-login" });
     envApi.list.mockResolvedValue([

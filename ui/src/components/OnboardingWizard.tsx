@@ -1,4 +1,5 @@
 import { agentHarnessType, paperclipRunnerProfileForHarness, type AgentRunnerChoice } from "@paperclipai/shared";
+import { testAgentSetup } from "../lib/test-agent-setup";
 import { healthApi } from "@/api/health";
 import { LocalProviderLoginInstructions } from "./AdapterLoginChrome";
 import { useLocalAiLogin } from "./ai-connections/useLocalAiLogin";
@@ -1945,16 +1946,15 @@ function OnboardingWizardInner({
         visibleEnvironmentIds: environmentList.map((environment) => environment.id),
       });
       if (!isCurrent()) return null;
-      const result = await agentsApi.testEnvironment(
-        createdCompanyId,
+      const result = await testAgentSetup({
+        companyId: createdCompanyId,
         adapterType,
-        {
-          runner: runnerChoice,
-          adapterConfig: adapterConfigOverride ?? buildAdapterConfig(),
-          ...(managedBindingForStep() ? { aiConnection: managedBindingForStep() } : {}),
-          environmentId,
-        }
-      );
+        providerAdapter: agentHarnessType(adapterType, adapterConfigOverride ?? buildAdapterConfig()),
+        runner: runnerChoice,
+        adapterConfig: adapterConfigOverride ?? buildAdapterConfig(),
+        ...(managedBindingForStep() ? { aiConnection: managedBindingForStep() } : {}),
+        environmentId,
+      });
       if (!isCurrent()) return null;
       setAdapterEnvResult(result);
       adapterEnvResultAppliedStoredLoginRef.current = appliedStoredClaudeLoginBinding;

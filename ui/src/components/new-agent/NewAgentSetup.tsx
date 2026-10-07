@@ -370,7 +370,7 @@ function Setup({
       });
     if (managedHarness) Object.assign(config, brandType === "claude_managed"
       ? { managedProfileId: managedProfileId.trim(), managedAgentsRetentionAcknowledged: retentionAcknowledged }
-      : { agentCoreProfileId: managedProfileId.trim() });
+      : { agentCoreProfileId: managedProfileId.trim(), agentCoreRetentionAcknowledged: retentionAcknowledged });
     if (!aiBinding && !nextConnection?.aiConnection && hasCredentialField && binding) {
       if (adapterType === "hermes_gateway") config.apiKey = binding;
       else
@@ -860,10 +860,12 @@ function Setup({
                         <Field label={brandType === "claude_managed" ? "Managed Agent profile" : "AgentCore profile"}>
                           <Input aria-label="Managed profile" value={managedProfileId} onChange={event => { setManagedProfileId(event.target.value); resetTest(); }} placeholder="Qualified organization profile ID or key" />
                         </Field>
-                        {brandType === "claude_managed" && <label className="flex items-start gap-2 text-sm">
+                        <label className="flex items-start gap-2 text-sm">
                           <input type="checkbox" checked={retentionAcknowledged} onChange={event => { setRetentionAcknowledged(event.target.checked); resetTest(); }} />
-                          <span>Acknowledge managed retention. Claude Managed is a stateful beta service and is not eligible for ZDR or HIPAA modes.</span>
-                        </label>}
+                          <span>{brandType === "claude_managed"
+                            ? "Acknowledge managed retention. Claude Managed is a stateful beta service and is not eligible for ZDR or HIPAA modes."
+                            : "Acknowledge AgentCore retention. AWS AgentCore retains managed sessions according to the organization's profile policy."}</span>
+                        </label>
                       </section>}
                       <section className="space-y-5">
                         {!connectionAdapter && aiProviderForAdapter(brandType) && (

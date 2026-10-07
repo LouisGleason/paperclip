@@ -55,6 +55,7 @@ it("does not report a connection when runtime readiness passes but provider auth
     "company-1",
     "claude_local",
     {
+      runner: "legacy",
       agentId: "agent-1",
       environmentId: "sandbox-1",
       adapterConfig: { ...input.adapterConfig, engine: "cli" },
@@ -73,6 +74,7 @@ it("probes native Grok credentials with the pinned prerequisite in the selected 
     adapterConfig: { provider: "acpx", acpxAgent: "grok", model: "grok-4.7" },
   });
   expect(testEnvironment).toHaveBeenLastCalledWith("company-1", "grok_local", {
+    runner: "legacy",
     agentId: "agent-1", environmentId: "sandbox-1",
     adapterConfig: { provider: "acpx", acpxAgent: "grok", model: "grok-4.7", engine: "cli", command: "/opt/paperclip/providers/grok/1.0.13/grok" },
   });

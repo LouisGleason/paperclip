@@ -619,7 +619,7 @@ function AdapterPickerList({
             const isExpanded = expandedSlugs.has(agent.slug);
             const vals = configValues[agent.slug] ?? { ...defaultCreateValues, adapterType: selectedType,
               runner: agent.runner, adapterSchemaValues: agent.adapterConfig,
-              model: String(agent.adapterConfig.model ?? "") };
+              model: String(agent.adapterConfig?.model ?? "") };
 
             return (
               <div key={agent.slug}>
@@ -1540,7 +1540,7 @@ export function CompanyImport() {
     setAdapterConfigValues((prev) => ({
       ...prev,
       [slug]: { ...(prev[slug] ?? { ...defaultCreateValues, adapterType: currentType,
-        runner: agent?.runner, adapterSchemaValues: agent?.adapterConfig ?? {}, model: String(agent?.adapterConfig.model ?? "") }), ...patch },
+        runner: agent?.runner, adapterSchemaValues: agent?.adapterConfig ?? {}, model: String(agent?.adapterConfig?.model ?? "") }), ...patch },
     }));
   }
 

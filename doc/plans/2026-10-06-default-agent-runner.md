@@ -1,29 +1,63 @@
 # Default agent runner
 
-## Outcome
+## Outcome and finish line
 
-New agents choose a harness. Qualified Codex, Claude, OpenCode, Grok, and Cursor harnesses default to Paperclip Runner. Unsupported harnesses keep legacy execution; Advanced allows an explicit legacy override. Existing agents and recorded runs retain their execution choice.
+Users choose a harness. Qualified Codex, Claude, OpenCode, Grok, and Cursor harnesses default to Paperclip Runner. Unsupported harnesses keep legacy execution; Advanced allows an explicit legacy override. Existing agents, approvals and recorded runs retain their execution choice. No agent-table migration.
 
-## Delivery
+One owner carries implementation, verification and relevant review fixes through one reviewable PR with required checks, real test-drive acceptance and accessible evidence. Merging and deployment are excluded.
+
+## Canonical delivery
 
 - Worktree: `/Users/dotta/.codex/worktrees/e492/paperclip`
 - Branch: `codex/default-agent-runner`
-- Base: `a9a20fb5c`
-- Finish: one reviewable PR, required checks, live test-drive journeys, preview and evidence links. No merge or deployment.
-- Next: resolve remaining regression tests, complete available live acceptance, and prepare the PR with explicit evidence gaps.
+- Base: `799e4d556` (master)
+- PR: https://github.com/paperclipai/paperclip/pull/15422
+- Preview: http://127.0.0.1:3108/RUN/agents
+- Evidence task: http://127.0.0.1:3108/RUN/issues/RUN-2
+- Last live server revision: `8609542993a524597cf01c4e615bfe4bd4b0a8da`; review fixes are being committed and the test-drive will be restarted on the final tested revision.
+- Next action: push review fixes, rerun current-head CI/review, complete available onboarding acceptance and the required full test run.
 
-## Evidence and dependencies
+## Implemented
 
-- Shared mapping/translator, server creation boundary, explicit overrides, frozen approvals, import/export, harness branding, UI setup, CLI and graduation are implemented. Compatibility review is ongoing.
-- Production build, full workspace typecheck, token gates, and Storybook build passed. Further changes are undergoing targeted regression checks; the full suite is running. Initial failures exposed built-in readiness and partial native credential-update bugs, now fixed and under verification.
-- Real production UI on the test-drive at http://127.0.0.1:3108: ordinary harness picker has no Runner tile. Selected Grok with the saved xAI key; native binary/provider checks passed. Agent `11ac687e-ca6a-4b78-a86c-41023c8b2ad4` completed RUN-2 with 42, then its follow-up with 50. Both runs recorded `runtimeMode=native`, `adapterType=paperclip_runner` and succeeded.
-- Explicit Legacy runner selected through Advanced, setup passed, and Grok agent `8806f807-8b3a-4a9b-85f9-4cbbc55990f7` created. RUN-3 execution verification pending.
-- Live testing found and fixed a qualified-column SQL bug in historical adapter projection. RUN-1 retains the failed evidence; RUN-2 passed after restart.
-- Evidence: `/private/tmp/runner-harness-picker.png`, `/private/tmp/runner-grok-ready.png`, `/private/tmp/runner-grok-followup.png`. Artifact attachment pending.
-- Host has Codex subscription credentials, but isolated agent account login requires a fresh interactive sign-in; user handoff requested. Claude and Cursor are logged out. No authorized OpenCode provider credential or managed execution target/Daytona credentials found. These live matrix items remain unresolved; no mocks count as live acceptance.
-- Remaining acceptance: other native harnesses, local/managed Codex and Claude, unsupported legacy fallback, onboarding, team import, existing-agent edits, actionable setup failure. No merge or deployment performed.
+Shared production-qualified mapping and idempotent configuration translation; server-owned creation resolution and target availability; explicit overrides; frozen approvals; internal/built-in/plugin provisioning; import/export runner preservation; CLI and hiring contracts; harness branding; setup/account/model/environment UI; saved Claude claims; native runtime readiness; flag graduation; historical-run adapter selection; session invalidation on explicit changes. No migration of existing agents.
 
-## Links
+Live testing and regression review fixed historical-adapter SQL projection, built-in setup readiness, partial native credential updates, AgentCore retention acknowledgement, managed/pooled task-model discovery, onboarding provider authentication and plugin resets across harnesses. Required legacy-specific fixtures now request legacy explicitly. The user's single-PR requirement takes precedence over the PR skill's usual file-count limit; the additional files are necessary regression coverage.
 
-- Preview: http://127.0.0.1:3108 (local test-drive, source worktree; final revision pending).
-- PR and tested commit: pending. No merge/deployment performed.
+## Verification state (2026-10-07)
+
+- Workspace typecheck and token gates pass after review fixes.
+- Production build and Storybook build passed; final rebuild pending.
+- Focused review regression run: 422 passed, one AgentCore test step-label fixture corrected; follow-up 66 passed including that test and the two isolated full-suite timeout cases.
+- Initial full suite: 16,209 passed, 17 failed. Failures included stale legacy expectations, environment-readiness mocks, an approval service argument and two timeouts. Addressed; full required suite rerunning.
+- Initial CI: typecheck, build, runner static/Rust/Vitest, Docker context and canary checks passed. General/serialized/e2e failures are being corrected and rerun. Greptile's four reported defects have fixes and focused coverage; re-review pending. This is not yet a green or merge-ready handoff.
+
+## Observed live acceptance
+
+- Ordinary picker: no Paperclip Runner tile; Grok selected normally and reused the saved xAI key. Native binary/provider readiness passed.
+- Native Grok `11ac687e-ca6a-4b78-a86c-41023c8b2ad4`: RUN-2 answered 17 + 25 with 42; follow-up answered 50. Both runs succeeded with native execution recorded.
+- Explicit legacy Grok `8806f807-8b3a-4a9b-85f9-4cbbc55990f7`: Advanced Legacy selected, setup passed, RUN-3 answered 6 × 7 with 42 and succeeded as `grok_local`.
+- Unsupported Process agent created through the actual CLI without a runner preference; UI Run now succeeded as `process`, run `6be96bc4-128c-49cd-9aba-82f898a8d8e7`.
+- Production UI imported a local team package omitting runner choice. Agent `0fc4a759-b31d-459a-a05b-9e1c7aad4b19` persisted `paperclip_runner`, ACPX Grok, model `grok-4.7`.
+- Actual export records `adapter.runner: paperclip`. Automated round-trip coverage verifies execution preservation.
+- Unrelated title edits through the UI preserved the native and legacy Grok agents' execution after reload and API readback.
+- Cursor setup with no explicit model showed `cursor requires an explicit provider model`; Finish setup was disabled. Selecting Legacy in Advanced invalidated the stale test result.
+- Server onboarding seed selected native Grok. First-agent UI onboarding remains in progress.
+- RUN-1 retains a historical failed run from the SQL projection defect; RUN-2 passed after the repair. Restart recovery of that old run did not pass and is not counted as successful recovery proof.
+
+## Precise remaining dependencies
+
+Host Codex subscription credentials exist, but isolated agent login requires a fresh interactive sign-in; user handoff remains pending. Claude and Cursor are logged out. No authorized OpenCode provider credential or qualified managed target/Daytona credentials was found. Native Codex/Claude/OpenCode/Cursor task-and-follow-up acceptance and the managed matrix remain unresolved. Mocks and CI do not substitute for this live proof.
+
+New harness qualification, existing-agent migration, legacy removal, permission-policy changes and unrelated UI redesign remain deferred. No merge or deployment performed.
+
+## Accessible evidence
+
+Screenshots are uploaded as attachment-backed artifact work products on RUN-2, not only workspace files.
+
+- [Ordinary harness picker](http://127.0.0.1:3108/api/attachments/2e6efe43-e49a-4d65-9a43-4e3e8da0ff38/content) — work product `575c48a4-f11f-4ea3-a876-2fe4ac0489f6`.
+- [Native Grok setup passed](http://127.0.0.1:3108/api/attachments/d82ef090-76b9-45d8-aac8-a1ba733e1ec7/content) — work product `1c544e99-0293-4e83-8c87-ebcf31a303c8`.
+- [Native Grok task and follow-up](http://127.0.0.1:3108/api/attachments/b797d434-6a4a-4859-ab3d-265ffa1a93b9/content) — work product `bd6fb0b4-37d6-40ed-875c-d8bed6517370`.
+- [Explicit legacy Grok task](http://127.0.0.1:3108/api/attachments/b3bdb8e4-dbbc-4755-be82-547075e23712/content) — work product `695fb35f-3a2a-45cd-8189-acb39cbae80c`.
+- [Automatic team import](http://127.0.0.1:3108/api/attachments/d28fcf60-7af9-42ad-b757-995eaf185d9d/content) — work product `b1353ddb-9335-4657-b2af-6a2a8149d651`.
+- [Unsupported harness stays legacy](http://127.0.0.1:3108/api/attachments/7543c47f-a8c5-400e-a9c7-4fbbadfddf34/content) — work product `845cd3d1-a91c-491f-a2e6-6b6a2a158cf4`.
+- [Actionable Cursor setup failure and runner override](http://127.0.0.1:3108/api/attachments/e7aa5c95-fed6-4472-bf57-3350d3e7bbf6/content) — work product `e71aeb0b-41d8-4da6-b154-221b158cc485`.

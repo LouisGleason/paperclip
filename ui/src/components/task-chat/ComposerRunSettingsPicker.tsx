@@ -109,9 +109,9 @@ export function ComposerRunSettingsPicker({
   const poolId = binding?.mode === "router" ? binding.connectionId : undefined;
   const { data: fetchedModels = [], isPending: modelsPending } = useQuery({
     queryKey: agent && modelSupported
-      ? [...queryKeys.agents.adapterModels(companyId, agentHarnessType(agent.adapterType, agent.adapterConfig), agent.defaultEnvironmentId ?? null, provider), poolId ?? null]
+      ? [...queryKeys.agents.adapterModels(companyId, agent.adapterType, agent.defaultEnvironmentId ?? null, provider), poolId ?? null]
       : ["agents", "composer-models", "none"],
-    queryFn: () => agentsApi.adapterModels(companyId, agentHarnessType(agent!.adapterType, agent!.adapterConfig), {
+    queryFn: () => agentsApi.adapterModels(companyId, agent!.adapterType, {
       environmentId: agent!.defaultEnvironmentId ?? null, provider, poolId,
     }),
     enabled: Boolean(agent && modelSupported && !modelOptionsOverride),

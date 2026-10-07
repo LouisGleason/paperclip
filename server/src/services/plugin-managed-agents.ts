@@ -1,4 +1,3 @@
-import { resolveAgentRunnerConfig } from "@paperclipai/adapter-utils";
 import { agentHarnessType, agentRunner } from "@paperclipai/shared";
 import { and, eq, isNull, ne } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
@@ -23,6 +22,7 @@ import { approvalService } from "./approvals.js";
 import { logActivity } from "./activity-log.js";
 import { agentInstructionsBundleMode, agentInstructionsService } from "./agent-instructions.js";
 import { agentInstructionRevisionService } from "./agent-instruction-revisions.js";
+import { resolveNewAgentRunnerForCompany } from "./agent-runner-selection.js";
 
 const MANAGED_AGENT_ENTITY_TYPE = "managed_agent";
 const DEFAULT_MANAGED_AGENT_ADAPTER_TYPE = "process";
@@ -658,14 +658,18 @@ export function pluginManagedAgentService(
         ? reconciled.agent.metadata
         : {};
       const adapterType = await resolveManagedAdapterType(companyId, declaration);
+      const defaults = declarationPatch(declaration, { adapterType });
+      // Resolve before replacing instructions, so an invalid new declaration
+      // cannot partially reset the agent. A changed harness selects its default.
+      const execution = await resolveNewAgentRunnerForCompany(db, companyId, {
+        ...defaults,
+        defaultEnvironmentId: reconciled.agent.defaultEnvironmentId,
+        runner: agentHarnessType(reconciled.agent.adapterType, reconciled.agent.adapterConfig) === adapterType
+          ? agentRunner(reconciled.agent.adapterType) : "auto",
+      });
       // Reset content through the canonical CAS path before changing defaults.
       // A conflict must leave the existing adapter configuration untouched.
       const withInstructions = await materializeDeclaredInstructions(companyId, reconciled.agent, declaration, { replaceExisting: true });
-      const defaults = declarationPatch(declaration, { adapterType });
-      const execution = resolveAgentRunnerConfig({
-        ...defaults,
-        runner: agentRunner(reconciled.agent.adapterType),
-      });
       const adapterConfig = { ...execution.adapterConfig };
       if (declaration.instructions) {
         for (const key of ["instructionsBundleMode", "instructionsRootPath", "instructionsEntryFile", "instructionsFilePath"]) {

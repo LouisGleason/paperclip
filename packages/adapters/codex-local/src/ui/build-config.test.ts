@@ -137,6 +137,7 @@ describe("buildPaperclipRunnerConfig", () => {
       codexPermissionMode: "never",
       lifecycleMode: "per_turn",
       model: "gpt-5.4",
+      modelReasoningEffort: "high",
       timeoutSec: 0,
       graceSec: 15,
     });
@@ -144,7 +145,6 @@ describe("buildPaperclipRunnerConfig", () => {
       "engine",
       "agentCommand",
       "stateDir",
-      "modelReasoningEffort",
       "search",
       "fastMode",
       "dangerouslyBypassApprovalsAndSandbox",
@@ -174,7 +174,7 @@ describe("buildPaperclipRunnerConfig", () => {
   it("rejects an unsupported persisted Codex permission instead of coercing it", () => {
     expect(() => buildPaperclipRunnerConfig(makeValues({
       adapterSchemaValues: {
-        provider: "unknown",
+        provider: "codex",
         codexPermissionMode: "unrestricted",
         lifecycleMode: "forever",
         idleTimeoutMs: -1,

@@ -1,15 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-const state = vi.hoisted(() => ({ disabled: [] as string[], overrides: new Set<string>() }));
+const state = vi.hoisted(() => ({ disabled: [] as string[], overrides: new Set<string>(), settings: {} as Record<string, unknown>, environment: null as { id: string; driver: string } | null, managed: null as { id: string; driver: string } | null }));
 vi.mock("../adapters/registry.js", () => ({
   findActiveServerAdapter: (type: string) => type === "missing" ? null : { type },
   hasActiveAdapterOverride: (type: string) => state.overrides.has(type),
   listEnabledServerAdapters: () => ["codex_local", "paperclip_runner", "gemini_local"].filter(type => !state.disabled.includes(type)).map(type => ({ type })),
 }));
 vi.mock("../services/adapter-plugin-store.js", () => ({ getDisabledAdapterTypes: () => state.disabled }));
-import { agentRunnerAvailability, resolveNewAgentRunner } from "../services/agent-runner-selection.js";
+vi.mock("../services/instance-settings.js", () => ({ instanceSettingsService: () => ({ get: async () => state.settings }) }));
+vi.mock("../services/environments.js", () => ({ environmentService: () => ({ getById: async () => state.environment, findManagedSandboxEnvironment: async () => state.managed, findKubernetesEnvironment: async () => state.managed }) }));
+import { agentRunnerAvailability, resolveNewAgentRunner, resolveNewAgentRunnerForCompany } from "../services/agent-runner-selection.js";
 
 describe("server-owned agent runner selection", () => {
-  beforeEach(() => { state.disabled = []; state.overrides.clear(); });
+  beforeEach(() => { state.disabled = []; state.overrides.clear(); state.settings = {}; state.environment = null; state.managed = null; });
   it.each([
     ["codex_local", { provider: "codex" }], ["claude_local", { provider: "acpx", acpxAgent: "claude" }],
     ["opencode_local", { provider: "opencode" }], ["grok_local", { provider: "acpx", acpxAgent: "grok" }],
@@ -46,6 +48,13 @@ describe("server-owned agent runner selection", () => {
     expect(() => resolveNewAgentRunner({ adapterType: "codex_local", adapterConfig: { command: "/custom/codex" } })).toThrow(/command/);
     expect(() => resolveNewAgentRunner({ adapterType: "opencode_local", adapterConfig: { model: "invalid" } })).toThrow(/provider\/model/);
     expect(() => resolveNewAgentRunner({ adapterType: "cursor" })).toThrow(/model/);
+  });
+  it.each(["managed", "kubernetes"])("requires the configured %s target instead of selecting the local host", async mode => {
+    state.settings = mode === "managed" ? { defaultEnvironmentId: "local", experimental: { enableManagedSandboxOnly: true } } : { general: { executionMode: "kubernetes" } };
+    state.environment = { id: "local", driver: "local" };
+    await expect(resolveNewAgentRunnerForCompany({} as never, "company", { adapterType: "codex_local" })).rejects.toThrow(/unavailable/);
+    state.managed = { id: "managed", driver: "sandbox" };
+    await expect(resolveNewAgentRunnerForCompany({} as never, "company", { adapterType: "codex_local" })).resolves.toMatchObject({ adapterType: "paperclip_runner", adapterConfig: { provider: "codex" } });
   });
   it("never guesses an unknown provider", () => {
     expect(() => resolveNewAgentRunner({ adapterType: "paperclip_runner", adapterConfig: { provider: "unknown" } })).toThrow(/provider/);

@@ -4,9 +4,15 @@ import { listServerAdapters, requireServerAdapter } from "./registry.js";
 import * as executionTarget from "@paperclipai/adapter-utils/execution-target";
 import { BUILTIN_ADAPTER_TYPES } from "./builtin-adapter-types.js";
 
-const { probeInstallation, probeGrokInstallation } = vi.hoisted(() => ({
+const { probeInstallation, probeGrokInstallation, probeRunner, probeRemoteProvider } = vi.hoisted(() => ({
   probeInstallation: vi.fn(),
   probeGrokInstallation: vi.fn(),
+  probeRunner: vi.fn(),
+  probeRemoteProvider: vi.fn(),
+}));
+vi.mock("../services/native-runtime/setup-readiness.js", () => ({
+  assertNativeRunnerSetupReady: probeRunner,
+  assertRemoteAcpxSetupReady: probeRemoteProvider,
 }));
 vi.mock("@paperclipai/paperclip-runner/live", () => ({
   probeAcpxClaudeInstallation: probeInstallation,
@@ -96,6 +102,8 @@ describe("native ACPX environment checks", () => {
   beforeEach(() => {
     probeInstallation.mockReset().mockResolvedValue(undefined);
     probeGrokInstallation.mockReset().mockResolvedValue(undefined);
+    probeRunner.mockReset().mockResolvedValue(undefined);
+    probeRemoteProvider.mockReset().mockResolvedValue(undefined);
   });
   afterEach(() => vi.restoreAllMocks());
 
@@ -141,8 +149,9 @@ describe("native ACPX environment checks", () => {
         runner: { execute: vi.fn().mockResolvedValue({ exitCode: 0, timedOut: false, stdout: "Linux\nx86_64\n" }) },
       },
     });
-    expect(result.status).toBe("warn");
-    expect(result.checks[0].code).toBe("acpx_remote_runtime_unverified");
+    expect(result.status).toBe("pass");
+    expect(result.checks[0].code).toBe("acpx_runtime_ready");
+    expect(probeRemoteProvider).toHaveBeenCalled();
     expect(probeInstallation).not.toHaveBeenCalled();
   });
 
@@ -155,9 +164,9 @@ describe("native ACPX environment checks", () => {
   };
 
   it.each([
-    ["Linux\nx86_64\n", "warn"],
-    ["Darwin\nx86_64\n", "warn"],
-    ["Darwin\narm64\n", "warn"],
+    ["Linux\nx86_64\n", "pass"],
+    ["Darwin\nx86_64\n", "pass"],
+    ["Darwin\narm64\n", "pass"],
     ["Linux\naarch64\n", "fail"],
     ["", "fail"],
   ])("qualifies the SSH platform from its own uname output %j", async (stdout, status) => {

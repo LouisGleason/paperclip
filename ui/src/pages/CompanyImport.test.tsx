@@ -1092,7 +1092,7 @@ describe("CompanyImport", () => {
     await settle();
 
     expect(lastImportMeta().adapterOverrides).toEqual({
-      coder: { adapterType: "codex_local" },
+      coder: { adapterType: "codex_local", runner: "auto" },
     });
   });
 
@@ -1110,7 +1110,7 @@ describe("CompanyImport", () => {
     }
   });
 
-  it("offers Paperclip Runner import configuration after its experimental flag is enabled", async () => {
+  it("keeps the runner out of the harness picker even when its old flag is enabled", async () => {
     mockAdaptersApi.list.mockResolvedValue([
       { type: "claude_local", disabled: false },
       { type: "codex_local", disabled: false },
@@ -1120,7 +1120,7 @@ describe("CompanyImport", () => {
 
     for (const select of findAdapterSelects()) {
       expect(Array.from(select.options).map((option) => option.value))
-        .toContain("paperclip_runner");
+        .not.toContain("paperclip_runner");
     }
   });
 
@@ -1140,7 +1140,7 @@ describe("CompanyImport", () => {
     // Only the unavailable agent is overridden; the claude_local agent still
     // carries no override and keeps its manifest adapter.
     expect(lastImportMeta().adapterOverrides).toEqual({
-      researcher: { adapterType: "claude_local" },
+      researcher: { adapterType: "claude_local", runner: "auto" },
     });
   });
 
@@ -1158,8 +1158,8 @@ describe("CompanyImport", () => {
     await settle();
 
     expect(lastImportMeta().adapterOverrides).toEqual({
-      researcher: { adapterType: "gemini_local" },
-      coder: { adapterType: "gemini_local" },
+      researcher: { adapterType: "gemini_local", runner: "auto" },
+      coder: { adapterType: "gemini_local", runner: "auto" },
     });
   });
 
