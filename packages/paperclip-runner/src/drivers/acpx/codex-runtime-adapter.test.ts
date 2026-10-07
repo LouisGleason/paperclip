@@ -29,6 +29,34 @@ const HANDLE: AcpRuntimeHandle = {
 };
 
 describe("Codex ACPX runtime adapter", () => {
+  it("persists Grok's private terminal receipt through the admitted ACPX prompt", async () => {
+    const runtime = fakeRuntime(), pending = pendingExtensionTurn("turn-1");
+    vi.mocked(runtime.startTurn).mockReturnValue(pending.turn);
+    let created!: AcpRuntimeOptions;
+    let persisted = { acpxRecordId: "record-1", acpSessionId: "backend-1", agentSessionId: "agent-1",
+      lastRequestId: "previous", request_token_usage: {}, messages: [],
+      acpx: { current_model_id: "grok-4.7" } } as unknown as import("acpx/runtime").AcpSessionRecord;
+    const durableStore: AcpSessionStore = { load: vi.fn(async () => structuredClone(persisted)),
+      save: vi.fn(async value => { persisted = structuredClone(value); }) };
+    const options = openOptions(fakeCommand()); options.profile = resolveQualifiedAcpxProfile("grok", "grok-4.7");
+    const port = await openCodexAcpxRuntime(options, { createRegistry: () => registry(),
+      createStore: () => durableStore, createRuntime: value => { created = value; return runtime; } });
+    await created.sessionStore!.load("record-1");
+    const turn = port.startTurn({ text: "synthetic fixture", requestId: "turn-1" });
+    created.onAcpMessage!("outbound", { method: "session/prompt", params: { sessionId: "backend-1" } });
+    created.onAcpMessage!("inbound", { method: "_x.ai/session/update", params: { sessionId: "backend-1", update: {
+      sessionUpdate: "turn_completed", prompt_id: "11111111-1111-1111-1111-111111111111",
+      usage: { inputTokens: 12, outputTokens: 5, totalTokens: 17, cachedReadTokens: 2,
+        cacheCreationTokens: 0, reasoningTokens: 3, costUsdTicks: 1000000000 },
+    } } });
+    await created.sessionStore!.save({ ...persisted, lastRequestId: "turn-1", messages: [{ User: { id: "current", content: [] } }] });
+    pending.settle(); await turn.result;
+    expect(await port.getStatus()).toMatchObject({ lastRequestId: "turn-1",
+      usageCost: { amount: 0.1, currency: "USD" },
+      requestTokenUsage: { current: { input_tokens: 10, output_tokens: 5,
+        cache_read_input_tokens: 2, cache_creation_input_tokens: 0, thought_tokens: 0 } } });
+    await port.close({ reason: "receipt fixture complete" });
+  });
   it("rejects forged permission session identifiers before delegating or applying full-auto policy", async () => {
     const pending = pendingExtensionTurn("turn-1");
     const runtime = fakeRuntime(); vi.mocked(runtime.startTurn).mockReturnValue(pending.turn);

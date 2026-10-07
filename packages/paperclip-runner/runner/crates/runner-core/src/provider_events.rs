@@ -1173,9 +1173,15 @@ fn normalize_acpx_status(
             Some(Value::String(currency)) => currency.eq_ignore_ascii_case("USD"),
             Some(_) => false,
         };
-        // ACPX 0.13.1 documents breakdown as per-turn usage while cost is
-        // session-cumulative. Keep those authorities separate so consumers do
-        // not add the same tokens twice or treat cumulative cost as a delta.
+        // ACPX breakdown is per-turn, while its cost is session-cumulative.
+        // Only the qualified sidecar's prompt-bound receipt delta can enter
+        // per-turn spend. Legacy/candidate totals never establish that delta.
+        let turn_cost = payload
+            .pointer("/costDelta/currency")
+            .and_then(Value::as_str)
+            .filter(|currency| currency.eq_ignore_ascii_case("USD"))
+            .and_then(|_| payload.pointer("/costDelta/amount").and_then(Value::as_f64))
+            .filter(|amount| amount.is_finite() && *amount >= 0.0);
         let cumulative = json!({
             "inputTokens": 0,
             "outputTokens": 0,
@@ -1208,7 +1214,7 @@ fn normalize_acpx_status(
             ),
             "activeSeconds": 0.0,
             "requests": 1,
-            "providerCostUsd": 0.0,
+            "providerCostUsd": turn_cost.unwrap_or(0.0),
         });
         return vec![NormalizedProviderEvent {
             event_type: "usage.reported".to_owned(),

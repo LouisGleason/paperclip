@@ -32,6 +32,7 @@ import { AcpxApprovalRequiredError, decideAcpxPermission } from "./permission-po
 import { ACPX_CAPABILITY_PROFILES } from "./capability-profiles.js";
 import { admitCursorInstructions, createCursorInstructionAdmission } from "./cursor-instructions.js";
 import { createAcpxModeBinding } from "./provider-mode.js";
+import { createGrokUsageCapture } from "./grok-usage-receipt.js";
 
 const VERIFIED_COMMAND_SENTINEL = "paperclip-verified-acpx-command";
 const DEFAULT_RUNTIME_CLOSE_TIMEOUT_MS = 2_000;
@@ -205,6 +206,7 @@ export async function openQualifiedAcpxRuntime(
     dependencies.awaitProviderExit,
   );
   const baseStore = createStore({ stateDir: options.stateDirectory });
+  const grokUsage = options.profile.agent === "grok" ? createGrokUsageCapture(() => extensionBoundary.active) : null;
   let failedHandshakeHandle: AcpRuntimeHandle | null = null;
   let admissionCleanup: RuntimeAdmissionCleanup | null = null;
   const rememberHandshakeHandle = (record: AcpSessionRecord): void => {
@@ -249,7 +251,7 @@ export async function openQualifiedAcpxRuntime(
   const sessionStore: AcpSessionStore = {
     async load(sessionId) {
       const record = await baseStore.load(sessionId);
-      if (record !== undefined) rememberHandshakeHandle(record);
+      if (record !== undefined) { rememberHandshakeHandle(record); grokUsage?.remember(record); }
       return record;
     },
     async save(record) {
@@ -257,7 +259,8 @@ export async function openQualifiedAcpxRuntime(
       // the store to persist it. Capture cleanup authority first so a storage
       // rejection cannot orphan the live session created by the handshake.
       rememberHandshakeHandle(record);
-      await baseStore.save(record);
+      const projected = grokUsage ? grokUsage.project(record, await baseStore.load(record.acpxRecordId)) : record;
+      await baseStore.save(projected);
     },
   };
   const runnerOwnedMcpServerNames = new Set(
@@ -306,6 +309,7 @@ export async function openQualifiedAcpxRuntime(
     : null;
   const runtimeOptions: GoalAwareAcpRuntimeOptions = {
     cwd: options.cwd,
+    ...(grokUsage ? { onAcpMessage: (direction: "inbound" | "outbound", message: unknown) => grokUsage.observe(direction, message) } : {}),
     ...(cursorInstructions || modeBinding ? { protocolGuardFactory: () => {
       const instructions = cursorInstructions?.createGuard();
       const mode = modeBinding?.createGuard();
