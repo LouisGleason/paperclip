@@ -126,7 +126,7 @@ export async function runNativeActiveStopFlow(input: {
     const state = await load();
     if (providerDeath) {
       if (!deathPending || !deathSettlement) throw new Error("Missing provider-death settlement");
-      return assertCopilotProviderDeath({ ...state, pending: deathPending });
+      return assertCopilotProviderDeath({ ...state, pending: deathPending, bootstrap: bootstrap() });
     }
     if (!completed) throw new Error("Missing active Stop settlement");
     return readActiveStopSettlement({ ...state, ...completed, bootstrap: bootstrap() });
@@ -208,7 +208,7 @@ export async function runNativeActiveStopFlow(input: {
       deathSettlement = await pollUntil({ label: "expired callback after owned Copilot death", deadlineAt: input.deadlineAt, intervalMs: 200, load: async () => {
         const state = await load();
         if (["succeeded", "cancelled", "timed_out"].includes(state.run.status)) throw new Error("Provider death produced an unexpected terminal run");
-        return assertCopilotProviderDeath({ ...state, pending: deathPending! });
+        return assertCopilotProviderDeath({ ...state, pending: deathPending!, bootstrap: bootstrap() });
       }, accept: Boolean });
       check("provider-death-expires-pending", true, "The owned provider died and its unanswered callback expired without completing the task");
       await input.evidence("copilot-provider-death-settlement.json", deathSettlement);

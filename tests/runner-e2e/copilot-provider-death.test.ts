@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { bootstrapReadExecutionId } from "./native-bootstrap-read-proof.js";
 import { describe, expect, it } from "vitest";
 import { canonicalRemoteCopilotCommand, copilotDeathArguments, selectOwnedCopilotProcess } from "./copilot-provider-death.js";
 
@@ -45,6 +47,17 @@ describe("provider-death independent evidence", () => {
   const facts = () => ({ pending, run: { id: "run", companyId: "company", nativeIssueId: "issue", runtimeMode: "native", status: "failed" }, issue: { id: "issue", status: "blocked" }, events: [notice, row(2, "runtime_request.expired", { requestId: "request", turnId: "turn", requestKind: "permission_approval", reason: "provider_exit" }), row(3, "turn.failed", { error: { code: "AGENT_DISCONNECTED", message: "Provider exited" } })] });
   it("accepts callback expiry and an unfinished failed task with no replay", () => {
     expect(assertCopilotProviderDeath(facts())).toMatchObject({ expired: true, mutationReplay: false });
+  });
+  it("exempts only an exactly attested completed remote instruction-file read", () => {
+    const actionFile = `.paperclip-eval-action-${"a".repeat(36)}.txt`, toolCallId = "instruction-read";
+    const native = (seq: number, status: string) => row(seq, "provider.notice.recorded", { schema: "paperclip.provider.notice.v1", scope: "turn", category: "copilot_tool_evidence_v1", provenance: { sessionId: "native-session", turnId: "turn", eventType: "tool", method: "session/update" }, details: Object.entries({ stage: "tool", toolCallId, operation: "read", status, readTargetSha256: `sha256:${createHash("sha256").update(actionFile).digest("hex")}` }).map(([name, value]) => ({ name, value })) });
+    const canonical = (seq: number, eventType: string, status: string) => row(seq, eventType, { schema: "paperclip.tool.execution.v1", transport: "builtin", operation: "read", target: actionFile, executionId: bootstrapReadExecutionId(toolCallId), status });
+    const state = facts();
+    const edit = row(5, "provider.notice.recorded", { schema: "paperclip.provider.notice.v1", scope: "turn", category: "copilot_tool_evidence_v1", provenance: { sessionId: "native-session", turnId: "turn", eventType: "tool", method: "session/update" }, details: Object.entries({ stage: "tool", toolCallId: pending.toolCallId, operation: "edit", status: "pending" }).map(([name, value]) => ({ name, value })) });
+    state.events = [native(1, "pending"), canonical(2, "tool.execution.started", "running"), native(3, "completed"), canonical(4, "tool.execution.completed", "completed"), edit, row(6, notice.eventType, notice.payload.prpEvent.payload), row(7, "runtime_request.expired", { requestId: "request", turnId: "turn", requestKind: "permission_approval", reason: "provider_exit" }), row(8, "turn.failed", { error: { code: "AGENT_DISCONNECTED", message: "Provider exited" } })];
+    expect(assertCopilotProviderDeath({ ...state, bootstrap: { actionFile, events: state.events } })).toMatchObject({ expired: true });
+    expect(() => assertCopilotProviderDeath(state)).toThrow(/operation/);
+    expect(() => assertCopilotProviderDeath({ ...state, bootstrap: { actionFile: actionFile.replace("a", "b"), events: state.events } })).toThrow(/bootstrap read/);
   });
   it.each(["execute", "read", "edit"])("refuses an additional %s operation after provider death", operation => {
     const replay = facts();
