@@ -30,11 +30,11 @@ the GitHub Code Review Bot connector. This default-off setting is independent of
 4. Paperclip reuses your verified GitHub identity when available. Otherwise,
    authorize the dedicated App and confirm the observed account once. Bot work
    uses installation credentials, never your personal GitHub token.
-5. Connection verification and completion happen automatically. The connected
-   page shows the actual App identity and enabled repository count, with a
-   copyable optional review mention. Open **Bot settings** to manage the
-   bot; normal connection navigation is already available. Runtime and isolation
-   readiness remain separate prerequisites.
+5. Connection verification and completion happen automatically. Paperclip opens
+   the bot's Settings with a connected confirmation modal showing the actual App
+   identity, enabled repository count, and a copyable optional review mention.
+   Dismiss it with **Done**, the close button, or Escape to stay in Settings.
+   Runtime and isolation readiness remain separate prerequisites.
 
 Installation may return before GitHub's separately delivered signed webhook
 ping. Paperclip keeps the same draft and credentials, shows a waiting state,

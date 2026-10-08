@@ -69,6 +69,7 @@ vi.mock("@/lib/router", () => ({
     reviewId: mocks.reviewId,
   }),
   useNavigate: () => vi.fn(),
+  useLocation: () => ({ state: null }),
   Link: ({
     children,
     to,

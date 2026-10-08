@@ -2,9 +2,12 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { MemoryRouter, useLocation } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GitHubChatSetup, gitHubAppManifestAction } from "./GitHubChatSetup";
+import { defaultGitHubReviewPolicy } from "@paperclipai/shared";
+import { ChatEndpointDetail } from "./ChatEndpointDetail";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { agentsApi } from "@/api/agents";
 import { chatEndpointsApi } from "@/api/chatEndpoints";
 import { githubChatApi } from "@/api/githubChat";
@@ -71,6 +74,7 @@ vi.mock("@/api/chatEndpoints", () => ({
 }));
 vi.mock("@/api/githubChat", () => ({
   githubChatApi: {
+    configuration: vi.fn(),
     advance: vi.fn(),
     repositories: vi.fn(),
     registration: vi.fn(),
@@ -161,6 +165,11 @@ describe("GitHub App wizard", () => {
       endpointId: "draft-1",
       state: "create",
     });
+    vi.mocked(githubChatApi.configuration).mockResolvedValue({
+      revision: 1,
+      configuration: { version: 1, toolsEnabled: true, responsibleUserId: "board", memberAccess: "selected", people: [],
+        defaults: defaultGitHubReviewPolicy(), repositories: {} },
+    });
     vi.mocked(githubChatApi.repositories).mockResolvedValue({
       items: [], nextOffset: null, totalCount: 1, enabledCount: 1, availableCount: 1,
     });
@@ -168,7 +177,7 @@ describe("GitHub App wizard", () => {
     vi.mocked(githubChatApi.personalConnections).mockResolvedValue([]);
     vi.mocked(copyTextToClipboard).mockResolvedValue();
     client = new QueryClient({
-      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+      defaultOptions: { queries: { retry: false, gcTime: 60_000 } },
     });
     container = document.createElement("div");
     document.body.append(container);
@@ -266,12 +275,21 @@ describe("GitHub App wizard", () => {
           <MemoryRouter
             initialEntries={[`/BOT/apps/chat/connect?provider=github&${query}`]}
           >
-            <GitHubChatSetup />
-            <Location />
+            <TooltipProvider>
+              <Routes>
+                <Route path="/BOT/apps/chat/connect" element={<GitHubChatSetup />} />
+                <Route path="/apps/chat/:endpointId/:tab" element={<ChatEndpointDetail />} />
+                <Route path="/apps" element={<div>Connectors</div>} />
+              </Routes>
+              <Location />
+            </TooltipProvider>
           </MemoryRouter>
         </QueryClientProvider>,
       ),
     );
+    await settle();
+    // Completion mounts Settings and its own queries after the wizard redirect.
+    await settle();
     await settle();
   }
   async function click(label: string) {
@@ -570,6 +588,8 @@ describe("GitHub App wizard", () => {
   it("completes automatically while reporting runtime readiness separately", async () => {
     fixture.endpoint = {
       ...fixture.endpoint,
+      status: "active",
+      setup: { step: "complete" },
       botLabel: "Actual GitHub Name",
       botUsername: "actual-agent[bot]",
       resources: [{ enabled: true, label: "acme/repo" }],
@@ -587,43 +607,65 @@ describe("GitHub App wizard", () => {
       ],
     });
     await render("resume=draft-1");
-    expect(container.querySelector("h1")?.textContent).toBe("GitHub connected");
-    expect(container.textContent).toContain("Actual GitHub Name");
-    expect(container.textContent).toContain("GitHub App name and logo");
-    expect(container.textContent).toContain("1 repository enabled");
-    expect(container.querySelector("footer a")?.getAttribute("href")).toBe("/apps/chat/draft-1/settings");
-    expect(container.querySelector("details")?.hasAttribute("open")).toBe(false);
-    expect(container.textContent).toContain("Before your first review");
-    expect(container.textContent).toContain("Configure a runtime");
-    expect(container.textContent).not.toContain("Finish");
+    expect(document.querySelector('[role="dialog"] h2')?.textContent).toBe("GitHub connected");
+    expect(document.body.textContent).toContain("Actual GitHub Name");
+    expect(document.body.textContent).toContain("GitHub App name and logo");
+    expect(document.body.textContent).toContain("1 repository enabled");
+    expect(container.querySelector("output")?.textContent).toBe("/apps/chat/draft-1/settings");
+    expect(document.querySelector('[role="dialog"] details')?.hasAttribute("open")).toBe(false);
+    expect(document.body.textContent).toContain("Before your first review");
+    expect(document.body.textContent).toContain("Configure a runtime");
+    expect(document.body.textContent).not.toContain("Finish");
     await click("Copy mention");
     expect(copyTextToClipboard).toHaveBeenCalledWith(
       "@actual-agent review this pull request",
     );
   });
+  it.each(["Done", "Close", "Escape"])("dismisses with %s onto the same mounted Settings page", async (action) => {
+    fixture.endpoint = { ...fixture.endpoint, status: "active", setup: { step: "complete" } };
+    vi.mocked(githubChatApi.advance).mockResolvedValue({ endpointId: "draft-1", state: "connected" });
+    await render("resume=draft-1");
+    const settings = container.querySelector("textarea");
+    expect(settings).not.toBeNull();
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+    if (action === "Escape") {
+      await act(async () => {
+        document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      });
+      await settle();
+    } else await click(action);
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(container.querySelector("output")?.textContent).toBe("/apps/chat/draft-1/settings");
+    expect(container.querySelector("textarea")).toBe(settings);
+    expect(container.querySelector("h1")?.textContent).toBe("Reviewer");
+    expect(document.activeElement).toBe(container.querySelector("h1"));
+    expect(githubChatApi.saveDraft).not.toHaveBeenCalled();
+    expect(chatEndpointsApi.create).not.toHaveBeenCalled();
+  });
   it("reports copy failure without undoing the completed connection", async () => {
-    fixture.endpoint = { ...fixture.endpoint, status: "active", botUsername: "actual-agent[bot]" };
+    fixture.endpoint = { ...fixture.endpoint, status: "active", setup: { step: "complete" }, botUsername: "actual-agent[bot]" };
     vi.mocked(githubChatApi.advance).mockResolvedValue({ endpointId: "draft-1", state: "connected" });
     vi.mocked(copyTextToClipboard).mockRejectedValueOnce(new Error("Clipboard unavailable"));
     await render("resume=draft-1");
     await click("Copy mention");
-    expect(container.textContent).toContain("Copy failed");
-    expect(container.querySelector("h1")?.textContent).toBe("GitHub connected");
+    expect(document.body.textContent).toContain("Copy failed");
+    expect(document.querySelector('[role="dialog"] h2')?.textContent).toBe("GitHub connected");
     expect(githubChatApi.registration).not.toHaveBeenCalled();
   });
   it("shows a useful next step when a connected bot has no enabled repositories", async () => {
+    fixture.endpoint = { ...fixture.endpoint, status: "active", setup: { step: "complete" } };
     vi.mocked(githubChatApi.advance).mockResolvedValue({ endpointId: "draft-1", state: "connected" });
     vi.mocked(githubChatApi.repositories).mockResolvedValue({
       items: [], nextOffset: null, totalCount: 2, enabledCount: 0, availableCount: 2,
     });
     await render("resume=draft-1");
-    expect(container.textContent).toContain("No repositories enabled");
-    expect(container.textContent).toContain("Enable a repository in Access to try your bot");
-    expect(container.querySelector('a[href="/apps/chat/draft-1/access"]')).not.toBeNull();
+    expect(document.body.textContent).toContain("No repositories enabled");
+    expect(document.body.textContent).toContain("Enable a repository in Access to try your bot");
+    expect(document.querySelector('[role="dialog"] a[href="/apps/chat/draft-1/access"]')).not.toBeNull();
   });
 
   it("does not flash App creation controls while checking a resumed connection", async () => {
-    fixture.endpoint = { ...fixture.endpoint, status: "active", botUsername: "actual-agent[bot]" };
+    fixture.endpoint = { ...fixture.endpoint, status: "active", setup: { step: "complete" }, botUsername: "actual-agent[bot]" };
     vi.mocked(githubChatApi.advance).mockReturnValue(new Promise(() => {}));
     await render("resume=draft-1");
     expect(container.textContent).toContain("Checking your GitHub connection");

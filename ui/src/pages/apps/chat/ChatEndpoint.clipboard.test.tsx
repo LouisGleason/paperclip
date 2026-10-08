@@ -57,6 +57,7 @@ vi.mock("@/context/SidebarContext", () => ({
 }));
 vi.mock("@/lib/router", () => ({
   useNavigate: () => vi.fn(),
+  useLocation: () => ({ state: null }),
   useParams: () => ({ endpointId: "endpoint-a", tab: mocks.tab }),
   useSearchParams: () => [new URLSearchParams(mocks.search), mocks.setParams],
   Link: ({ children }: { children: React.ReactNode }) => (

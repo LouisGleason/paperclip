@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, type ComponentProps } from "react";
+import { Button } from "@/components/ui/button";
 import { useQueryClient } from "@tanstack/react-query";
 import { githubChatApi } from "@/api/githubChat";
 import { chatEndpointsApi } from "@/api/chatEndpoints";
@@ -42,7 +43,7 @@ const meta = {
     docs: {
       description: {
         component:
-          "Production pages and components. Start with **01 Journey / Settings**, then use the actual contextual sidebar to visit Access, Reviews, and Conversations. Try editing instructions, switch tabs, and save or discard the shared draft. **01 Journey / Connected** uses the production completion page, then opens the same bot Settings. **02 States** covers empty, loading, recoverable error, long content, and mobile. **03 Components** isolates the policy editor, people access, repository access, review rows and detail, pending review, and conversations. Provider operations use isolated fixture APIs; these stories are not live GitHub evidence.",
+          "Production pages and components. Start with **01 Journey / Settings**, then use the actual contextual sidebar to visit Access, Reviews, and Conversations. Try editing instructions, switch tabs, and save or discard the shared draft. **01 Journey / Connected** opens the production confirmation modal over the same bot Settings. Close it with Done, the ×, or Escape and continue editing Settings. **02 States** covers empty, loading, recoverable error, long content, and mobile. **03 Components** isolates the policy editor, people access, repository access, review rows and detail, pending review, and conversations. Provider operations use isolated fixture APIs; these stories are not live GitHub evidence.",
       },
     },
   },
@@ -79,7 +80,7 @@ const route = (tab: string) => ({
   initialEntries: [`/PAP/apps/chat/${endpoint.id}/${tab}`],
 });
 export const ConnectedJourney: Story = {
-  name: "01 Journey / Connected — copy a mention or open settings",
+  name: "01 Journey / Connected — dismiss to settings",
   parameters: { initialEntries: [`/PAP/apps/chat/connect?provider=github&resume=${endpoint.id}`] },
 };
 export const ConnectedMobile: Story = {
@@ -205,20 +206,27 @@ export const RepositoryAccess: Story = {
   name: "03 Components / Repository access",
   render: () => component(<Repositories />),
 };
+function ConnectedExample(props: Omit<ComponentProps<typeof GitHubConnectionComplete>, "onClose">) {
+  const [open, setOpen] = useState(true);
+  return <>
+    <Button onClick={() => setOpen(true)}>Show connected confirmation</Button>
+    {open && <GitHubConnectionComplete {...props} onClose={() => setOpen(false)} />}
+  </>;
+}
 export const ConnectedSummary: Story = {
   name: "03 Components / Connected summary",
-  render: () => component(<FixtureApi><GitHubConnectionComplete endpoint={endpoint} agent={agent} onExit={() => {}} /></FixtureApi>),
+  render: () => component(<FixtureApi><ConnectedExample endpoint={endpoint} agent={agent} /></FixtureApi>),
 };
 export const ConnectedRuntimeNotReady: Story = {
   name: "03 Components / Connected — runtime needs setup",
-  render: () => component(<FixtureApi><GitHubConnectionComplete endpoint={endpoint} agent={agent} onExit={() => {}}
+  render: () => component(<FixtureApi><ConnectedExample endpoint={endpoint} agent={agent}
     runtimeChecks={[{ key: "runtime", label: "Runtime", ok: false, detail: "Configure an isolated runtime before the first review." }]} /></FixtureApi>),
 };
 export const ConnectedLongName: Story = {
   name: "03 Components / Connected — long App name",
-  render: () => component(<FixtureApi><GitHubConnectionComplete endpoint={{ ...endpoint,
+  render: () => component(<FixtureApi><ConnectedExample endpoint={{ ...endpoint,
     botLabel: "Maya Platform Accessibility Reviews", botUsername: "maya-platform-accessibility-reviews[bot]",
-    providerAccountLabel: "acme-platform-engineering" }} agent={agent} onExit={() => {}} /></FixtureApi>),
+    providerAccountLabel: "acme-platform-engineering" }} agent={agent} /></FixtureApi>),
 };
 export const AppIdentityAndLogo: Story = {
   name: "03 Components / App identity and logo",

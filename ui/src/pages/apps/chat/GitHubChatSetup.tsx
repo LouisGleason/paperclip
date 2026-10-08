@@ -21,7 +21,8 @@ import { useCompany } from "@/context/CompanyContext";
 import { useBreadcrumbs } from "@/context/BreadcrumbContext";
 import { useNavigate, useSearchParams, Link } from "@/lib/router";
 import { buildPermissionsForTrustPreset } from "@/lib/trust-policy-ui";
-import { GitHubConnectionComplete } from "./GitHubConnectionComplete";
+import { queryKeys } from "@/lib/queryKeys";
+import type { GitHubConnectionCompleteLocationState } from "./GitHubConnectionComplete";
 
 /** Restrict native manifest submission to GitHub registration endpoints. */
 export function gitHubAppManifestAction(
@@ -143,6 +144,17 @@ export function GitHubChatSetup() {
     identityOnly || state?.identityMethod === "existing_connection";
   const connected = state?.state === "connected" && !existing;
   useEffect(() => {
+    if (!connected || !bot) return;
+    queryClient.setQueryData(queryKeys.chatEndpoints.detail(bot.id), bot);
+    if (selectedAgent) queryClient.setQueryData(queryKeys.agents.detail(selectedAgent.id), selectedAgent);
+    navigate(`/apps/chat/${bot.id}/settings`, {
+      replace: true,
+      state: {
+        githubConnectionComplete: { endpointId: bot.id, runtimeChecks: state.runtimeChecks },
+      } satisfies GitHubConnectionCompleteLocationState,
+    });
+  }, [connected, bot, selectedAgent, state, queryClient, navigate]);
+  useEffect(() => {
     setBreadcrumbs([
       { label: "Connectors", href: "/apps" },
       { label: "GitHub Code Review Bot" },
@@ -238,11 +250,10 @@ export function GitHubChatSetup() {
         })}
       </div>
     );
+  if (connected) return null;
   return (
-    <div className={connected
-      ? "mx-auto w-full max-w-3xl space-y-6 py-6"
-      : "mx-auto w-full max-w-3xl space-y-6 px-4 py-6 sm:px-6"}>
-      {!identityOnly && !connected && (
+    <div className="mx-auto w-full max-w-3xl space-y-6 px-4 py-6 sm:px-6">
+      {!identityOnly && (
         <SetupWizardNavigation
           labels={["Choose agent", "Connect GitHub"]}
           step={bot ? 1 : 0}
@@ -252,13 +263,13 @@ export function GitHubChatSetup() {
           takeover
         />
       )}
-      {!connected && <h1 className="text-2xl font-semibold">
+      <h1 className="text-2xl font-semibold">
         {!bot
           ? "Choose agent"
           : identityOnly || state?.state === "identity"
               ? "Connect your account"
               : "Connect GitHub"}
-      </h1>}
+      </h1>
       {(error || (!identityOnly && progress.error) || accounts.error) && (
         <p role="alert" className="text-sm text-destructive">
           {error ||
@@ -331,14 +342,6 @@ export function GitHubChatSetup() {
           </p>
           {footer()}
         </>
-      ) : connected ? (
-        <GitHubConnectionComplete
-          endpoint={bot}
-          agent={selectedAgent}
-          runtimeChecks={state.runtimeChecks}
-          onExit={exit}
-          pending={busy}
-        />
       ) : existing ? (
         <>
           <p className="text-sm text-muted-foreground">

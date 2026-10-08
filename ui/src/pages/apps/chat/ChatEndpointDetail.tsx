@@ -9,11 +9,12 @@ import { AgentAvatar } from "@/components/AgentAvatar";
 import { ChatConversationList } from "./ChatConversationList";
 import { GitHubBotManagement, GitHubReviews } from "./GitHubBotManagement";
 import { GitHubBotMention } from "./GitHubAppIdentity";
+import { GitHubConnectionComplete, type GitHubConnectionCompleteLocationState } from "./GitHubConnectionComplete";
 import { EmailEndpointSettings } from "./EmailEndpointSetup";
 import { EmailConnectionAccess } from "@/components/EmailConnectionAccess";
 import { emailApi } from "@/api/email";
 import { toolsApi } from "@/api/tools";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
@@ -57,7 +58,7 @@ import { useToast } from "@/context/ToastContext";
 import { formatDateTime } from "@/lib/utils";
 import { queryKeys } from "@/lib/queryKeys";
 import { copyTextToClipboard } from "@/lib/clipboard";
-import { Link, Navigate, useNavigate, useParams } from "@/lib/router";
+import { Link, Navigate, useLocation, useNavigate, useParams } from "@/lib/router";
 
 const tabs = ["settings", "access", "reviews", "conversations", "activity"] as const;
 type ChatTab = (typeof tabs)[number];
@@ -236,6 +237,9 @@ export function ChatEndpointDetail() {
   const tab = reviewId ? "reviews" : (routeTab ?? "settings");
   const activeTab = tabs.includes(tab as ChatTab) ? (tab as ChatTab) : null;
   const navigate = useNavigate();
+  const location = useLocation();
+  const heading = useRef<HTMLHeadingElement>(null);
+  const completion = (location.state as GitHubConnectionCompleteLocationState | null)?.githubConnectionComplete;
   const { setBreadcrumbs } = useBreadcrumbs();
   const endpointQuery = useQuery({
     queryKey: queryKeys.chatEndpoints.detail(endpointId),
@@ -304,7 +308,7 @@ export function ChatEndpointDetail() {
         <div className="flex min-w-0 items-center gap-3">
           {endpoint.provider === "github" && <AgentAvatar agent={avatarAgent.data ?? { id: endpoint.assignedAgentId, name: endpoint.assignedAgentName }} size={40} />}
           <div className="min-w-0">
-          <h1 className="text-xl font-bold">
+          <h1 ref={heading} tabIndex={-1} className="text-xl font-bold">
             {endpoint.provider === "github" ? <Link to={`/agents/${endpoint.assignedAgentId}`} className="hover:underline">{endpoint.assignedAgentName}</Link> : `${endpoint.assignedAgentName} in ${providerNames[endpoint.provider]}`}
           </h1>
           <p className="mt-1 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
@@ -358,6 +362,19 @@ export function ChatEndpointDetail() {
       )}
       {activeTab === "activity" && (
         <Activity endpointId={endpoint.id} endpoint={endpoint} />
+      )}
+      {endpoint.provider === "github" && activeTab === "settings" && endpoint.status === "active" &&
+        endpoint.setup?.step === "complete" && completion?.endpointId === endpoint.id && (
+        <GitHubConnectionComplete
+          endpoint={endpoint}
+          agent={avatarAgent.data}
+          runtimeChecks={completion.runtimeChecks}
+          onClose={() => {
+            const { githubConnectionComplete: _complete, ...rest } = location.state as GitHubConnectionCompleteLocationState;
+            navigate({ pathname: location.pathname, search: location.search, hash: location.hash }, { replace: true, state: rest });
+          }}
+          onCloseAutoFocus={() => heading.current?.focus()}
+        />
       )}
     </div>
   );
