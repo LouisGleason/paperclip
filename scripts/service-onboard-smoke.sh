@@ -46,9 +46,10 @@ diagnostics() {
 }
 
 cleanup() {
-  if [[ "$SMOKE_CLEANUP" == "true" && "$owns_service" == "true" ]]; then
+  if [[ "$SMOKE_CLEANUP" == "true" && "$owns_service" == "true" && -f "$SERVICE_SMOKE_OWNERSHIP_FILE" ]] \
+    && [[ "$(cat "$SERVICE_SMOKE_OWNERSHIP_FILE")" == "$SERVICE_NAME" ]]; then
     if [[ -x "$SHIM_PATH" ]]; then
-      "$SHIM_PATH" service uninstall --data-dir "$DATA_DIR" >/dev/null 2>&1 || true
+      PAPERCLIP_HOME="$DATA_DIR" "$SHIM_PATH" service uninstall --instance default >/dev/null 2>&1 || true
     fi
     systemctl --user stop "$SERVICE_NAME" >/dev/null 2>&1 || true
   fi

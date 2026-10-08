@@ -33,6 +33,11 @@ on:
         required: false
         default: ""
         type: string
+      service_only:
+        description: Run only the background-service smoke against the selected version or paired source
+        required: false
+        default: false
+        type: boolean
   workflow_call:
     inputs:
       paperclip_version:
@@ -54,13 +59,17 @@ on:
         required: false
         default: ""
         type: string
+      service_only:
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
 
 jobs:
   runner_release_assets:
-    if: inputs.qualification_source_sha != '' && inputs.qualification_image_digest != ''
+    if: inputs.service_only != true && inputs.qualification_source_sha != '' && inputs.qualification_image_digest != ''
     uses: ./.github/workflows/release-verify.yml
     with:
       ref: ${{ inputs.qualification_source_sha }}
@@ -194,9 +203,11 @@ jobs:
         run: |
           set -euo pipefail
           if [[ ! -f "$RUNNER_TEMP/service-smoke-owned" ]]; then exit 0; fi
-          "$HOME/.local/bin/paperclipai" service uninstall --data-dir "$RUNNER_TEMP/service-smoke-data"
-          ! systemctl --user is-active --quiet paperclipai.service
-          ! systemctl --user cat paperclipai.service >/dev/null 2>&1
+          if [[ "$(cat "$RUNNER_TEMP/service-smoke-owned")" != "paperclipai.service" ]]; then exit 1; fi
+          systemctl --user show-environment >/dev/null || exit 1
+          PAPERCLIP_HOME="$RUNNER_TEMP/service-smoke-data" "$HOME/.local/bin/paperclipai" service uninstall --instance default
+          ! systemctl --user is-active --quiet paperclipai.service || exit 1
+          ! systemctl --user cat paperclipai.service >/dev/null 2>&1 || exit 1
           printf '%s\n' '{"ownedServiceAbsent":true,"providerCalls":0}' > "$RUNNER_TEMP/service-cleanup.json"
 
       - name: Upload service diagnostics
@@ -213,7 +224,7 @@ jobs:
   smoke:
     needs: runner_release_assets
     if: >-
-      !cancelled() &&
+      !cancelled() && inputs.service_only != true &&
       ((inputs.qualification_source_sha == '' && inputs.qualification_image_digest == '') ||
        needs.runner_release_assets.result == 'success')
     runs-on: ubuntu-latest
@@ -440,7 +451,7 @@ jobs:
   smoke_macos:
     needs: [runner_release_assets, smoke]
     if: >-
-      !cancelled() && inputs.qualification_source_sha != '' &&
+      !cancelled() && inputs.service_only != true && inputs.qualification_source_sha != '' &&
       needs.runner_release_assets.result == 'success' && needs.smoke.outputs.packed_artifact != ''
     permissions:
       contents: read
