@@ -45,6 +45,10 @@ sleep blocker. An async route that settles after a disconnect releases its
 request token; normal cancellation does not permanently block sleep. New routes must be registered before this adapter is installed.
 Fire-and-forget work must have durable queue state or use `trackIdleWork`; a
 response is never a substitute for tracking that work.
+Accepted live-event WebSocket authentication remains counted until its promise
+settles, including after the raw socket closes. Detached startup reconciliation
+for built-in agents, managed homes and persisted runtime services also remains
+counted after readiness until its writes settle.
 
 Scheduler work already in flight remains counted until its promise settles.
 Idle holds pause new scheduler admissions. Database backup promises remain
