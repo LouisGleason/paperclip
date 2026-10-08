@@ -959,6 +959,7 @@ function OnboardingWizardInner({
     queryFn: () => instanceSettingsApi.getExperimental(),
     enabled: effectiveOnboardingOpen && step >= 3 && step <= 5,
   });
+  const copilotOnboardingEnabled = copilotOnboardingQualified && experimentalSettingsForLogin?.enableNativeRunner === true;
   const loginEnvironmentResolution = useMemo(() => {
     try {
       return { environmentId: resolveAdapterTestEnvironmentId({
@@ -1159,14 +1160,14 @@ function OnboardingWizardInner({
       )
       .map((a) => ({ ...getAdapterDisplay(a.type), type: a.type }));
 
-    const copilot = copilotOnboardingQualified && !disabledTypes.has("paperclip_runner") && listUIAdapters().some((a) => a.type === "paperclip_runner")
+    const copilot = copilotOnboardingEnabled && !disabledTypes.has("paperclip_runner") && listUIAdapters().some((a) => a.type === "paperclip_runner")
       ? [{ ...getAdapterDisplay("copilot_runtime"), type: "paperclip_runner", label: "GitHub Copilot", recommended: true }]
       : [];
     return {
       recommendedAdapters: [...all.filter((a) => a.recommended), ...copilot],
       moreAdapters: all.filter((a) => !a.recommended),
     };
-  }, [disabledTypes]);
+  }, [disabledTypes, copilotOnboardingEnabled]);
 
   /**
    * A source chosen from the visible row. Read off the row rather than off
@@ -1501,14 +1502,18 @@ function OnboardingWizardInner({
     // registered once the adapters query resolves, so before that a saved
     // external adapter is indistinguishable from a disabled one - and snapping
     // would replace the customer's choice with a built-in and persist it.
-    if (!adapterRegistryLoaded) return;
+    if (!adapterRegistryLoaded || (adapterType === "paperclip_runner" && !loginPolicyReady)) return;
     const visible = [...recommendedAdapters, ...moreAdapters].filter(
       (a) => !a.comingSoon,
     );
-    if (visible.length === 0) return;
+    if (visible.length === 0) {
+      if (adapterType === "paperclip_runner" && !copilotOnboardingEnabled) { setAdapterType("claude_local"); setModel(""); setCopilotConnection(undefined); setSourcePicked(false); }
+      return;
+    }
     if (visible.some((a) => a.type === adapterType)) return;
     const next = (visible.find((a) => a.type !== "paperclip_runner") ?? visible[0]).type as AdapterType;
     setAdapterType(next);
+    if (adapterType === "paperclip_runner") { setModel(""); setCopilotConnection(undefined); }
     // The snap is not a choice. It replaces a name the customer can no longer
     // see with the first one they can, which is the right thing to hold — but
     // holding it *as chosen* would put a filled tile and an open sign-in panel
@@ -1530,7 +1535,7 @@ function OnboardingWizardInner({
       return;
     }
     setModel("");
-  }, [adapterRegistryLoaded, recommendedAdapters, moreAdapters, adapterType]);
+  }, [adapterRegistryLoaded, recommendedAdapters, moreAdapters, adapterType, loginPolicyReady, copilotOnboardingEnabled]);
 
   const COMMAND_PLACEHOLDERS: Record<string, string> = {
     claude_local: "claude",
@@ -2039,7 +2044,7 @@ function OnboardingWizardInner({
   // doesn't hire a second agent.
   async function handleGiveHeartbeat() {
     if (!createdCompanyId) return;
-    if (isCopilot && (!copilotOnboardingQualified || !sourceSelected || !copilotModelReady)) {
+    if (isCopilot && (!copilotOnboardingEnabled || !sourceSelected || !copilotModelReady)) {
       setError("Connect GitHub Copilot and select an available model before creating this agent.");
       return;
     }
