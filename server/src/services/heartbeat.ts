@@ -12806,14 +12806,16 @@ export function heartbeatService(
       .where(eq(heartbeatRuns.id, runId))
       .then((rows) => rows[0] ?? null);
 
-    // Cancelling a queued run that never acquired provider execution is
-    // positive bootstrap evidence. It must not hold unrelated queued messages.
+    // A legacy run can enter `running` before a provider process has started.
+    // Cancellation in that pre-dispatch window is bootstrap evidence, not
+    // unknown work: no provider start/PID/process group means nothing ran.
     if (
       status === "cancelled" &&
-      previousStatus?.status === "queued" &&
+      (previousStatus?.status === "queued" || previousStatus?.status === "running") &&
       previousStatus.runtimeMode !== "native" &&
       !previousStatus.startedAt &&
-      !previousStatus.processPid
+      !previousStatus.processPid &&
+      !previousStatus.processGroupId
     ) {
       patch = {
         ...patch,
@@ -12892,14 +12894,16 @@ export function heartbeatService(
       .where(eq(heartbeatRuns.id, runId))
       .then((rows) => rows[0] ?? null);
 
-    // Cancelling a queued run that never acquired provider execution is
-    // positive bootstrap evidence. It must not hold unrelated queued messages.
+    // A legacy run can enter `running` before a provider process has started.
+    // Cancellation in that pre-dispatch window is bootstrap evidence, not
+    // unknown work: no provider start/PID/process group means nothing ran.
     if (
       status === "cancelled" &&
-      previousStatus?.status === "queued" &&
+      (previousStatus?.status === "queued" || previousStatus?.status === "running") &&
       previousStatus.runtimeMode !== "native" &&
       !previousStatus.startedAt &&
-      !previousStatus.processPid
+      !previousStatus.processPid &&
+      !previousStatus.processGroupId
     ) {
       patch = {
         ...patch,
