@@ -27,6 +27,8 @@ import { WorktreeBanner } from "./WorktreeBanner";
 import { DevRestartBanner } from "./DevRestartBanner";
 import { StandaloneBrowserControls } from "./StandaloneBrowserControls";
 import { RouteErrorBoundary } from "./RouteErrorBoundary";
+import { AgentConversationsSidebar } from "./AgentConversationsSidebar";
+import { useAgentChatEnabled } from "../hooks/useAgentChatEnabled";
 import { SidebarShell } from "./SidebarShell";
 import { SecondarySidebar } from "./SecondarySidebar";
 import { ContextualSidebarFrame } from "./ContextualSidebarFrame";
@@ -38,6 +40,7 @@ import { useSidebar } from "../context/SidebarContext";
 import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts";
 import { useStreamlinedUiEnabled } from "../hooks/useStreamlinedUiEnabled";
 import { useCompanyPageMemory } from "../hooks/useCompanyPageMemory";
+import { useMobileNavVisibility } from "../hooks/useMobileNavVisibility";
 import { healthApi } from "../api/health";
 import { resolveArchivedCompanyBounce, shouldSyncCompanySelectionFromRoute } from "../lib/company-selection";
 import { useOptionalToastActions } from "../context/ToastContext";
@@ -67,6 +70,7 @@ function getCompanyRouteSegment(pathname: string, companyPrefix: string | undefi
 const RESERVED_APP_SUBPATHS = new Set([
   "browse",
   "connections",
+  "assistant-connection",
   "connect",
   "chat",
   "vercel-connect",
@@ -119,7 +123,10 @@ export function Layout({ sidebarSections }: { sidebarSections?: ReactNode }) {
   const isCompanySettingsRoute = shellRoute.builtInContextualSurface === "settings";
   const companyPathSegments = shellRoute.companySegments;
   const isTaskDetailRoute = shellRoute.isTaskDetail;
-  const useStreamlinedTaskDetailShell = streamlinedUiEnabled && isTaskDetailRoute;
+  const { enabled: agentChatEnabled } = useAgentChatEnabled();
+  const isAgentChatRoute = agentChatEnabled && companyPathSegments[0]?.toLowerCase() === "chats";
+  // Chat keeps its header beside the agent sidebar, including before an agent is selected.
+  const useStreamlinedTaskDetailShell = streamlinedUiEnabled && (isTaskDetailRoute || isAgentChatRoute);
   const isToolsRoute = companyPathSegments[0]?.toLowerCase() === "tools";
   const isAppsRoute = companyPathSegments[0]?.toLowerCase() === "apps";
   const appDetailConnectionId =
@@ -131,12 +138,11 @@ export function Layout({ sidebarSections }: { sidebarSections?: ReactNode }) {
       ? companyPathSegments[2]
       : null;
   const onboardingTriggered = useRef(false);
-  const lastMainScrollTop = useRef(0);
   const previousPathname = useRef<string | null>(null);
   const mainContentRef = useRef<HTMLElement | null>(null);
   const scrollMemory = useRef(new NavigationScrollMemory());
   const activeScrollKey = useRef<string>(location.key);
-  const [mobileNavVisible, setMobileNavVisible] = useState(true);
+  const mobileNavVisible = useMobileNavVisibility(isMobile, location.pathname);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const matchedCompany = useMemo(() => {
     if (!companyPrefix) return null;
@@ -203,7 +209,7 @@ export function Layout({ sidebarSections }: { sidebarSections?: ReactNode }) {
       />
     )
   ) : null;
-  const secondarySidebar = shellRoute.builtInContextualSurface === "agent" && agentId ? (
+  const secondarySidebar = isAgentChatRoute ? <AgentConversationsSidebar /> : shellRoute.builtInContextualSurface === "agent" && agentId ? (
     <AgentContextualSidebar agentRef={agentId} />
   ) : streamlinedUiEnabled && shellRoute.builtInContextualSurface === "routine" && routineId ? (
     <SetupWizardSidebarOutlet><RoutineContextualSidebar routineId={routineId} /></SetupWizardSidebarOutlet>
@@ -212,7 +218,8 @@ export function Layout({ sidebarSections }: { sidebarSections?: ReactNode }) {
   ) : sharedSecondarySidebar;
   const hasSecondarySidebar = secondarySidebar != null;
   const keepsPrimarySidebar = streamlinedUiEnabled && hasSecondarySidebar && (
-    shellRoute.builtInContextualSurface === "skills"
+    isAgentChatRoute
+    || shellRoute.builtInContextualSurface === "skills"
     || shellRoute.builtInContextualSurface === "agent"
     || shellRoute.builtInContextualSurface === "routine"
     || isAppsRoute
@@ -455,15 +462,6 @@ export function Layout({ sidebarSections }: { sidebarSections?: ReactNode }) {
     onGoToInbox: () => navigate("/inbox"),
   });
 
-  useEffect(() => {
-    if (!isMobile) {
-      setMobileNavVisible(true);
-      return;
-    }
-    lastMainScrollTop.current = 0;
-    setMobileNavVisible(true);
-  }, [isMobile]);
-
   // Swipe gesture to open/close sidebar on mobile
   useEffect(() => {
     if (!isMobile) return;
@@ -508,39 +506,6 @@ export function Layout({ sidebarSections }: { sidebarSections?: ReactNode }) {
       document.removeEventListener("touchend", onTouchEnd);
     };
   }, [isMobile, sidebarOpen, setSidebarOpen]);
-
-  const updateMobileNavVisibility = useCallback((currentTop: number) => {
-    const delta = currentTop - lastMainScrollTop.current;
-
-    if (currentTop <= 24) {
-      setMobileNavVisible(true);
-    } else if (delta > 8) {
-      setMobileNavVisible(false);
-    } else if (delta < -8) {
-      setMobileNavVisible(true);
-    }
-
-    lastMainScrollTop.current = currentTop;
-  }, []);
-
-  useEffect(() => {
-    if (!isMobile) {
-      setMobileNavVisible(true);
-      lastMainScrollTop.current = 0;
-      return;
-    }
-
-    const onScroll = () => {
-      updateMobileNavVisibility(window.scrollY || document.documentElement.scrollTop || 0);
-    };
-
-    onScroll();
-    window.addEventListener("scroll", onScroll, { passive: true });
-
-    return () => {
-      window.removeEventListener("scroll", onScroll);
-    };
-  }, [isMobile, updateMobileNavVisibility]);
 
   useEffect(() => {
     const previousOverflow = document.body.style.overflow;
@@ -737,6 +702,12 @@ export function Layout({ sidebarSections }: { sidebarSections?: ReactNode }) {
                       "--tc-composer-bottom": mobileNavVisible
                         ? "var(--tc-composer-visible-nav-offset)"
                         : "var(--tc-composer-hidden-nav-offset)",
+                      "--mobile-nav-motion-duration": mobileNavVisible
+                        ? "var(--motion-mobile-nav-enter)"
+                        : "var(--motion-mobile-nav-exit)",
+                      "--mobile-nav-motion-ease": mobileNavVisible
+                        ? "var(--motion-ease-out-expo)"
+                        : "var(--motion-ease-standard)",
                     } as CSSProperties)
                   : undefined
               }
@@ -751,9 +722,7 @@ export function Layout({ sidebarSections }: { sidebarSections?: ReactNode }) {
                 // when the vertical scrollbar appears or disappears (PAP-10907).
                 isMobile
                   ? isTaskDetailRoute
-                    ? mobileNavVisible
-                      ? "overflow-visible pb-(--tc-composer-visible-nav-offset)"
-                      : "overflow-visible pb-(--tc-composer-hidden-nav-offset)"
+                    ? "overflow-visible pb-(--tc-composer-visible-nav-offset)"
                     : "overflow-visible pb-(--sz-calc-14)"
                   : "overflow-auto [scrollbar-gutter:stable]",
               )}
