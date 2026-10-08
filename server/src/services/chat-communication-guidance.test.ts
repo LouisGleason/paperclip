@@ -13,6 +13,15 @@ describe("initial medium communication guidance", () => {
     expect(buildChatCommunicationGuidance({ provider: "slack", isDirectMessage: true })).toContain("direct conversation");
   });
 
+  it.each([false, true])("requires public links for created Slack tasks (DM: %s)", (isDirectMessage) => {
+    const guidance = buildChatCommunicationGuidance({ provider: "slack", isDirectMessage });
+    expect(guidance).toContain("include a clickable link to each created task");
+    expect(guidance).toContain("task identifier or title as the link text");
+    expect(guidance).toContain("public task URL returned by Paperclip tools or supplied in task context");
+    expect(guidance).toContain("never guess a URL");
+    expect(guidance).toContain("If no public task URL is available, say that the link is unavailable");
+  });
+
   it.each(CHAT_PROVIDERS.filter((provider) => provider !== "slack"))("leaves %s unchanged", (provider) => {
     expect(buildChatCommunicationGuidance({ provider, isDirectMessage: false, communicationInstructions: "Ignored" })).toBeNull();
   });
