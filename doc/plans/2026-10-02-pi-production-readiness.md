@@ -39,9 +39,30 @@ read-only native receipt, exact text/LF, duplicate-read rejection and no-shell
 checks. Null or wrong agent/run targets cannot qualify a cloud read. Native
 local behavior still requires the withheld target. Add controls for another
 agent, a prior run, another file, truncated/wrong contents, and shell execution.
-Only harness tests and this plan change; keep the same normal runtime/image
-freeze for one explicitly selected definition-22 cloud memory case, with zero
-automatic retries and the unchanged key/campaign caps.
+Only harness tests and this plan change. The production tree and normal
+package/image bytes remain frozen at `b696e131ae32a82418e570b32f4727b5adb14e49`.
+Committed harness `da8d4454ae165b557ff11730e9fe018c9b1cd9b9` passes free
+calibration against the retained actual cloud read and public file bytes. Wrong
+agent, wrong run and wrong content controls fail. Calibration does not regrade
+the original failed campaign.
+
+Fresh definition-22 campaign `pi-sonnet-memory-native22-daytona-1791465718`
+passes canonically on Sonnet 4.6 in 197,083 ms. Both native read receipts, exact
+33-byte saved memory, public file-save receipt, controller restart, an independent
+fresh task with an undisclosed nonce, remote readback, unchanged parent seed,
+cross-root denial and both independent retirements pass. Automatic retries are
+zero. No local Docker, BYOK or fallback model is used. This qualifies the cloud
+memory cell for these exact runtime, image, harness and definition bytes.
+
+All 31 canonical files, 4,556,238 bytes, are retained and independently verified
+file by file. Archive SHA256 is
+`1718750f0484b47a5181f8cee988e91c2e889b5135ccb29282c5220b964017b5`.
+No owned runtime process or temporary root remains. The owned qualification
+host is stopped normally after retention. The dedicated key retains its $5
+lifetime cap within the approved $100 cumulative token ceiling; credit snapshots
+remain provisional and do not prove zero cost. The remaining 25 Product cells
+and seven Runner cells still need current-freeze qualification. Strict Runner
+cost accounting remains unresolved. Pi is not production-qualified.
 
 All 173 focused cloud unit tests pass, including local and remote memory,
 wrong-path/byte controls, incomplete terminal evidence and cleanup retention.
