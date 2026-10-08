@@ -40,10 +40,8 @@ opaque strings; each provider owns its addressing constraints.
 - `stop`: requests cancellation of the task. An accepted request is not a process
   termination receipt. Reconcile status before treating execution as stopped.
 
-This contract supports provider ingress only. Submit the task, wait until it is
-running, then request `connection` and connect to its WSS endpoint with the
-returned headers. `submit` does not accept a callback URL; Runner-initiated
-outbound connections are outside this contract.
+Submit the task, wait until it is running, then request `connection` and connect
+to its WSS endpoint with the returned headers.
 
 Submission, completion and stop return `accepted`. Acceptance does not imply
 readiness or success. Status and connection return distinct typed results. Every

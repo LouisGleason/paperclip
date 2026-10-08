@@ -111,7 +111,7 @@ describe("typed environment task admission", () => {
   });
   it("validates operation and result shape without making acceptance mean readiness", () => {
     expect(environmentTaskOperationSchema.safeParse({ ...submit, surprise: true }).success).toBe(false);
-    expect(environmentTaskOperationSchema.safeParse({ ...submit, runner: { ...submit.runner, connectUrl: "wss://coordinator.example.test/connect" } }).success).toBe(false);
+    expect(environmentTaskOperationSchema.safeParse({ ...submit, runner: { ...submit.runner, unknownField: true } }).success).toBe(false);
     expect(() => parseEnvironmentTaskResult({ kind: "status" }, "attempt-1", { kind: "accepted", taskId: "attempt-1" })).toThrow();
     expect(parseEnvironmentTaskResult(submit, "attempt-1", { kind: "accepted", taskId: "attempt-1" }).kind).toBe("accepted");
   });
