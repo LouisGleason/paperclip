@@ -8108,6 +8108,7 @@ describeEmbeddedPostgres("tool access service", () => {
       await grantBoardUser(db, company.id, userId, [], "owner");
       const actor = { actorType: "user" as const, actorId: userId };
       const initialScopes = ["documents.readonly", "gmail.readonly"].map((scope) => `https://www.googleapis.com/auth/${scope}`);
+      let authorizationScopes = initialScopes;
       let refreshScopes: string[] | undefined = initialScopes;
       const connector = fakeGoogleWorkspaceConnector(company.id, userId, "workspace.all");
       const originalClaim = connector.claim;
@@ -8126,7 +8127,7 @@ describeEmbeddedPostgres("tool access service", () => {
           const refreshing = new URLSearchParams(String(init?.body)).get("grant_type") === "refresh_token";
           if (refreshing) tokenRefreshes.push(href);
           return Response.json({ access_token: "workspace-refresh-access", refresh_token: "workspace-refresh-token",
-            token_type: "Bearer", expires_in: 86_400, scope: (refreshing ? refreshScopes : initialScopes)?.join(" ") });
+            token_type: "Bearer", expires_in: 86_400, scope: (refreshing ? refreshScopes : authorizationScopes)?.join(" ") });
         }
         const host = new URL(href).hostname;
         if (unavailable.has(host)) return new Response("unavailable", { status: 503 });
@@ -8161,9 +8162,46 @@ describeEmbeddedPostgres("tool access service", () => {
       const gateway = createToolGatewayService(db, { toolActionSigningSecret: "test-secret",
         oauthGrantRefresher: service.refreshOAuthGrantCredentials });
       const session = await gateway.createSession({ companyId: company.id, agentId: agent.id, runId: run.id });
-      return { company, actor, service, connected, gateway, session, calls, unavailable, connector, tokenRefreshes,
+      return { company, actor, agent, service, connected, gateway, session, calls, unavailable, connector, tokenRefreshes,
+        setAuthorizationScopes: (scopes: string[]) => { authorizationScopes = scopes; },
         expireNextCall: (scopes: string[] | undefined) => { refreshScopes = scopes; unauthorizedNextCall = true; } };
     }
+
+    it("preserves organization actions when a personal OAuth callback grants fewer permissions", async () => {
+      const fixture = await connectWorkspace("customer");
+      // This supported policy selects personal consent when present and the
+      // organization identity for callers without a personal grant.
+      await db.update(toolConnections).set({ credentialPolicy: "per_user_with_fallback" })
+        .where(eq(toolConnections.id, fixture.connected.connectionId));
+      const userId = `workspace-personal-${randomUUID()}`;
+      await grantBoardUser(db, fixture.company.id, userId, [], "owner");
+      const actor = { actorType: "user" as const, actorId: userId };
+      const redirectUri = "https://paperclip.example/api/tools/oauth/callback";
+      fixture.setAuthorizationScopes(["https://www.googleapis.com/auth/documents.readonly"]);
+      const started = await fixture.service.startOAuth(fixture.company.id, fixture.connected.connectionId, {
+        redirectUri, actor, subjectUserId: userId,
+      });
+      await fixture.service.completeOAuthCallback({ state: new URL(started.authorizationUrl).searchParams.get("state")!,
+        code: "personal-docs-only", redirectUri, actor });
+      const [gmailEntry] = await db.select().from(toolCatalogEntries).where(and(
+        eq(toolCatalogEntries.connectionId, fixture.connected.connectionId), eq(toolCatalogEntries.toolName, "gmail__get_message"),
+      ));
+      expect(gmailEntry.status).toBe("active");
+      const gmail = (await fixture.gateway.listToolsForSession(fixture.session.token)).find((tool) => tool.upstreamToolName === "gmail__get_message")!;
+      expect(gmail).toBeTruthy();
+      await expect(fixture.gateway.executeTool({ sessionToken: fixture.session.token, tool: gmail.name, parameters: {} })).resolves.toMatchObject({ status: "completed" });
+      await expect(fixture.gateway.executeTestCall({ companyId: fixture.company.id, connectionId: fixture.connected.connectionId,
+        agentId: fixture.agent.id, userId, toolName: "gmail__get_message", parameters: {} })).resolves.toMatchObject({ error: { reasonCode: "oauth_insufficient_scope" } });
+      expect(fixture.calls).toEqual(["get_message"]);
+      // Once the other authority is revoked, a personal refresh can remove the
+      // unsupported shared entry; revoked grants never preserve capabilities.
+      await db.update(connectionGrants).set({ status: "revoked" }).where(and(
+        eq(connectionGrants.connectionId, fixture.connected.connectionId), eq(connectionGrants.kind, "organization"),
+      ));
+      await fixture.service.refreshCatalog(fixture.connected.connectionId, actor);
+      const [removed] = await db.select().from(toolCatalogEntries).where(eq(toolCatalogEntries.id, gmailEntry.id));
+      expect(removed.status).toBe("disabled");
+    });
 
     it("keeps healthy service tools visible during a partial outage and restores recovered services", async () => {
       const fixture = await connectWorkspace("managed");

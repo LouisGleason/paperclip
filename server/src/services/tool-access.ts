@@ -7801,7 +7801,20 @@ export function toolAccessService(
     if (connection.config.sourceTemplateKey === "google-workspace"
       || isRemoteMcpConnectorMethod(connection.config.sourceTemplateKey, connection.config.connectionMethodKey)) {
       const discoveredNames = new Set(descriptors.map((descriptor) => descriptor.name));
-      const removedIds = existingRows.filter((entry) => !discoveredNames.has(entry.toolName) && entry.status !== "disabled").map((entry) => entry.id);
+      // The catalog is shared, but discovery uses only the caller's grant. A
+      // narrower personal consent must not remove actions another active grant
+      // still supports. Never combine scopes from different grants into authority.
+      let otherWorkspaceGrants: string[][] = [];
+      if (connection.config.sourceTemplateKey === "google-workspace") {
+        const selected = await vaultGrantForConnection(connection, actor);
+        const grants = await db.select().from(connectionGrants).where(and(
+          eq(connectionGrants.companyId, connection.companyId), eq(connectionGrants.connectionId, connection.id),
+          eq(connectionGrants.status, "active"),
+        ));
+        otherWorkspaceGrants = grants.filter((grant) => grant.id !== selected?.id).map(googleWorkspaceGrantedScopes);
+      }
+      const removedIds = existingRows.filter((entry) => !discoveredNames.has(entry.toolName) && entry.status !== "disabled"
+        && !otherWorkspaceGrants.some((scopes) => isGoogleWorkspaceToolGranted(entry.toolName, scopes))).map((entry) => entry.id);
       if (removedIds.length) await db.update(toolCatalogEntries)
         .set({ status: "disabled", quarantineReason: "mcp_tool_removed", updatedAt: refreshedAt })
         .where(and(eq(toolCatalogEntries.companyId, connection.companyId), eq(toolCatalogEntries.connectionId, connection.id), inArray(toolCatalogEntries.id, removedIds)));
