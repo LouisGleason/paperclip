@@ -26,6 +26,6 @@ jobs:
           target: production
           platforms: linux/amd64
           push: true
-          tags: ghcr.io/louisgleason/paperclip:hermes-runtime-attribution-66a2f795
+          tags: ghcr.io/louisgleason/paperclip:hermes-runtime-attribution-authjwt
           build-args: |
-            PAPERCLIP_BUILD_COMMIT=66a2f795d399c1c17fdf5cd236408465684b43b0
+            PAPERCLIP_BUILD_COMMIT=${{ github.sha }}

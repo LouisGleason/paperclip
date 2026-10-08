@@ -64,7 +64,9 @@ export function createServerAdapter(): ServerAdapterModule {
     sessionCodec,
     sessionManagement,
     models,
-    supportsLocalAgentJwt: false,
+    // This private gateway adapter forwards the per-run JWT only in the
+    // request-scoped runtime_env envelope; it never becomes process-global.
+    supportsLocalAgentJwt: true,
     supportsInstructionsBundle: false,
     requiresMaterializedRuntimeSkills: false,
     agentConfigurationDoc,
