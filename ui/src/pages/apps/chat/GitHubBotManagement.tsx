@@ -1,10 +1,11 @@
-import { useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useRef, useState } from "react";
+import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ExternalLink,
   GitPullRequest,
   MoreHorizontal,
   RefreshCw,
+  Search,
 } from "lucide-react";
 import type {
   GitHubChatConfiguration,
@@ -17,9 +18,9 @@ import {
 import {
   chatEndpointsApi,
   type ChatEndpoint,
-  type ChatEndpointResource,
 } from "@/api/chatEndpoints";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { EmptyState } from "@/components/EmptyState";
 import { MarkdownBody } from "@/components/MarkdownBody";
 import {
@@ -39,18 +40,43 @@ import {
 import { GitHubAppBranding } from "./GitHubAppIdentity";
 
 export function GitHubRepositoryAccess({
-  resources,
+  endpointId,
   managementUrl,
   pending,
   onRefresh,
   onChange,
+  onToggleAll,
 }: {
-  resources: ChatEndpointResource[];
+  endpointId: string;
   managementUrl: string;
   pending: boolean;
   onRefresh: () => void;
   onChange: (id: string, enabled: boolean) => void;
+  onToggleAll: (enabled: boolean) => void;
 }) {
+  const [search, setSearch] = useState("");
+  const scroller = useRef<HTMLDivElement>(null);
+  const more = useRef<HTMLDivElement>(null);
+  const list = useInfiniteQuery({
+    queryKey: ["github-bot-repository-pages", endpointId, search],
+    queryFn: ({ pageParam }) => githubChatApi.repositories(endpointId, { limit: 20, offset: pageParam, search }),
+    initialPageParam: 0,
+    getNextPageParam: (lastPage) => lastPage.nextOffset ?? undefined,
+  });
+  const rows = list.data?.pages.flatMap((page) => page.items) ?? [];
+  const summary = list.data?.pages[0];
+  const disableAll = (summary?.enabledCount ?? 0) > 0;
+  useEffect(() => {
+    if (scroller.current) scroller.current.scrollTop = 0;
+  }, [search]);
+  useEffect(() => {
+    if (!list.hasNextPage || list.isFetching || list.isError || pending || !more.current || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry?.isIntersecting) void list.fetchNextPage({ cancelRefetch: false });
+    }, { root: scroller.current });
+    observer.observe(more.current);
+    return () => observer.disconnect();
+  }, [list.hasNextPage, list.isFetching, list.isError, list.fetchNextPage, pending]);
   return (
     <section className="space-y-3">
       <div className="flex items-center justify-between gap-3">
@@ -83,9 +109,29 @@ export function GitHubRepositoryAccess({
         Choose where the bot can receive messages and use tools. Repository
         changes save immediately.
       </p>
-      <div className="divide-y divide-border border-y border-border">
-        {resources.map((resource) => (
-          <div key={resource.id} className="py-3">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="relative min-w-0 flex-1 basis-48">
+          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input aria-label="Search repositories" placeholder="Search repositories" className="pl-9"
+            value={search} maxLength={200} onChange={(event) => setSearch(event.target.value)} />
+        </div>
+        <Button variant="outline" size="sm" disabled={pending || list.isFetching || !summary || !summary.totalCount || (!disableAll && !summary.availableCount)}
+          aria-label={`${disableAll ? "Disable" : "Enable"} all repositories`}
+          onClick={() => onToggleAll(!disableAll)}>
+          {disableAll ? "Disable all" : "Enable all"}
+        </Button>
+      </div>
+      {summary && <p className="text-xs text-muted-foreground">
+        {summary.enabledCount} of {summary.totalCount} repositories enabled. Toggle all applies across the entire connection.
+      </p>}
+      {list.isError && <p role="alert" className="text-sm text-destructive">
+        Could not load repositories. <Button variant="link" size="sm" onClick={() => void list.refetch()}>Try again</Button>
+      </p>}
+      <div ref={scroller} role="region" aria-label="Repositories" tabIndex={0}
+        className="max-h-96 overflow-y-auto overscroll-contain border-y border-border">
+        <div className="divide-y divide-border">
+        {rows.map((resource) => (
+          <div key={resource.id} className="px-1 py-1">
             <GitHubToggle
               label={resource.label ?? resource.providerResourceId}
               checked={resource.enabled}
@@ -102,12 +148,18 @@ export function GitHubRepositoryAccess({
             />
           </div>
         ))}
-        {resources.length === 0 && (
+        </div>
+        {list.isPending ? <p role="status" className="py-4 text-sm text-muted-foreground">Loading repositories…</p> : rows.length === 0 && !list.isError && (
           <p className="py-4 text-sm text-muted-foreground">
-            No repositories available. Add repository access on GitHub, then
-            refresh.
+            {search ? "No repositories match your search." : "No repositories available. Add repository access on GitHub, then refresh."}
           </p>
         )}
+        {list.hasNextPage && <div ref={more} className="flex justify-center py-2">
+          <Button variant="ghost" size="sm" disabled={pending || list.isFetching}
+            onClick={() => void list.fetchNextPage({ cancelRefetch: false })}>
+            {list.isFetchingNextPage ? "Loading repositories…" : "Load more repositories"}
+          </Button>
+        </div>}
       </div>
     </section>
   );
@@ -130,6 +182,7 @@ export function GitHubBotManagement({
   const resources = useQuery({
     queryKey: ["github-bot-repositories", endpoint.id],
     queryFn: () => chatEndpointsApi.listResources(endpoint.id),
+    enabled: view === "settings",
   });
   const [draft, setDraft] = useState<GitHubConfigurationRecord | null>(null);
   const [repository, setRepository] = useState("");
@@ -157,7 +210,7 @@ export function GitHubBotManagement({
       setPending(false);
     }
   };
-  if (query.isError || resources.isError)
+  if (query.isError || (view === "settings" && resources.isError))
     return (
       <p role="alert" className="text-sm text-destructive">
         Could not load the bot configuration.{" "}
@@ -172,7 +225,7 @@ export function GitHubBotManagement({
         </Button>
       </p>
     );
-  if (!record || resources.isPending)
+  if (!record || (view === "settings" && resources.isPending))
     return (
       <p role="status" className="text-sm text-muted-foreground">
         Loading configuration…
@@ -189,7 +242,7 @@ export function GitHubBotManagement({
         {view === "access" ? (
           <>
             <GitHubRepositoryAccess
-              resources={repositories}
+              endpointId={endpoint.id}
               pending={pending}
               managementUrl={
                 endpoint.setup?.github?.managementUrl ??
@@ -199,7 +252,8 @@ export function GitHubBotManagement({
               onRefresh={() =>
                 void act(async () => {
                   await githubChatApi.refreshRepositories(endpoint.id);
-                  await resources.refetch();
+                  await client.invalidateQueries({ queryKey: ["github-bot-repositories", endpoint.id] });
+                  await client.invalidateQueries({ queryKey: ["github-bot-repository-pages", endpoint.id] });
                   setNotice(
                     "Repository access refreshed. New repositories stay disabled.",
                   );
@@ -210,9 +264,15 @@ export function GitHubBotManagement({
                   await chatEndpointsApi.updateResources(endpoint.id, [
                     { id, enabled },
                   ]);
-                  await resources.refetch();
+                  await client.invalidateQueries({ queryKey: ["github-bot-repositories", endpoint.id] });
+                  await client.invalidateQueries({ queryKey: ["github-bot-repository-pages", endpoint.id] });
                 })
               }
+              onToggleAll={(enabled) => void act(async () => {
+                await githubChatApi.toggleAllRepositories(endpoint.id, enabled);
+                await client.invalidateQueries({ queryKey: ["github-bot-repositories", endpoint.id] });
+                await client.invalidateQueries({ queryKey: ["github-bot-repository-pages", endpoint.id] });
+              })}
             />
             <GitHubAccessEditor
               endpointId={endpoint.id}

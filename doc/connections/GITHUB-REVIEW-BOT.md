@@ -107,6 +107,12 @@ Settings and Access share unsaved edits while you switch connection tabs. Save
 before reloading or leaving the connection. No permissions change merely by
 opening a tab or configuring an implicit linked member’s individual event settings.
 
+The repository list loads 20 rows at a time as you scroll. Search covers the
+entire connection. **Disable all** and **Enable all** also apply to the entire
+connection, including unloaded rows and repositories outside the search results.
+Enabling all includes only repositories still available in the App installation;
+it cannot restore revoked GitHub access. These changes save immediately.
+
 ## Who can start work
 
 Linked members may be allowed together or selected individually. Teammates

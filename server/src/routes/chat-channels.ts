@@ -17,6 +17,8 @@ import {
   isUuidLike,
   publishChatPublicationSchema,
   replaceChatEndpointResourcesSchema,
+  gitHubRepositoryPageQuerySchema,
+  toggleAllGitHubRepositoriesSchema,
   resolveChatActionSchema,
   resolveChatPublicationSchema,
   updateChatEndpointSchema,
@@ -247,6 +249,16 @@ export function chatChannelRoutes(db: Db, options: ChatChannelRouteOptions) {
   router.post("/chat-endpoints/:endpointId/github/repositories/refresh", async (req, res) => {
     if (!(await assertEndpointManagementAccess(req, res))) return;
     res.json(await service.refreshGitHubRepositories(endpointId(req), githubUser(req)));
+  });
+  router.get("/chat-endpoints/:endpointId/github/repositories", async (req, res) => {
+    if (!(await assertEndpointAccess(req, res, service))) return;
+    const query = gitHubRepositoryPageQuerySchema.safeParse(req.query);
+    if (!query.success) throw badRequest("Invalid repository search or page");
+    res.json(await service.listGitHubRepositories(endpointId(req), query.data));
+  });
+  router.put("/chat-endpoints/:endpointId/github/repositories/access", validate(toggleAllGitHubRepositoriesSchema), async (req, res) => {
+    if (!(await assertEndpointManagementAccess(req, res))) return;
+    res.json(await service.toggleAllGitHubRepositories(endpointId(req), req.body.enabled, actorUserId(req)));
   });
 
   router.patch(

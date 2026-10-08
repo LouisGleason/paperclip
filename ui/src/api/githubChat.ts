@@ -3,6 +3,7 @@ import type {
   GitHubChatConfiguration,
   GitHubTaskReview,
   GitHubAppRegistrationInput, GitHubAppWizardState,
+  GitHubRepositoryPage,
 } from "@paperclipai/shared";
 import { api } from "./client";
 import type { ChatEndpoint, ChatEndpointResource } from "./chatEndpoints";
@@ -22,6 +23,12 @@ export type GitHubVerification = {
 };
 const path = (endpointId: string) => `/chat-endpoints/${endpointId}/github`;
 export const githubChatApi = {
+  repositories: (id: string, options: { offset?: number; search?: string; limit?: number } = {}) => {
+    const query = new URLSearchParams({ limit: String(options.limit ?? 20), offset: String(options.offset ?? 0), search: options.search ?? "" });
+    return api.get<GitHubRepositoryPage>(`${path(id)}/repositories?${query}`);
+  },
+  toggleAllRepositories: (id: string, enabled: boolean) =>
+    api.put<{ success: true }>(`${path(id)}/repositories/access`, { enabled }),
   configuration: (id: string) =>
     api.get<GitHubConfigurationRecord>(`${path(id)}/configuration`),
   save: (

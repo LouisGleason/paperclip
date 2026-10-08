@@ -28002,15 +28002,67 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
     }));
   }
 
+  async function listGitHubRepositories(
+    endpointId: string,
+    query: { limit: number; offset: number; search: string },
+  ) {
+    const record = await endpointRecord(endpointId);
+    if (!record || record.endpoint.provider !== "github") throw notFound("GitHub bot not found");
+    const scope = and(
+      eq(chatEndpointResources.companyId, record.endpoint.companyId),
+      eq(chatEndpointResources.endpointId, endpointId),
+      eq(chatEndpointResources.type, "repository"),
+    );
+    // Literal, case-insensitive substring search (%, _ and backslashes are
+    // ordinary characters). Counts always describe the entire connection.
+    const search = query.search
+      ? sql`strpos(lower(${chatEndpointResources.label}), lower(${query.search})) > 0`
+      : undefined;
+    const [rows, [counts]] = await Promise.all([
+      db.select().from(chatEndpointResources).where(and(scope, search))
+        .orderBy(asc(chatEndpointResources.label), asc(chatEndpointResources.id))
+        .offset(query.offset).limit(query.limit + 1),
+      db.select({
+        totalCount: sql<number>`count(*)::integer`,
+        enabledCount: sql<number>`count(*) filter (where ${chatEndpointResources.enabled})::integer`,
+        availableCount: sql<number>`count(*) filter (where ${chatEndpointResources.availability} = 'available')::integer`,
+      }).from(chatEndpointResources).where(scope),
+    ]);
+    return {
+      items: rows.slice(0, query.limit),
+      nextOffset: rows.length > query.limit ? query.offset + query.limit : null,
+      totalCount: counts!.totalCount,
+      enabledCount: counts!.enabledCount,
+      availableCount: counts!.availableCount,
+    };
+  }
+
   async function replaceResources(
     endpointId: string,
     updates: Array<{ id: string; enabled: boolean }>,
     actorUserId?: string | null,
     options?: { initialGitHubImport?: boolean },
   ) {
+    await updateResourceSelection(endpointId, updates, actorUserId, options);
+    return listResources(endpointId);
+  }
+
+  async function toggleAllGitHubRepositories(endpointId: string, enabled: boolean, actorUserId?: string | null) {
+    await updateResourceSelection(endpointId, [], actorUserId, { allGitHubRepositoriesEnabled: enabled });
+    return { success: true as const };
+  }
+
+  async function updateResourceSelection(
+    endpointId: string,
+    updates: Array<{ id: string; enabled: boolean }>,
+    actorUserId?: string | null,
+    options?: { initialGitHubImport?: boolean; allGitHubRepositoriesEnabled?: boolean },
+  ) {
     const initial = await endpointRecord(endpointId);
     if (!initial) throw notFound("Chat endpoint not found");
-    if (updates.length === 0 && initial.endpoint.provider !== "github") return listResources(endpointId);
+    const bulk = options?.allGitHubRepositoriesEnabled !== undefined;
+    if (bulk && initial.endpoint.provider !== "github") throw badRequest("Only GitHub repositories support toggle all");
+    if (updates.length === 0 && initial.endpoint.provider !== "github") return;
     if (initial.endpoint.provider === "imessage-photon" && initial.endpoint.botExternalId?.startsWith("photon-project:") && updates.some((entry) => entry.enabled))
       throw unprocessable("Photon shared channels support direct messages only; groups cannot be enabled");
     await withCredentialMutationLease(
@@ -28048,19 +28100,29 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
               and(
                 eq(chatEndpointResources.companyId, endpoint.companyId),
                 eq(chatEndpointResources.endpointId, endpointId),
-                inArray(chatEndpointResources.id, ids),
+                bulk
+                  ? and(
+                      eq(chatEndpointResources.type, "repository"),
+                      options!.allGitHubRepositoriesEnabled
+                        ? eq(chatEndpointResources.availability, "available")
+                        : undefined,
+                    )
+                  : inArray(chatEndpointResources.id, ids),
               ),
             )
             .orderBy(asc(chatEndpointResources.id))
             .for("no key update");
-          if (rows.length !== new Set(ids).size)
+          if (!bulk && rows.length !== new Set(ids).size)
             throw unprocessable("Every resource must belong to this endpoint");
+          const selectedUpdates = bulk
+            ? rows.map((row) => ({ id: row.id, enabled: options!.allGitHubRepositoriesEnabled! }))
+            : updates;
           const availabilityById = new Map(
             rows.map((row) => [row.id, row.availability]),
           );
           // Validate every submitted grant, including intermediate duplicate
           // entries. Netting below describes the audit, not new authority.
-          const unavailable = updates.find(
+          const unavailable = selectedUpdates.find(
             (entry) =>
               entry.enabled && availabilityById.get(entry.id) !== "available",
           );
@@ -28070,7 +28132,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
               { code: "chat_resource_unavailable", resourceId: unavailable.id },
             );
           const finalEnabled = new Map(
-            updates.map((entry) => [entry.id, entry.enabled]),
+            selectedUpdates.map((entry) => [entry.id, entry.enabled]),
           );
           const changes = rows
             .filter((row) => row.enabled !== finalEnabled.get(row.id))
@@ -28079,7 +28141,20 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
               before: { enabled: row.enabled },
               after: { enabled: finalEnabled.get(row.id)! },
             }));
-          for (const entry of updates)
+          if (bulk) {
+            // One atomic database update, independent of pagination/search and
+            // serialized with refresh, reconnect, and individual row changes.
+            await tx.update(chatEndpointResources)
+              .set({ enabled: options!.allGitHubRepositoriesEnabled!, updatedAt: new Date() })
+              .where(and(
+                eq(chatEndpointResources.companyId, endpoint.companyId),
+                eq(chatEndpointResources.endpointId, endpointId),
+                eq(chatEndpointResources.type, "repository"),
+                options!.allGitHubRepositoriesEnabled
+                  ? eq(chatEndpointResources.availability, "available")
+                  : undefined,
+              ));
+          } else for (const entry of selectedUpdates)
             await tx
               .update(chatEndpointResources)
               .set({ enabled: entry.enabled, updatedAt: new Date() })
@@ -28113,7 +28188,6 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
         for (const publication of publications) publishActivity(publication);
       },
     );
-    return listResources(endpointId);
   }
 
   async function listPrincipals(endpointId: string) {
@@ -38530,6 +38604,8 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
     setupTestStatus,
     handleWebhook,
     listResources,
+    listGitHubRepositories,
+    toggleAllGitHubRepositories,
     replaceResources,
     listPrincipals,
     createLinkIntent,

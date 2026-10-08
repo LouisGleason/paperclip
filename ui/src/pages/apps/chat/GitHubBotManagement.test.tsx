@@ -24,6 +24,8 @@ const mocks = vi.hoisted(() => ({
   config: vi.fn(),
   save: vi.fn(),
   resources: vi.fn(),
+  repositoryPage: vi.fn(),
+  toggleAll: vi.fn(),
   updateResources: vi.fn(),
   reviews: vi.fn(),
   members: vi.fn(),
@@ -35,6 +37,8 @@ vi.mock("@/api/githubChat", () => ({
     configuration: mocks.config,
     save: mocks.save,
     reviews: mocks.reviews,
+    repositories: mocks.repositoryPage,
+    toggleAllRepositories: mocks.toggleAll,
   },
 }));
 vi.mock("@/api/chatEndpoints", () => ({
@@ -131,6 +135,10 @@ describe("GitHub bot management", () => {
         metadata: { providerRepositoryId: "100" },
       },
     ]);
+    mocks.repositoryPage.mockImplementation(async () => ({
+      items: await mocks.resources(), nextOffset: null, totalCount: 1, enabledCount: 1, availableCount: 1,
+    }));
+    mocks.toggleAll.mockResolvedValue({ success: true });
     mocks.links.mockResolvedValue([
       {
         id: "link",
@@ -173,6 +181,7 @@ describe("GitHub bot management", () => {
     await act(async () => root.unmount());
     client.clear();
     container.remove();
+    vi.unstubAllGlobals();
   });
   async function render(tab = mocks.tab) {
     mocks.tab = tab;
@@ -202,14 +211,14 @@ describe("GitHub bot management", () => {
     await act(async () => target!.click());
   }
   async function input(
-    element: HTMLTextAreaElement | HTMLSelectElement,
+    element: HTMLTextAreaElement | HTMLSelectElement | HTMLInputElement,
     value: string,
   ) {
     await act(async () => {
       Object.getOwnPropertyDescriptor(
         element instanceof HTMLTextAreaElement
           ? HTMLTextAreaElement.prototype
-          : HTMLSelectElement.prototype,
+          : element instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype,
         "value",
       )!.set!.call(element, value);
       element.dispatchEvent(
@@ -219,6 +228,68 @@ describe("GitHub bot management", () => {
       );
     });
   }
+  it("loads repositories 20 at a time, searches all pages, and toggles the full connection", async () => {
+    let enabled = true;
+    const all = Array.from({ length: 1000 }, (_, index) => ({
+      id: `repo-${index}`, type: "repository", providerResourceId: `acme/repo-${index}`,
+      label: `acme/repo-${String(index).padStart(4, "0")}`, availability: "available", enabled: true,
+    }));
+    mocks.repositoryPage.mockImplementation(async (_id, { offset, search, limit }) => {
+      const filtered = all.filter((row) => row.label.includes(search));
+      return { items: filtered.slice(offset, offset + limit).map((row) => ({ ...row, enabled })),
+        nextOffset: offset + limit < filtered.length ? offset + limit : null,
+        totalCount: 1000, enabledCount: enabled ? 1000 : 0, availableCount: 1000 };
+    });
+    mocks.toggleAll.mockImplementation(async (_id, value) => { enabled = value; return { success: true }; });
+    await render("access");
+    await vi.waitFor(() => expect(container.querySelectorAll('[role="region"] [role="switch"]')).toHaveLength(20));
+    expect(mocks.repositoryPage).toHaveBeenCalledWith("bot", { offset: 0, limit: 20, search: "" });
+    await click("Load more repositories");
+    await vi.waitFor(() => expect(container.querySelectorAll('[role="region"] [role="switch"]')).toHaveLength(40));
+    const search = container.querySelector('input[aria-label="Search repositories"]') as HTMLInputElement;
+    await input(search, "0999");
+    await vi.waitFor(() => expect(container.querySelectorAll('[role="region"] [role="switch"]')).toHaveLength(1));
+    expect(container.textContent).toContain("acme/repo-0999");
+    expect(container.textContent).toContain("1000 of 1000 repositories enabled");
+    await click("Disable all repositories");
+    await vi.waitFor(() => expect(container.textContent).toContain("0 of 1000 repositories enabled"));
+    expect(mocks.toggleAll).toHaveBeenCalledWith("bot", false);
+    expect(mocks.updateResources).not.toHaveBeenCalled();
+    await click("Enable all repositories");
+    await vi.waitFor(() => expect(container.textContent).toContain("1000 of 1000 repositories enabled"));
+    expect(mocks.toggleAll).toHaveBeenLastCalledWith("bot", true);
+    await input(search, "does-not-exist");
+    await vi.waitFor(() => expect(container.textContent).toContain("No repositories match your search"));
+    expect(container.querySelector('button[aria-label="Disable all repositories"]')?.hasAttribute("disabled")).toBe(false);
+  });
+  it("keeps repository failures visible and allows a retry", async () => {
+    mocks.repositoryPage.mockRejectedValueOnce(new Error("Unavailable"));
+    await render("access");
+    await vi.waitFor(() => expect(container.textContent).toContain("Could not load repositories"));
+    await click("Try again");
+    await vi.waitFor(() => expect(container.querySelectorAll('[role="region"] [role="switch"]')).toHaveLength(1));
+    expect(container.textContent).not.toContain("Could not load repositories");
+  });
+  it("automatically loads the next 20 repositories when the scroll sentinel becomes visible", async () => {
+    let intersect!: IntersectionObserverCallback;
+    vi.stubGlobal("IntersectionObserver", class {
+      constructor(callback: IntersectionObserverCallback) { intersect = callback; }
+      observe() {}
+      disconnect() {}
+    });
+    mocks.repositoryPage.mockImplementation(async (_id, { offset }) => ({
+      items: Array.from({ length: 20 }, (_, index) => ({
+        id: `repo-${offset + index}`, label: `acme/repo-${offset + index}`,
+        enabled: true, availability: "available", type: "repository",
+      })),
+      nextOffset: offset === 0 ? 20 : null, totalCount: 40, enabledCount: 40, availableCount: 40,
+    }));
+    await render("access");
+    await vi.waitFor(() => expect(intersect).toBeDefined());
+    await act(async () => intersect([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver));
+    await vi.waitFor(() => expect(container.querySelectorAll('[role="region"] [role="switch"]')).toHaveLength(40));
+    expect(mocks.repositoryPage).toHaveBeenLastCalledWith("bot", { offset: 20, limit: 20, search: "" });
+  });
   it("shows the verified custom App mention and its own organization branding settings", async () => {
     const branded: ChatEndpoint = {
       ...endpoint,
@@ -322,6 +393,7 @@ describe("GitHub bot management", () => {
     await render();
     await input(container.querySelector("textarea")!, "Unsaved behavior");
     await render("access");
+    await vi.waitFor(() => expect(container.querySelector('button[aria-label="acme/web"]')).not.toBeNull());
     await click("acme/web");
     await vi.waitFor(() =>
       expect(mocks.updateResources).toHaveBeenCalledWith("bot", [

@@ -1,4 +1,7 @@
 import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { githubChatApi } from "@/api/githubChat";
+import { chatEndpointsApi } from "@/api/chatEndpoints";
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { Routes, Route } from "@/lib/router";
 import { PluginLauncherProvider } from "@/plugins/launchers";
@@ -24,7 +27,6 @@ import {
   endpoint,
   agent,
   configuration,
-  resources,
   reviews,
   conversations,
 } from "./fixtures";
@@ -46,7 +48,7 @@ const meta = {
   argTypes: {
     state: {
       control: "select",
-      options: ["populated", "empty", "loading", "error", "long"],
+      options: ["populated", "empty", "loading", "error", "long", "many"],
     },
   },
   render: ({ state }) => (
@@ -109,6 +111,16 @@ export const LongAccess: Story = {
   args: { state: "long" },
   parameters: route("access"),
 };
+export const ThousandRepositories: Story = {
+  name: "02 States / 1000 repositories",
+  args: { state: "many" },
+  parameters: route("access"),
+};
+export const RepositoryFailure: Story = {
+  name: "02 States / Repository loading failure",
+  args: { state: "error" },
+  parameters: route("access"),
+};
 export const Mobile: Story = {
   name: "02 States / Mobile conversations",
   args: { state: "long" },
@@ -136,16 +148,28 @@ function People() {
   );
 }
 function Repositories() {
-  const [rows, setRows] = useState(resources);
+  return <FixtureApi><RepositoryExample /></FixtureApi>;
+}
+function RepositoryExample() {
+  const client = useQueryClient();
+  const [pending, setPending] = useState(false);
+  const save = async (fn: () => Promise<unknown>) => {
+    setPending(true);
+    try {
+      await fn();
+      await client.invalidateQueries({ queryKey: ["github-bot-repository-pages", endpoint.id] });
+    } finally { setPending(false); }
+  };
   return (
     <GitHubRepositoryAccess
-      resources={rows}
+      endpointId={endpoint.id}
       managementUrl="https://github.com/settings/installations"
-      pending={false}
+      pending={pending}
       onRefresh={() => {}}
       onChange={(id, enabled) =>
-        setRows(rows.map((r) => (r.id === id ? { ...r, enabled } : r)))
+        void save(() => chatEndpointsApi.updateResources(endpoint.id, [{ id, enabled }]))
       }
+      onToggleAll={(enabled) => void save(() => githubChatApi.toggleAllRepositories(endpoint.id, enabled))}
     />
   );
 }

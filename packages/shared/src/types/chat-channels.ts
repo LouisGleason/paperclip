@@ -286,6 +286,14 @@ export interface ChatEndpointResource {
   participants?: string[];
 }
 
+export interface GitHubRepositoryPage {
+  items: ChatEndpointResource[];
+  nextOffset: number | null;
+  totalCount: number;
+  enabledCount: number;
+  availableCount: number;
+}
+
 export interface ChatExternalPrincipal {
   id: string;
   companyId: string;

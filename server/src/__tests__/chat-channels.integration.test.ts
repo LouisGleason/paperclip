@@ -5997,6 +5997,64 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
     expect(endpoints).toEqual([]);
   });
 
+  describe("GitHub repository pagination and bulk access", () => {
+    it("pages and searches 1000 repositories while toggle all changes unloaded rows atomically", async () => {
+      const fixture = await seedCompany();
+      const context = createService();
+      const endpoint = await context.service.create(fixture.companyId,
+        { provider: "github", assignedAgentId: fixture.assignedAgentId }, "owner-user");
+      const foreign = await seedCompany();
+      const other = await context.service.create(foreign.companyId,
+        { provider: "github", assignedAgentId: foreign.assignedAgentId }, "owner-user");
+      const all = await db.insert(chatEndpointResources).values(Array.from({ length: 1000 }, (_, index) => ({
+        companyId: fixture.companyId, endpointId: endpoint.id, type: "repository",
+        providerResourceId: `acme/repo-${index}`, label: `Acme/Repo-${String(index).padStart(4, "0")}`,
+        enabled: true, availability: "available" as const,
+      }))).returning();
+      const [unavailable, channel, unrelated] = await db.insert(chatEndpointResources).values([
+        { companyId: fixture.companyId, endpointId: endpoint.id, type: "repository", providerResourceId: "unavailable", label: "Unavailable", enabled: true, availability: "unavailable" },
+        { companyId: fixture.companyId, endpointId: endpoint.id, type: "channel", providerResourceId: "channel", label: "Channel", enabled: true, availability: "available" },
+        { companyId: foreign.companyId, endpointId: other.id, type: "repository", providerResourceId: "foreign", label: "Foreign", enabled: true, availability: "available" },
+      ]).returning();
+      const app = routesApp(db, fixture.companyId, context.service);
+      const path = `/api/chat-endpoints/${endpoint.id}/github/repositories`;
+      const first = await request(app).get(path).expect(200);
+      expect(first.body).toMatchObject({ nextOffset: 20, totalCount: 1001, enabledCount: 1001, availableCount: 1000 });
+      expect(first.body.items).toHaveLength(20);
+      const second = await request(app).get(path).query({ offset: 20 }).expect(200);
+      expect(second.body.items).toHaveLength(20);
+      expect(second.body.items.some((row: { id: string }) => first.body.items.some((initial: { id: string }) => initial.id === row.id))).toBe(false);
+      const search = await request(app).get(path).query({ search: "repo-0999" }).expect(200);
+      expect(search.body.items.map((row: { label: string }) => row.label)).toEqual(["Acme/Repo-0999"]);
+      expect(search.body.totalCount).toBe(1001);
+      expect((await request(app).get(path).query({ search: "%" }).expect(200)).body.items).toEqual([]);
+      await request(app).get(path).query({ limit: 1000 }).expect(400);
+      await request(app).get(path).query({ offset: -1 }).expect(400);
+      await request(app).put(`${path}/access`).send({ enabled: false, search: "repo-0999" }).expect(400);
+      await request(app).put(`${path}/access`).send({ enabled: false }).expect(200);
+      const afterOff = await context.service.listGitHubRepositories(endpoint.id, { limit: 20, offset: 0, search: "" });
+      expect(afterOff.enabledCount).toBe(0);
+      expect((await db.select().from(chatEndpointResources).where(inArray(chatEndpointResources.id, [channel.id, unrelated.id]))).every((row) => row.enabled)).toBe(true);
+      const [last] = await db.select().from(chatEndpointResources).where(eq(chatEndpointResources.id, all[999].id));
+      expect(last.enabled).toBe(false);
+      await request(app).put(`${path}/access`).send({ enabled: true }).expect(200);
+      expect((await context.service.listGitHubRepositories(endpoint.id, { limit: 20, offset: 0, search: "" })).enabledCount).toBe(1000);
+      expect((await db.select().from(chatEndpointResources).where(eq(chatEndpointResources.id, unavailable.id)))[0].enabled).toBe(false);
+      const saved = await context.service.get(endpoint.id);
+      expect(saved.setup.github?.repositorySelectionSaved).toBe(true);
+      const audits = await db.select().from(activityLog).where(and(eq(activityLog.companyId, fixture.companyId), eq(activityLog.action, "chat_endpoint.resources_updated")));
+      expect(audits).toHaveLength(2);
+      expect(audits.every((audit) => audit.actorId === "owner-user")).toBe(true);
+      expect((audits[0].details!.changes as unknown[])).toHaveLength(1001);
+      expect((audits[1].details!.changes as unknown[])).toHaveLength(1000);
+      const crossCompany = routesApp(db, foreign.companyId, context.service);
+      expect((await request(crossCompany).get(path)).status).toBeOneOf([403, 404]);
+      expect((await request(crossCompany).put(`${path}/access`).send({ enabled: false })).status).toBeOneOf([403, 404]);
+      expect(context.wakeup).not.toHaveBeenCalled();
+      await context.service.shutdown();
+    });
+  });
+
   describe("resource change auditing", () => {
     async function setupResourceAudit() {
       const fixture = await seedCompany();
@@ -6538,6 +6596,9 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
       .expect(200);
 
     const deniedMutations = [
+      request(memberApp)
+        .put(`/api/chat-endpoints/${endpoint.id}/github/repositories/access`)
+        .send({ enabled: false }),
       request(memberApp)
         .post(`/api/companies/${fixture.companyId}/chat-endpoints`)
         .send({ provider: "slack", assignedAgentId: fixture.assignedAgentId }),

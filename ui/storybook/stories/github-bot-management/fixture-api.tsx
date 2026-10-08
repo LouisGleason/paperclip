@@ -12,7 +12,7 @@ import {
   members,
 } from "./fixtures";
 
-export type FixtureState = "populated" | "empty" | "loading" | "error" | "long";
+export type FixtureState = "populated" | "empty" | "loading" | "error" | "long" | "many";
 /** Only fixture IDs are intercepted. All shell requests use Storybook's shared API fixtures. */
 export function FixtureApi({
   state = "populated",
@@ -35,6 +35,10 @@ export function FixtureApi({
     const original = window.fetch;
     let saved = { revision: 2, configuration: structuredClone(configuration) };
     let repos = structuredClone(resources);
+    if (state === "many") repos = Array.from({ length: 1000 }, (_, index) => ({
+      ...repos[0], id: `repository-${index}`, providerResourceId: `acme/repository-${String(index).padStart(4, "0")}`,
+      label: `acme/repository-${String(index).padStart(4, "0")}`, enabled: true,
+    }));
     let identities = structuredClone(links);
     const failedPaths = new Set<string>();
     window.fetch = async (input, init) => {
@@ -44,13 +48,14 @@ export function FixtureApi({
           : input instanceof URL
             ? input.href
             : input.url;
-      const path = new URL(raw, window.location.origin).pathname;
+      const url = new URL(raw, window.location.origin);
+      const path = url.pathname;
       if (!path.includes(`/chat-endpoints/${endpoint.id}`))
         return original(input, init);
       if (state === "loading") return new Promise<Response>(() => {});
       if (
         state === "error" &&
-        (path.endsWith("/configuration") || path.endsWith("/resources")) &&
+        (path.endsWith("/configuration") || path.endsWith("/resources") || path.endsWith("/github/repositories")) &&
         !failedPaths.has(path)
       ) {
         failedPaths.add(path);
@@ -60,6 +65,22 @@ export function FixtureApi({
         );
       }
       const body = init?.body ? JSON.parse(String(init.body)) : {};
+      if (path.endsWith("/repositories/access")) {
+        repos = repos.map((r) => (!body.enabled || r.availability === "available") ? { ...r, enabled: body.enabled } : r);
+        return Response.json({ success: true });
+      }
+      if (path.endsWith("/github/repositories")) {
+        const offset = Number(url.searchParams.get("offset") ?? 0);
+        const limit = Number(url.searchParams.get("limit") ?? 20);
+        const search = (url.searchParams.get("search") ?? "").toLowerCase();
+        const all = state === "empty" ? [] : state === "long" ? repos.map((r) => ({ ...r,
+          label: `acme/platform-services-production-web-${r.id}-accessibility-improvements` })) : repos;
+        const filtered = all.filter((r) => r.label.toLowerCase().includes(search));
+        return Response.json({ items: filtered.slice(offset, offset + limit),
+          nextOffset: offset + limit < filtered.length ? offset + limit : null,
+          totalCount: all.length, enabledCount: all.filter((r) => r.enabled).length,
+          availableCount: all.filter((r) => r.availability === "available").length });
+      }
       if (path.endsWith("/configuration")) {
         if (init?.method === "PUT")
           saved = {
