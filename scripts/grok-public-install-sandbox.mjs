@@ -63,7 +63,7 @@ export function installedCodexProbeSource(indexPath, consumerRoot, expectedVersi
     import assert from 'node:assert/strict';
     import { execFileSync } from 'node:child_process';
     import { createRequire } from 'node:module';
-    import { accessSync, constants, existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
+    import { accessSync, constants, existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
     import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
     import { pathToFileURL } from 'node:url';
     const root = realpathSync(${JSON.stringify(consumerRoot)});
@@ -83,7 +83,19 @@ export function installedCodexProbeSource(indexPath, consumerRoot, expectedVersi
           assert.ok(++visited <= 10000 && contained(packageRoot), 'Installed dependency graph must be bounded and contained');
           const path = relative(root, packageRoot).split(sep).join('/');
           if (${/(?:^|\/)node_modules\/@openai\/codex-(?:linux|darwin|win32)-(?:x64|arm64)$/.toString()}.test(path)) {
-            installed.push({ path, manifest: JSON.parse(readFileSync(join(packageRoot, 'package.json'), 'utf8')) });
+            let manifest;
+            try { manifest = JSON.parse(readFileSync(join(packageRoot, 'package.json'), 'utf8')); }
+            catch (error) {
+              if (error.code !== 'ENOENT') throw error;
+              const contents = readdirSync(packageRoot), slot = lstatSync(packageRoot);
+              assert.ok(slot.isDirectory() && !slot.isSymbolicLink() && contents.length === 0,
+                'Codex optional slot without a manifest must be an empty regular directory; found ' +
+                JSON.stringify(contents.sort().slice(0, 16).map(name => name.slice(0, 256))));
+              // npm can leave an empty nested optional slot while hoisting the
+              // actual host payload. Its real lock and manifest still qualify below.
+              continue;
+            }
+            installed.push({ path, manifest });
           }
           const nested = join(packageRoot, 'node_modules');
           if (existsSync(nested)) pending.push(nested);

@@ -93,6 +93,17 @@ test('the installed Codex probe exercises the public export and rejects incomple
     assert.equal(JSON.parse(result.stdout).codexCommandLeaseVerified, true);
     assert.equal(readFileSync(join(server, 'lease-closed'), 'utf8'), 'ok');
     assert.equal(JSON.parse(result.stdout).providerCalls, 0);
+    const emptySlot = join(server, 'node_modules/@openai/codex-' + target);
+    mkdirSync(emptySlot, { recursive: true });
+    result = run(); assert.equal(result.status, 0, result.stderr);
+    assert.equal(JSON.parse(result.stdout).codexPlatformPackages.length, 1,
+      'An empty nested npm optional slot must not obscure the qualified hoisted host package');
+    writeFileSync(join(emptySlot, 'undeclared-native-payload'), 'native fixture; never executed');
+    result = run(); assert.notEqual(result.status, 0); assert.match(result.stderr, /empty regular directory; found.*undeclared-native-payload/);
+    rmSync(join(emptySlot, 'undeclared-native-payload'));
+    writeFileSync(join(emptySlot, 'package.json'), '{ malformed');
+    result = run(); assert.notEqual(result.status, 0); assert.match(result.stderr, /SyntaxError/);
+    rmSync(join(emptySlot, 'package.json'));
     writeFileSync(integrity, moduleSource.replace('assert.deepEqual(profile,', "throw new Error('qualified executable digest mismatch'); assert.deepEqual(profile,"));
     result = run(); assert.notEqual(result.status, 0); assert.match(result.stderr, /qualified executable digest mismatch/);
     writeFileSync(integrity, moduleSource.replace("writeFileSync(", "throw new Error('command lease close failed'); writeFileSync("));
