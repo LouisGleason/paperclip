@@ -23,7 +23,11 @@ The user approved splitting that work into four useful steps:
 
 Canonical branch: `codex/runner-packaging-prerequisites`.
 Base: `71cd0a2621615182274a977d6cc969b9ab920b92`.
-PR, tested commit, and CI links: pending the first slice's commit and publication.
+Canonical PR: [#15555](https://github.com/paperclipai/paperclip/pull/15555).
+Its [checks](https://github.com/paperclipai/paperclip/pull/15555/checks) and
+[commits](https://github.com/paperclipai/paperclip/pull/15555/commits) record the
+tested candidate. Hosted results and final review disposition are recorded in
+the PR description; local receipts alone do not close those gates.
 
 This slice fixes the installed dependency graph, Codex executable resolution,
 isolated browser login, Git install staging, and the release asset transfer needed
@@ -45,8 +49,8 @@ The large execution and setup changes stay in the later slices.
 | Release-transfer controls | Passed | Release workflow, transfer, and sandbox suites: 38/38; actionlint and Node/shell syntax checks passed |
 | Token gates | Passed | All three commands in `check:token-gates` passed |
 | Package and module contracts | Passed | Release package manifest and feature module boundary checks passed |
-| Clean installed Codex version probe | Pending | Existing Linux npm consumer sandbox in CI |
-| Full checks and fresh review | Pending | Require green checks on the final PR head |
+| Clean installed Codex version probe | Hosted qualification | Existing Linux npm consumer sandbox in the linked PR checks |
+| Full checks and fresh review | Hosted qualification | Require green checks and fresh 5/5 review on the linked PR's final head |
 | All-harness live onboarding and cloud qualification | Deferred | Owned by later slices; prior evidence does not prove this revision |
 
 Heavy builds run in hosted CI. No local Docker or Rust build is planned.
@@ -60,5 +64,6 @@ Focused test commands use Node 24 and a single worker: `node --test
 --maxWorkers=1 --no-file-parallelism`. These tests include real offline npm pack
 and installation controls; they do not claim a published release or provider task.
 
-Next action: publish the first PR and resolve its review and check failures on
-the final candidate.
+Next action: resolve the first PR's review and check failures on the final
+candidate, then hand it off for human review. Start the Codex-default slice after
+the user chooses to proceed. Merging and deployment remain outside this task.
