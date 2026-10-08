@@ -1,3 +1,4 @@
+import { StringDecoder } from "node:string_decoder";
 // Real-service qualification only. One explicit scenario sends one ACP prompt.
 // Usage: node qualify-copilot-acp.mjs <verified-pack> <private-output.json> <deny-write|detached-shell>
 // Bind only COPILOT_GITHUB_TOKEN. Do not run without a reconciled billing reservation.
@@ -75,6 +76,7 @@ export async function runProbe(packInput, output, scenario, token) {
       backgroundCompletionObservedBeforeTerminal: false, cleanupComplete: false };
     let child, exitPromise, sessionId, promptId, nextId = 0, buffer = "", bytes = 0, terminalSeen = false;
     let outerTimer, markerTimer;
+    const decoder = new StringDecoder("utf8");
     const pending = new Map();
     const env = { PATH: "/usr/bin:/bin", COPILOT_GITHUB_TOKEN: token, COPILOT_AUTO_UPDATE: "false", COPILOT_ALLOW_ALL: "false", NO_COLOR: "1" };
     async function sampleMarker(phase) {
@@ -115,7 +117,7 @@ export async function runProbe(packInput, output, scenario, token) {
       child.stdout.on("data", chunk => {
         bytes += chunk.length;
         if (bytes > 8_388_608) { failPending("wire_limit"); child.kill("SIGTERM"); return; }
-        buffer += chunk.toString();
+        buffer += decoder.write(chunk);
         while (buffer.includes("\n")) {
           const index = buffer.indexOf("\n"), line = buffer.slice(0, index); buffer = buffer.slice(index + 1);
           if (!line.trim()) continue;

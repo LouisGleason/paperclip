@@ -48,6 +48,14 @@ describe("Copilot metadata boundary", () => {
     expect(await probeCopilotMetadata("token", "missing")).toMatchObject({ status: "failed", code: "COPILOT_MODEL_UNAVAILABLE", promptSent: false });
     expect(methods).toEqual(["initialize", "session/new"]); expect(close).toHaveBeenCalledOnce();
   });
+  it("preserves model labels split inside every UTF-8 character across transport chunks", async () => {
+    const child = fakeChild(() => undefined), rpc = createMetadataRpc(child);
+    const result = { models: { availableModels: [{ modelId: "gpt-5.6-luna", name: "東京 🚀 café" }] } };
+    const response = rpc.request("session/new", {});
+    const wire = Buffer.from(`${JSON.stringify({ jsonrpc: "2.0", id: 0, result })}\n`);
+    for (const byte of wire) child.stdout.emit("data", Buffer.from([byte]));
+    await expect(response).resolves.toEqual(result);
+  });
   it("cannot dispatch semantic or prompt methods", () => {
     const child = fakeChild(() => undefined), rpc = createMetadataRpc(child);
     expect(() => rpc.request("session/prompt", {})).toThrow("cannot send");

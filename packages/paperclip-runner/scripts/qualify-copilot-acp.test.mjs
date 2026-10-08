@@ -69,13 +69,19 @@ test("full credential-free protocol fixture preserves numeric-zero denial and re
     await writeFile(join(moduleRoot, "copilot-events.js"), 'export const COPILOT_ACP_CLIENT_CAPABILITIES = {};');
     const childScript = join(root, "child.mjs");
     await writeFile(childScript, `import { createInterface } from 'node:readline';
-const send = m => process.stdout.write(JSON.stringify({jsonrpc:'2.0', ...m})+'\\n');
+const send = m => {
+ const wire=Buffer.from(JSON.stringify({jsonrpc:'2.0', ...m})+'\\n');
+ const unicode=wire.indexOf(Buffer.from('🚀'));
+ if(unicode<0){process.stdout.write(wire);return;}
+ process.stdout.write(wire.subarray(0,unicode+2));
+ setTimeout(()=>process.stdout.write(wire.subarray(unicode+2)),50);
+};
 let promptId;
 createInterface({input:process.stdin}).on('line', line => {
  const m=JSON.parse(line);
  if(!m.method){if(m.id!==0 || m.result?.outcome?.optionId!=='native-deny-0') process.exit(8); send({id:promptId,result:{stopReason:'end_turn'}});return;}
  let result={};
- if(m.method==='initialize')result={agentInfo:{version:'1.0.88'},agentCapabilities:{}};
+ if(m.method==='initialize')result={agentInfo:{version:'1.0.88'},agentCapabilities:{label:'東京 🚀 café'}};
  if(m.method==='session/new')result={sessionId:'fixture-session',models:{availableModels:[{modelId:'gpt-5.6-luna'}]}};
  if(m.method==='session/set_config_option')result={configOptions:[{id:'model',currentValue:'gpt-5.6-luna'}]};
  if(m.method==='session/prompt'){promptId=m.id;send({id:0,method:'session/request_permission',params:{sessionId:'fixture-session',toolCall:{kind:'edit',rawInput:{fileName:process.cwd()+'/qualification-marker.txt'}},options:${JSON.stringify(options)}}});return;}
@@ -86,6 +92,7 @@ createInterface({input:process.stdin}).on('line', line => {
     const result = await runProbe(root, output, "deny-write", "fixture-token-never-used-for-network");
     const evidence = JSON.parse(await readFile(output, "utf8"));
     assert.equal(result.passed, true);
+    assert.deepEqual(evidence.agentCapabilities, { label: "東京 🚀 café" });
     assert.equal(evidence.permissions[0].requestId, 0);
     assert.deepEqual(evidence.permissions[0].outcome, { outcome: "selected", optionId: "native-deny-0" });
     assert.equal(evidence.cleanupComplete, true);
