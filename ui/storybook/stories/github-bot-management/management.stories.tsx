@@ -20,7 +20,6 @@ import {
 } from "@/pages/apps/chat/GitHubAppIdentity";
 import { resolveAgentAppearance } from "@paperclipai/shared";
 import { agentAvatarUrl } from "@/lib/agent-avatar-url";
-import { GitHubWebhookPrerequisite } from "@/pages/apps/chat/GitHubWebhookPrerequisite";
 import {
   endpoint,
   agent,
@@ -181,26 +180,6 @@ export const AppIdentityAndLogo: Story = {
           )}
         />
       </div>,
-    ),
-};
-export const HttpSetupPrerequisite: Story = {
-  name: "03 Components / HTTP setup requires delivery",
-  render: () =>
-    component(
-      <GitHubWebhookPrerequisite
-        origin="http://localhost:3110"
-        cloudState="required"
-      />,
-    ),
-};
-export const HttpSetupWithCloud: Story = {
-  name: "03 Components / HTTP setup with Cloud connected",
-  render: () =>
-    component(
-      <GitHubWebhookPrerequisite
-        origin="http://localhost:3110"
-        cloudState="active"
-      />,
     ),
 };
 export const ReviewHistory: Story = {

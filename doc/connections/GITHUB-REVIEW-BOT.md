@@ -15,12 +15,6 @@ Enable **GitHub review bots** in instance **Experimental** settings, then open
 the GitHub Code Review Bot connector. This default-off setting is independent of
 **Chat connectors**. Hiding either feature does not pause existing provider delivery.
 
-On an HTTP instance, setup explains the public HTTPS delivery requirement before
-you choose an agent. An enrolled Paperclip Cloud connector supplies that webhook
-address, including for localhost; otherwise connect Cloud during setup or provide
-a public HTTPS address before creating the App. HTTP localhost alone is not a
-delivery failure when Cloud is connected.
-
 1. Choose the bot agent. Prefer a
    [low-trust review agent](https://docs.paperclip.ing/administration/trust-and-low-trust-review/)
    with an isolated sandbox and a scoped task boundary. Standard-trust agents
@@ -70,6 +64,8 @@ to the App settings list instead of assuming an owner.
 
 Local instances receive public callbacks and signed events through an enrolled
 Paperclip Cloud connector, using outbound requests instead of a public tunnel.
+Your localhost instance does not need HTTPS or a tunnel for this flow. Setup
+asks you to connect Cloud only if the instance is not already enrolled.
 The Cloud gateway capability must be deployed before localhost onboarding.
 Direct public-HTTPS webhook connections and manual existing-App credential
 recovery remain supported. An expired, unconsumed Cloud handoff can be renewed in the same draft after the configuring manager confirms that no App was created on GitHub. Claimed, consumed, and uncertain exchanges still require existing-App recovery. Setup tasks and copied prompts are not part of this

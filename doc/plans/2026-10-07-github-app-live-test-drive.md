@@ -392,3 +392,18 @@ retain App identity/configuration, and create no agent wakeup. UI/server
 typecheck/build, production Storybook build, token gates and diff whitespace
 checks pass. This remains connection qualification; the earlier full-suite
 failure and outstanding current-head CI/review limits still apply.
+
+### Correction: Cloud-backed localhost needs no HTTPS prerequisite (October 8)
+
+The preceding HTTP prerequisite banner was misleading. Cloud already provides
+the public HTTPS receiver, and localhost retrieves signed events through
+outbound requests. The user's Paperclip origin does not need HTTPS or a tunnel
+for this wizard. Removed the banner, its extra enrollment-status query, and
+the two obsolete component stories. Keep the existing conditional Connect
+Paperclip Cloud handoff as the actual setup action when enrollment is absent.
+
+The running localhost wizard now shows Choose agent without an HTTPS warning.
+No new connection or App was created during this correction. The delayed-ping
+waiting and same-draft recovery fixes remain in place. All 30 focused setup and
+management UI tests, UI typecheck/build, Storybook build and token gates pass.
+The earlier full-suite and current-head CI/review limits still apply.

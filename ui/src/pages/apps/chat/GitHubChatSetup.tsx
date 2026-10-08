@@ -25,7 +25,6 @@ import { copyTextToClipboard } from "@/lib/clipboard";
 import { resolveAgentAppearance } from "@paperclipai/shared";
 import { agentAvatarUrl } from "@/lib/agent-avatar-url";
 import { GitHubAppBranding, gitHubBotMention } from "./GitHubAppIdentity";
-import { GitHubWebhookPrerequisite } from "./GitHubWebhookPrerequisite";
 
 /** Restrict native manifest submission to GitHub registration endpoints. */
 export function gitHubAppManifestAction(
@@ -117,12 +116,6 @@ export function GitHubChatSetup() {
     refetchInterval: 3000,
   });
   const bot = current.data;
-  const cloudEnrollment = useQuery({
-    queryKey: ["cloud-connector", "enrollment"],
-    queryFn: () => toolsApi.getCloudConnectorEnrollment(),
-    enabled: !!selectedCompanyId && !identityOnly && window.location.protocol !== "https:",
-    retry: false,
-  });
   const progress = useQuery({
     queryKey: ["github-wizard", resume],
     queryFn: () => githubChatApi.advance(resume!),
@@ -265,14 +258,6 @@ export function GitHubChatSetup() {
               ? "Connect your account"
               : "Connect GitHub"}
       </h1>
-      {!identityOnly && !connected && !bot?.botExternalId && (
-        <GitHubWebhookPrerequisite
-          origin={window.location.origin}
-          cloudState={cloudEnrollment.isPending ? "loading"
-            : cloudEnrollment.error ? "unavailable"
-            : cloudEnrollment.data?.status === "active" ? "active" : "required"}
-        />
-      )}
       {(error || (!identityOnly && progress.error) || accounts.error) && (
         <p role="alert" className="text-sm text-destructive">
           {error ||
