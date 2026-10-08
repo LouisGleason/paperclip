@@ -5,7 +5,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { collectPiFileEvidence, gradePiCopyback, gradePiFileEvidence, piFileContract, seedPiFile } from "./pi-file-evidence.js";
+import { collectPiFileEvidence, gradePiCopyback, gradePiFileEvidence, piFileContract, piFilePrompt, seedPiFile } from "./pi-file-evidence.js";
 import { canonicalProviderEventsFromAcpxRuntimeEvent, createAcpxToolEventNormalizer } from "../../packages/paperclip-runner/src/provider-events.js";
 import { safeAcpxLocations } from "../../packages/paperclip-runner/src/drivers/acpx/safe-locations.js";
 import { classifyFailure } from "./failure-classifier.js";
@@ -185,6 +185,13 @@ describe("Pi edit, validation and public artifact oracle", () => {
       await rm(join(root, c.filename));
       await expect(validate()).rejects.toMatchObject({ code: 1 });
     } finally { await rm(root, { recursive: true, force: true }); }
+  });
+  it("pastes the literal validation command as Markdown code instead of escaped paragraph text", () => {
+    const command = piFileContract("0123456789ab-1").validationCommand;
+    const fenced = piFilePrompt("0123456789ab-1").match(/\n```bash\n([^\n]+)\n```\n/u);
+    expect(fenced?.[1]).toBe(command);
+    expect(fenced?.[1]).toContain("!==");
+    expect(fenced?.[1]).not.toContain("!\\=\\=");
   });
   it("changes only Pi file prompts and keeps all four question methods", () => {
     const cells = runnerMatrix.filter(c => c.suite.id === "extended-harnesses" && c.task.id === "file-edit-validate");

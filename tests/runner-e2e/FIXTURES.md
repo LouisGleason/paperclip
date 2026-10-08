@@ -391,8 +391,11 @@ requires one native edit lifecycle followed by exactly one successful native
 bash execution with the exact nonce-bound byte-validation command as its
 projected title and a validation marker. A marker-only echo cannot pass. Final bytes must
 match the fixture. The Pi task prompt explicitly forbids additional shell calls,
-including metadata commands, and supplies the expected post-edit byte size and
-hash for registration. Extra Bash calls fail the unchanged oracle even when the
+including metadata commands and repair attempts. It supplies the expected post-edit
+byte size and hash for registration. Extended definition 5 places the exact command in a
+fenced Bash block so the production Markdown editor preserves its operators and
+literal escapes. Definition 4's escaped-paragraph attempt keeps its failed grade.
+Extra Bash calls fail the unchanged oracle even when the
 edited file and downloadable artifact are correct. Extended definition 4 makes
 Pi's artifact title equal the exact filename required by the shared registered
 artifact check. Definition 3 attempts retain their original definitions and

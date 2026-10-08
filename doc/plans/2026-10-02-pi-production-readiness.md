@@ -5,6 +5,30 @@ set of release gates. Pi remains a candidate until every required gate passes.
 Keep behavioral qualification on the accepted fixtures. Do not expand it to
 widgets, images, Cursor or Copilot qualification. The existing draft stack must be reviewed in dependency order.
 
+## Current delivery scope — 2026-10-08
+
+The user narrowed this delivery to normal task completion and interactive
+controls. Accounting and the broad release matrix are deferred. The finish line
+is one real file edit, successful command validation, registered public download,
+Done and a succeeded native run; three follow-up turns with continuity; browser
+questions and answers; plan approval; same-turn steering and denial; Stop; and
+controller recovery with the original native question and run. Use the retained
+`b696e131ae32a82418e570b32f4727b5adb14e49` packages and cloud image, the approved
+Sonnet 4.6 fixture and low thinking. No local Docker, provider expansion, image
+rebuild, or accounting change is needed for this scope.
+
+The first current-cloud file attempt, `pi-core-0-1791470050`, edited, validated,
+published and finished through the real product. Its strict definition-4 grade
+is failed: the public task description escaped the unfenced validation command
+as Markdown paragraph text; the first Bash invocation had a syntax error, then
+Pi repaired it and ran a second command. The exact post-edit and downloaded
+bytes match, production copy-back finalized, and the issue/run reached
+Done/succeeded. Do not change this grade or count it as qualification. All 41
+canonical files (91,468,056 bytes) are retained with archive SHA-256
+`065146a206da9f29b50999b5d931b54402edd5d30a516895a7ab8fb95e8a6029`;
+independent process and scratch cleanup pass. Definition 5 fences the unchanged
+command for literal Markdown paste; the one-command grader stays unchanged.
+
 ## Correct cloud memory-read authority — 2026-10-08
 
 Frozen runtime/image `b696e131ae32a82418e570b32f4727b5adb14e49` passes all
@@ -2409,7 +2433,7 @@ Keep rollout held until every release gate is proven.
   and supersede once the tested correction is frozen. No workflow edit, lockfile
   commit, new model, fallback key, merge or release occurs.
 
-## Remaining work in order
+## Broader release follow-ups — deferred for current delivery
 
 1. Cloud memory acceptance is complete for the frozen `b696e131ae32a82418e570b32f4727b5adb14e49`
    runtime/image and definition-22 harness `da8d4454ae165b557ff11730e9fe018c9b1cd9b9`.
