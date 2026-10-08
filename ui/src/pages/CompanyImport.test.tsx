@@ -1153,6 +1153,94 @@ describe("CompanyImport", () => {
     expect(payload).not.toContain('"provider":"codex"');
   });
 
+  it("uses automatic runner selection when an imported native agent changes to another supported harness", async () => {
+    const preview = buildMixedAdapterPreviewResult();
+    preview.manifest.agents[0] = {
+      ...preview.manifest.agents[0], adapterType: "paperclip_runner", runner: "paperclip",
+      adapterConfig: { provider: "codex", model: "source-codex-model", env: { CODEX_HOME: "/source/account" } },
+    };
+    mockCompaniesApi.importPreview.mockResolvedValue(preview);
+    mockAdaptersApi.list.mockResolvedValue([
+      { type: "paperclip_runner", disabled: false },
+      { type: "codex_local", disabled: false },
+      { type: "claude_local", disabled: false },
+    ]);
+    await renderPage();
+    await enterGithubUrl();
+    await clickButton((text) => text === "Preview import");
+    await clickButton((text) => text === "configure adapter");
+    // Import owns its outer harness picker; the expanded form edits that choice.
+    expect(container.querySelector('[aria-label="Harness"]')).toBeNull();
+    const harness = findAdapterSelects()[0];
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!.call(harness, "claude_local");
+      harness.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await clickButton((text) => text.startsWith("Import 3 file"));
+    await settle();
+    expect(lastImportMeta().adapterOverrides).toEqual({ coder: {
+      adapterType: "claude_local", runner: "auto", adapterConfig: {},
+    } });
+  });
+
+  it.each(["modelReasoningEffort", "reasoningEffort", "effort"].flatMap(sourceEffortKey => ([
+    ["an unrelated model edit", "model", "high"],
+    ["a lower effort", "low", "low"],
+    ["automatic effort", "", undefined],
+  ] as const).map(([label, edit, expectedEffort]) => [sourceEffortKey, label, edit, expectedEffort] as const)))("sends the chosen native Codex %s after %s", async (sourceEffortKey, _, edit, expectedEffort) => {
+    const preview = buildMixedAdapterPreviewResult();
+    const env = { OPENAI_API_KEY: { type: "secret_ref", secretId: "company-1-openai", version: "latest" } };
+    preview.manifest.agents[0] = {
+      ...preview.manifest.agents[0], adapterType: "paperclip_runner", runner: "paperclip",
+      adapterConfig: { provider: "codex", model: "gpt-5.4", [sourceEffortKey]: "high", codexPermissionMode: "never", env },
+    };
+    mockCompaniesApi.importPreview.mockResolvedValue(preview);
+    mockAdaptersApi.list.mockResolvedValue([
+      { type: "paperclip_runner", disabled: false },
+      { type: "codex_local", disabled: false },
+    ]);
+    await renderPage();
+    await enterGithubUrl();
+    await clickButton((text) => text === "Preview import");
+    await clickButton((text) => text === "configure adapter");
+    const effort = container.querySelector<HTMLButtonElement>('[aria-label="Thinking effort"]');
+    expect(effort?.textContent).toBe("High");
+    if (edit === "model") {
+      const model = container.querySelector<HTMLButtonElement>('[aria-label="Model"]');
+      await act(async () => model!.click());
+      await flushReact();
+      const search = document.querySelector<HTMLInputElement>('[aria-label="Search models"]');
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(search, "gpt-5.5");
+        search!.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      await flushReact();
+      const manual = [...document.querySelectorAll<HTMLButtonElement>('[role="option"]')]
+        .find(button => button.textContent?.includes("Use manual model"));
+      expect(manual).toBeTruthy();
+      await act(async () => manual!.click());
+    } else {
+      await act(async () => effort!.click());
+      await flushReact();
+      const option = document.querySelector<HTMLButtonElement>(`[role="listbox"][aria-label="Thinking effort"] [data-value="${edit}"]`);
+      expect(option).toBeTruthy();
+      await act(async () => option!.click());
+    }
+    await flushReact();
+    await clickButton((text) => text.startsWith("Import 3 file"));
+    await settle();
+
+    // Inspect the JSON request, including omission when Auto clears a saved key.
+    const overrides = JSON.parse(JSON.stringify(lastImportMeta().adapterOverrides));
+    expect(overrides.coder).toMatchObject({ adapterType: "paperclip_runner", runner: "paperclip",
+      adapterConfig: { provider: "codex", model: edit === "model" ? "gpt-5.5" : "gpt-5.4", codexPermissionMode: "never", env },
+    });
+    if (expectedEffort) expect(overrides.coder.adapterConfig.modelReasoningEffort).toBe(expectedEffort);
+    else expect(overrides.coder.adapterConfig).not.toHaveProperty("modelReasoningEffort");
+    expect(overrides.coder.adapterConfig).not.toHaveProperty("reasoningEffort");
+    expect(overrides.coder.adapterConfig).not.toHaveProperty("effort");
+  });
+
   it.each([true, false])("preserves imported legacy Codex settings and secret references on a command edit (flags=%s)", async (enabled) => {
     const preview = buildMixedAdapterPreviewResult();
     const adapterConfig = {

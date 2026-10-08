@@ -18,6 +18,7 @@ import { CodexLocalConfigFields } from "../adapters/codex-local/config-fields";
 import type { AdapterConfigFieldsProps } from "../adapters/types";
 import { DEFAULT_CODEX_LOCAL_MODEL } from "@paperclipai/adapter-codex-local";
 import { buildPaperclipRunnerConfig } from "@paperclipai/adapter-codex-local/ui";
+import { resolveAgentRunnerConfig } from "@paperclipai/adapter-utils";
 
 const mockAgentsApi = vi.hoisted(() => ({
   adapterModels: vi.fn(),
@@ -797,6 +798,106 @@ describe("AgentConfigForm environment selector", () => {
     await act(async () => save.click());
     expect(result.onSave).toHaveBeenCalledWith(expect.objectContaining({ adapterConfig: expect.objectContaining({ thinking: "low" }) }));
     expect(result.onSave.mock.calls[0][0].adapterConfig.effort).toBeUndefined();
+  });
+
+  it.each([
+    ["paperclip_runner", "paperclip", "gemini_local", "gemini_local"],
+    ["paperclip_runner", "paperclip", "claude_local", "paperclip_runner"],
+    ["codex_local", "legacy", "claude_local", "paperclip_runner"],
+    ["codex_local", "legacy", "gemini_local", "gemini_local"],
+  ] as const)("resets %s/%s runner selection when changing the harness to %s", async (adapterType, runner, harness, expectedAdapterType) => {
+    const result = await renderStatefulCreateClaudeSandbox([], {
+      adapterType, runner, defaultEnvironmentId: "", model: "source-codex-model",
+      adapterSchemaValues: adapterType === "paperclip_runner"
+        ? { provider: "codex", model: "source-codex-model" } : {},
+      envBindings: { CODEX_HOME: "/source/account" },
+    }, true);
+    roots.push(result.root);
+    const menu = await openPicker(result.container, "Harness");
+    const option = menu.querySelector<HTMLButtonElement>(`[data-value="${harness}"]`);
+    expect(option).toBeTruthy();
+    await act(async () => option!.click());
+    await flushReact();
+
+    const values = result.valuesRef.current;
+    expect(values.runner).toBe("auto");
+    expect(values.adapterType).toBe(expectedAdapterType);
+    expect(values.envBindings).toEqual({});
+    expect(JSON.stringify(values.adapterSchemaValues)).not.toContain("source-codex-model");
+    expect(resolveAgentRunnerConfig({
+      adapterType: values.adapterType,
+      runner: values.runner,
+      adapterConfig: values.adapterType === "paperclip_runner" ? buildPaperclipRunnerConfig(values) : {},
+    }).adapterType).toBe(expectedAdapterType);
+    if (harness === "gemini_local") {
+      await runTest(result.container);
+      expect(mockAgentsApi.testEnvironment).toHaveBeenLastCalledWith("company-1", "gemini_local", expect.objectContaining({ runner: "auto" }));
+    }
+  });
+
+  it.each([
+    ["codex_local", "legacy"],
+    ["paperclip_runner", "paperclip"],
+  ] as const)("preserves explicit %s/%s creation settings when the selected harness is picked again", async (adapterType, runner) => {
+    const result = await renderStatefulCreateClaudeSandbox([], {
+      adapterType, runner, defaultEnvironmentId: "", model: "source-codex-model",
+      thinkingEffort: "high", envBindings: { CODEX_HOME: "/source/account" },
+      adapterSchemaValues: adapterType === "paperclip_runner" ? { provider: "codex", modelReasoningEffort: "high" } : {},
+    }, true);
+    roots.push(result.root);
+    const before = structuredClone(result.valuesRef.current);
+    const menu = await openPicker(result.container, "Harness");
+    await act(async () => menu.querySelector<HTMLButtonElement>('[data-value="codex_local"]')!.click());
+    await flushReact();
+    expect(result.valuesRef.current).toEqual(before);
+  });
+
+  it("keeps an existing legacy agent on its saved runner when its current harness is picked again", async () => {
+    const result = await renderForm([], {
+      adapterType: "codex_local",
+      adapterConfig: { model: "source-codex-model", search: true, command: "/source/codex" },
+    }, { showAdapterTypeField: true });
+    roots.push(result.root);
+    const menu = await openPicker(result.container, "Harness");
+    await act(async () => menu.querySelector<HTMLButtonElement>('[data-value="codex_local"]')!.click());
+    await flushReact();
+    expect(result.container.textContent).not.toContain("Unsaved changes");
+    expect(result.container.querySelector('[aria-label="Runner"]')?.textContent).toBe("Legacy runner");
+    expect(result.onSave).not.toHaveBeenCalled();
+  });
+
+  it.each(["modelReasoningEffort", "reasoningEffort", "effort"].flatMap(sourceEffortKey => ([
+    ["an unrelated edit", "name"],
+    ["a lower effort", "low"],
+    ["automatic effort", ""],
+  ] as const).map(([label, edit]) => [sourceEffortKey, label, edit] as const)))("edits a saved native Codex %s after %s", async (sourceEffortKey, _, edit) => {
+    const adapterConfig = {
+      provider: "codex", model: "gpt-5.4", [sourceEffortKey]: "high", codexPermissionMode: "never",
+      lifecycleMode: "per_turn", customPolicy: { retained: true },
+      env: { OPENAI_API_KEY: { type: "secret_ref", secretId: "company-1-openai", version: "latest" } },
+    };
+    const result = await renderForm([], { adapterType: "paperclip_runner", adapterConfig });
+    roots.push(result.root);
+    expect(result.container.querySelector('[aria-label="Thinking effort"]')?.textContent).toBe("High");
+    if (edit === "name") {
+      await act(async () => setInputValue(result.container.querySelector<HTMLInputElement>('input[placeholder="Agent name"]')!, "Renamed Codex"));
+    } else {
+      const menu = await openPicker(result.container, "Thinking effort");
+      const option = menu.querySelector<HTMLButtonElement>(`[data-value="${edit}"]`);
+      expect(option).toBeTruthy();
+      await act(async () => option!.click());
+    }
+    await flushReact();
+    await clickByText(result.container, "Save");
+    const patch = JSON.parse(JSON.stringify(result.onSave.mock.calls[0]?.[0]));
+    if (edit === "name") {
+      expect(patch).toEqual({ name: "Renamed Codex" });
+    } else {
+      const expectedConfig = { ...adapterConfig } as Record<string, unknown>;
+      for (const key of ["modelReasoningEffort", "reasoningEffort", "effort"]) delete expectedConfig[key];
+      if (edit) expectedConfig.modelReasoningEffort = edit;
+      expect(patch).toEqual({ adapterConfig: expectedConfig, replaceAdapterConfig: true });
+    }
   });
 
   it.each([

@@ -975,6 +975,9 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
   const [runPolicyAdvancedOpen, setRunPolicyAdvancedOpen] = useState(false);
   const [configurationAdvancedOpen, setConfigurationAdvancedOpen] = useState(false);
   function selectHarness(harness: string) {
+                  // Picking the current harness must preserve its explicit runner
+                  // and saved configuration, including existing legacy agents.
+                  if (harness === modelHarness) return;
                   try {
                     const model = "";
                     const resolved: { adapterType: string; adapterConfig: Record<string, unknown> } = harness === "openai_dot"
@@ -985,7 +988,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                       ? { adapterType: "paperclip_runner", adapterConfig: { provider: "acpx", acpxAgent: "cursor", model: "", lifecycleMode: "per_turn" } }
                       : resolveAgentRunnerConfig({ adapterType: harness, adapterConfig: { model }, nativeSupported: runnerAdapters?.find(a => a.type === harness)?.defaultRunner !== "legacy" });
                     setRunnerSelectionError(null);
-                    if (isCreate) set!({ ...defaultCreateValues, adapterType: resolved.adapterType, model: String(resolved.adapterConfig.model ?? ""), adapterSchemaValues: resolved.adapterConfig });
+                    if (isCreate) set!({ ...defaultCreateValues, runner: "auto", adapterType: resolved.adapterType, model: String(resolved.adapterConfig.model ?? ""), adapterSchemaValues: resolved.adapterConfig });
                     else setOverlay(prev => {
                       const currentRuntime = (prev.runtime.runtimeConfig as Record<string, unknown> | undefined) ?? runtimeConfig;
                       const binding = aiRuntimeConnectionBindingSchema.safeParse(currentRuntime.aiConnection).data;
@@ -1340,7 +1343,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
       ? eff(
           "adapterConfig",
           "modelReasoningEffort",
-          String(config.modelReasoningEffort ?? config.reasoningEffort ?? ""),
+          String(config.modelReasoningEffort ?? config.reasoningEffort ?? (adapterType === "paperclip_runner" ? config.effort : undefined) ?? ""),
         )
       : adapterType === "cursor"
         ? eff("adapterConfig", "mode", String(config.mode ?? ""))
@@ -1818,11 +1821,20 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                   <ThinkingEffortDropdown
                     value={currentThinkingEffort}
                     options={thinkingEffortOptions}
-                    onChange={(v) =>
-                      isCreate
-                        ? set!({ thinkingEffort: v })
-                        : mark("adapterConfig", thinkingEffortKey, v || undefined)
-                    }
+                    onChange={(v) => {
+                      if (isCreate) {
+                        set!({ thinkingEffort: v });
+                      } else if (adapterType === "paperclip_runner" && modelHarness === "codex_local") {
+                        // Canonicalize only an explicit effort edit. Choosing Auto
+                        // must also clear aliases the native runtime would read.
+                        setOverlay(prev => ({ ...prev, adapterConfig: {
+                          ...prev.adapterConfig, modelReasoningEffort: v || undefined,
+                          reasoningEffort: undefined, effort: undefined,
+                        } }));
+                      } else {
+                        mark("adapterConfig", thinkingEffortKey, v || undefined);
+                      }
+                    }}
                     open={thinkingEffortOpen}
                     onOpenChange={setThinkingEffortOpen}
                   />

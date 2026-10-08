@@ -620,7 +620,10 @@ function importedAdapterConfigValues(agent: AdapterPickerItem | undefined, selec
     command: text("command"),
     args: Array.isArray(legacyConfig.args) ? legacyConfig.args.join(", ") : "",
     extraArgs: Array.isArray(legacyConfig.extraArgs) ? legacyConfig.extraArgs.join(", ") : "",
-    thinkingEffort: text("modelReasoningEffort") || text("effort") || text("reasoningEffort") || text("variant"),
+    thinkingEffort: sameHarness && selectedType === "paperclip_runner"
+      && agentHarnessType(selectedType, agent.adapterConfig) === "codex_local"
+      ? String(agent.adapterConfig?.modelReasoningEffort ?? agent.adapterConfig?.reasoningEffort ?? agent.adapterConfig?.effort ?? "")
+      : text("modelReasoningEffort") || text("effort") || text("reasoningEffort") || text("variant"),
     chrome: legacyConfig.chrome === true,
     dangerouslySkipPermissions: legacyConfig.dangerouslySkipPermissions !== false,
     search: legacyConfig.search === true,

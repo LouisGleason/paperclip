@@ -235,7 +235,14 @@ export function buildPaperclipRunnerConfig(v: CreateConfigValues): Record<string
     ...schemaValues,
     provider,
     ...(provider === "codex"
-      ? { model: resolvePaperclipRunnerModel("codex", config.model) }
+      ? {
+          model: resolvePaperclipRunnerModel("codex", config.model),
+          // The ordinary Thinking effort control owns this field, including
+          // an explicit Auto clear when imports merge with their source config.
+          modelReasoningEffort: config.modelReasoningEffort,
+          ...("reasoningEffort" in schemaValues ? { reasoningEffort: undefined } : {}),
+          ...("effort" in schemaValues ? { effort: undefined } : {}),
+        }
       : {}),
     codexPermissionMode: "never",
     opencodePermissionMode: resolvePaperclipRunnerPermissionMode(
