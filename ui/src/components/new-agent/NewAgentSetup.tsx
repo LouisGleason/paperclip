@@ -114,7 +114,9 @@ function Setup({
   const isRunner = adapterType === "paperclip_runner";
   const isDot = isRunner && runnerProvider === "openai_dot";
   const brandType = isDot ? "openai_dot" : isRunner
-    ? runnerProvider === "grok"
+    ? runnerProvider === "copilot"
+      ? "copilot_runtime"
+      : runnerProvider === "grok"
       ? "grok_local"
       : runnerProvider === "claude"
       ? "claude_local"
@@ -152,7 +154,9 @@ function Setup({
     null,
   );
   const [runtimeAiBinding, setRuntimeAiBinding] = useState<AiConnectionBinding | undefined>(() =>
-    brandType === "opencode_local"
+    brandType === "copilot_runtime"
+      ? { provider: "github", method: "api_key", mode: "responsible_user" }
+      : brandType === "opencode_local"
       ? { provider: "openrouter", method: "api_key", mode: "responsible_user" }
       : undefined,
   );
@@ -225,12 +229,6 @@ function Setup({
     queryKey: queryKeys.environments.capabilities(companyId),
     queryFn: () => environmentsApi.capabilities(companyId),
   });
-  const models = useQuery({
-    queryKey: queryKeys.agents.adapterModels(companyId, brandType, null, aiBinding?.provider),
-    queryFn: () => agentsApi.adapterModels(companyId, brandType, { provider: aiBinding?.provider }),
-    enabled: Boolean(brandType) && showModel && !connectionModels,
-    retry: false,
-  });
   const companySecrets = useQuery({
     queryKey: queryKeys.secrets.list(companyId),
     queryFn: () => secretsApi.list(companyId),
@@ -271,6 +269,14 @@ function Setup({
         ? cause.message
         : "Could not resolve the environment.";
   }
+  const models = useQuery({
+    queryKey: queryKeys.agents.adapterModels(companyId, brandType, environmentId, brandType === "copilot_runtime" ? JSON.stringify(aiBinding ?? null) : aiBinding?.provider),
+    queryFn: () => agentsApi.adapterModels(companyId, brandType === "copilot_runtime" ? "paperclip_runner" : brandType, brandType === "copilot_runtime"
+      ? { provider: "acpx", acpxAgent: "copilot", aiConnection: aiBinding, environmentId }
+      : { provider: aiBinding?.provider, environmentId }),
+    enabled: Boolean(brandType) && showModel && !connectionModels && (brandType !== "copilot_runtime" || Boolean(aiBinding)),
+    retry: false,
+  });
   const environment = envs.data?.find((env) => env.id === environmentId);
   const sandboxProvider =
     typeof environment?.config?.provider === "string"
@@ -355,9 +361,9 @@ function Setup({
       ...(isRunner
         ? {
             adapterSchemaValues: {
-              provider: (runnerProvider === "claude" || runnerProvider === "grok") ? "acpx" : runnerProvider,
+              provider: (runnerProvider === "claude" || runnerProvider === "grok" || runnerProvider === "copilot") ? "acpx" : runnerProvider,
               ...(isDot ? { allowUnmeteredProvider } : {}),
-              ...((runnerProvider === "claude" || runnerProvider === "grok") ? { acpxAgent: runnerProvider } : {}),
+              ...((runnerProvider === "claude" || runnerProvider === "grok" || runnerProvider === "copilot") ? { acpxAgent: runnerProvider } : {}),
             },
           }
         : {}),
@@ -365,8 +371,8 @@ function Setup({
     const config = getUIAdapter(adapterType).buildAdapterConfig(values);
     if (isRunner)
       Object.assign(config, {
-        provider: (runnerProvider === "claude" || runnerProvider === "grok") ? "acpx" : runnerProvider,
-        ...((runnerProvider === "claude" || runnerProvider === "grok") ? { acpxAgent: runnerProvider } : {}),
+        provider: (runnerProvider === "claude" || runnerProvider === "grok" || runnerProvider === "copilot") ? "acpx" : runnerProvider,
+        ...((runnerProvider === "claude" || runnerProvider === "grok" || runnerProvider === "copilot") ? { acpxAgent: runnerProvider } : {}),
         ...(model ? { model } : {}),
       });
     if (!aiBinding && !nextConnection?.aiConnection && hasCredentialField && binding) {
@@ -1162,6 +1168,7 @@ function Setup({
                     </fieldset>
                     <RuntimeTestCard
                       variant={isDot ? "prerequisites" : "connection"}
+                      metadataOnly={brandType === "copilot_runtime"}
                       state={testState}
                       result={result}
                       error={error}

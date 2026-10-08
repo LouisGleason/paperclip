@@ -15,6 +15,7 @@ import { prepareManagedAiRuntime, withManagedAiProbe, assertManagedAiProjectAuth
 import { ADAPTER_AUTH_MISSING_CHECK_CODE, AI_CONNECTION_CAPABILITIES, aiConnectionBindingSchema, type AiConnectionBinding, aiRuntimeConnectionBindingSchema, type AiRuntimeConnectionBinding } from "@paperclipai/shared";
 import { toolConnections } from "@paperclipai/db";
 import { aiConnectionService } from "../services/ai-connections.js";
+import { probeCopilotConnection, probeCopilotExecutionTarget } from "../services/copilot-connection-probe.js";
 import { defaultAiConnectionForHire } from "../services/agent-ai-connection-default.js";
 import { assertAiConnectionCreateAccess, canInstallSharedAiConnectionForNewAgent, responsibleUserForAiRequest, validateAiApiKey } from "./ai-connections.js";
 import { isAiConnectionCompatible } from "@paperclipai/shared";
@@ -3385,6 +3386,23 @@ export function agentRoutes(
       return;
     }
     const provider = asNonEmptyString(req.query.provider);
+    if (type === "paperclip_runner" && provider === "acpx" && req.query.acpxAgent === "copilot") {
+      const userId = responsibleUserForAiRequest(req);
+      let binding: AiConnectionBinding = { provider: "github", method: "api_key", mode: "responsible_user" };
+      if (typeof req.query.aiConnection === "string") {
+        if (req.query.aiConnection.length > 4096) throw unprocessable("Invalid AI connection binding");
+        try { binding = aiConnectionBindingSchema.parse(JSON.parse(req.query.aiConnection)); }
+        catch { throw unprocessable("Invalid AI connection binding"); }
+      }
+      if (binding.provider !== "github") throw unprocessable("Select a GitHub Copilot AI connection");
+      const service = aiConnectionService(db);
+      const selection = await service.select({ companyId, userId, agentId: asNonEmptyString(req.query.agentId) ?? "00000000-0000-0000-0000-000000000000",
+        adapterType: type, runnerProvider: "acpx", acpxAgent: "copilot", binding, allowUninstalledPersonal: true, allowUninstalledShared: req.actor.type === "board" });
+      const metadata = await probeCopilotConnection(db, companyId, await service.credential(selection), environmentId, undefined, { pluginWorkerManager: options.pluginWorkerManager });
+      res.setHeader("Cache-Control", "no-store");
+      res.json(metadata.models);
+      return;
+    }
     if (type === "opencode_local" && provider === "openrouter") {
       res.json(await listOpenRouterModels(refresh));
       return;
@@ -3456,7 +3474,7 @@ export function agentRoutes(
     // missing CLI, unavailable environment, or other runtime error does not.
     if (result.status === "fail" && result.checks.some(check =>
       check.code === ADAPTER_AUTH_MISSING_CHECK_CODE || /_hello_probe_auth_required$/.test(check.code)
-        || check.code === "ai_connection_api_key_rejected",
+        || check.code === "ai_connection_api_key_rejected" || check.code === "COPILOT_AUTH_REQUIRED",
     )) {
       await aiConnectionService(db).markAuthenticationFailed({
         companyId: context.companyId, agentId, runStartedAt: startedAt,
@@ -3467,6 +3485,18 @@ export function agentRoutes(
   }
 
   async function probeManagedEnvironment(adapterType: string, context: Parameters<ReturnType<typeof requireServerAdapter>["testEnvironment"]>[0], binding: AiConnectionBinding) {
+    if (binding.provider === "github") {
+      try {
+        const token = parseObject(context.config.env).COPILOT_GITHUB_TOKEN;
+        if (typeof token !== "string" || !token) throw unprocessable("Select a saved Copilot token.", { code: "COPILOT_AUTH_REQUIRED" });
+        const model = asNonEmptyString(context.config.model);
+        if (!model || ["auto", "default"].includes(model.toLowerCase())) throw unprocessable("Select an available Copilot model.", { code: "COPILOT_MODEL_UNAVAILABLE" });
+        await probeCopilotExecutionTarget(token, context.executionTarget, model);
+        return { adapterType, status: "pass" as const, testedAt: new Date().toISOString(), checks: [{ code: "copilot_metadata_verified", level: "info" as const, message: "The verified Copilot runtime authenticated this account and accepted the selected model. No model prompt was sent." }] };
+      } catch (error) {
+        return { adapterType, status: "fail" as const, testedAt: new Date().toISOString(), checks: [{ code: error instanceof HttpError ? String(asRecord(error.details)?.code ?? "COPILOT_REQUEST_FAILED") : "COPILOT_REQUEST_FAILED", level: "error" as const, message: error instanceof HttpError ? error.message : "Copilot metadata verification failed." }] };
+      }
+    }
     await assertManagedAiProjectAuth(context.config, binding.provider, context.executionTarget);
     const result = await requireServerAdapter(adapterType).testEnvironment(context);
     if (result.status === "fail") return result;
