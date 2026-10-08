@@ -528,6 +528,7 @@ describe("GitHub App wizard", () => {
     await render("resume=draft-1");
     expect(container.querySelector("h1")?.textContent).toBe("GitHub connected");
     expect(container.textContent).toContain("Actual GitHub Name");
+    expect(container.textContent).toContain("GitHub App name and logo");
     expect(container.textContent).toContain("acme/repo");
     expect(container.textContent).toContain("Configure a runtime");
     expect(container.textContent).not.toContain("Finish");

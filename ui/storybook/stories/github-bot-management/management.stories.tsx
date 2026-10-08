@@ -15,7 +15,14 @@ import {
 } from "@/pages/apps/chat/GitHubBotManagement";
 import { ChatConversationList } from "@/pages/apps/chat/ChatConversationList";
 import {
+  GitHubAppBranding,
+  GitHubBotMention,
+} from "@/pages/apps/chat/GitHubAppIdentity";
+import { resolveAgentAppearance } from "@paperclipai/shared";
+import { agentAvatarUrl } from "@/lib/agent-avatar-url";
+import {
   endpoint,
+  agent,
   configuration,
   resources,
   reviews,
@@ -156,6 +163,24 @@ export const PeopleAccess: Story = {
 export const RepositoryAccess: Story = {
   name: "03 Components / Repository access",
   render: () => component(<Repositories />),
+};
+export const AppIdentityAndLogo: Story = {
+  name: "03 Components / App identity and logo",
+  render: () =>
+    component(
+      <div className="space-y-6">
+        <GitHubBotMention endpoint={endpoint} />
+        <GitHubAppBranding
+          endpoint={endpoint}
+          avatarUrl={agentAvatarUrl(
+            resolveAgentAppearance(agent.appearance, agent.id),
+            512,
+            1,
+            "rest",
+          )}
+        />
+      </div>,
+    ),
 };
 export const ReviewHistory: Story = {
   name: "03 Components / Review rows",

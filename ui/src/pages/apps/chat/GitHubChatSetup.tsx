@@ -22,6 +22,9 @@ import { useBreadcrumbs } from "@/context/BreadcrumbContext";
 import { useNavigate, useSearchParams, Link } from "@/lib/router";
 import { buildPermissionsForTrustPreset } from "@/lib/trust-policy-ui";
 import { copyTextToClipboard } from "@/lib/clipboard";
+import { resolveAgentAppearance } from "@paperclipai/shared";
+import { agentAvatarUrl } from "@/lib/agent-avatar-url";
+import { GitHubAppBranding, gitHubBotMention } from "./GitHubAppIdentity";
 
 /** Restrict native manifest submission to GitHub registration endpoints. */
 export function gitHubAppManifestAction(
@@ -233,7 +236,7 @@ export function GitHubChatSetup() {
         })}
       </div>
     );
-  const mention = `@${bot?.botUsername?.replace(/\[bot\]$/, "") ?? "your-bot"} review this pull request`;
+  const mention = `${(bot && gitHubBotMention(bot)) || "@your-bot"} review this pull request`;
   return (
     <div className="mx-auto w-full max-w-3xl space-y-6 px-4 py-6 sm:px-6">
       {!identityOnly && !connected && (
@@ -356,6 +359,8 @@ export function GitHubChatSetup() {
               {copied ? "Copied" : "Copy mention"}
             </Button>
           </div>
+          <GitHubAppBranding endpoint={bot}
+            avatarUrl={selectedAgent ? agentAvatarUrl(resolveAgentAppearance(selectedAgent.appearance, bot.assignedAgentId), 512, 1, "rest") : undefined} />
           <Link
             className="text-sm underline"
             to={`/apps/chat/${bot.id}/settings`}
@@ -649,6 +654,7 @@ export function GitHubChatSetup() {
             <Label htmlFor="github-app-name">App name</Label>
             <Input
               id="github-app-name"
+              aria-describedby="github-app-name-help"
               disabled={busy || !!state?.registration}
               maxLength={34}
               value={
@@ -659,6 +665,9 @@ export function GitHubChatSetup() {
               }
               onChange={(event) => setName(event.target.value)}
             />
+            <p id="github-app-name-help" className="text-xs text-muted-foreground">
+              Creates your own GitHub App. Its name determines the @mention; GitHub confirms the final handle.
+            </p>
           </div>
           <p className="text-sm text-muted-foreground">
             GitHub will ask you to approve creation and select repositories.

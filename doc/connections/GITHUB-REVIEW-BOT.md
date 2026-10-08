@@ -40,6 +40,23 @@ behavior, and narrower saved repository restrictions remain intact. Later
 repository additions require enablement in Access. Advanced review rules and
 prompts live in Settings.
 
+The App belongs to the selected account or organization and uses its own bot
+identity. The editable App name determines GitHub's slug and `@mention`; there
+is no separate editable bot username. Paperclip shows and copies the verified
+mention in the connected bot's header. Type `@app-slug`, without the `[bot]`
+suffix shown on GitHub's API author records.
+
+**GitHub App name and logo** is optional on the connected page and in Settings.
+Download the agent's avatar as a PNG, then follow the link to this App's GitHub
+settings to upload it under **Display information**. GitHub's
+[manifest parameters](https://docs.github.com/en/apps/sharing-github-apps/registering-a-github-app-from-a-manifest)
+do not include an avatar; the
+[logo upload](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/creating-a-custom-badge-for-your-github-app)
+remains a GitHub settings action. After renaming the App on GitHub, use the
+existing **reconnect this App** flow to refresh its verified identity using its
+stored credentials. Legacy manual connections without recorded ownership link
+to the App settings list instead of assuming an owner.
+
 Local instances receive public callbacks and signed events through an enrolled
 Paperclip Cloud connector, using outbound requests instead of a public tunnel.
 The Cloud gateway capability must be deployed before localhost onboarding.

@@ -14,6 +14,8 @@ import { GitHubPolicyEditor } from "./GitHubBotConfiguration";
 import { conversationDestination } from "./ChatConversationList";
 import { queryKeys } from "@/lib/queryKeys";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { gitHubAppSettingsUrl, gitHubBotMention } from "./GitHubAppIdentity";
+import type { ChatEndpoint } from "@/api/chatEndpoints";
 
 const mocks = vi.hoisted(() => ({
   tab: "settings",
@@ -217,6 +219,55 @@ describe("GitHub bot management", () => {
       );
     });
   }
+  it("shows the verified custom App mention and its own organization branding settings", async () => {
+    const branded: ChatEndpoint = {
+      ...endpoint,
+      provider: "github",
+      status: "active",
+      botLabel: "Maya Reviews",
+      botUsername: "maya-reviews[bot]",
+      providerAccountLabel: "acme",
+      setup: {
+        step: "complete",
+        github: {
+          stage: "verify",
+          ownerType: "organization",
+          ownerLogin: "acme",
+          appSlug: "old-draft-name",
+        },
+      },
+    };
+    mocks.get.mockResolvedValue(branded);
+    await render();
+    expect(
+      container.querySelector('button[aria-label="Copy GitHub mention"]')
+        ?.textContent,
+    ).toBe("@maya-reviews");
+    expect(container.textContent).toContain("This is your custom GitHub App");
+    const branding = [...container.querySelectorAll("a")].find((a) =>
+      a.textContent?.includes("Edit App name and logo"),
+    );
+    expect(branding?.href).toBe(
+      "https://github.com/organizations/acme/settings/apps/maya-reviews",
+    );
+    expect(
+      container.querySelector("a[download]")?.getAttribute("download"),
+    ).toBe("Maya-Reviews-avatar.png");
+    expect(mocks.save).not.toHaveBeenCalled();
+    expect(
+      gitHubAppSettingsUrl({
+        ...branded,
+        setup: {
+          step: "complete",
+          github: { stage: "verify", ownerType: "personal" },
+        },
+      }),
+    ).toBe("https://github.com/settings/apps/maya-reviews");
+    expect(
+      gitHubAppSettingsUrl({ ...branded, setup: { step: "complete" } }),
+    ).toBe("https://github.com/settings/apps");
+    expect(gitHubBotMention({ botUsername: null })).toBeNull();
+  });
   it("keeps one draft across Settings, Access, and read-only tabs, then saves with the original revision", async () => {
     await render();
     await input(container.querySelector("textarea")!, "Edited instructions");

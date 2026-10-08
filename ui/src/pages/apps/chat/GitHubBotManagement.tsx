@@ -36,6 +36,7 @@ import {
   GitHubToggle,
   githubSelectClass,
 } from "./GitHubBotConfiguration";
+import { GitHubAppBranding } from "./GitHubAppIdentity";
 
 export function GitHubRepositoryAccess({
   resources,
@@ -115,9 +116,11 @@ export function GitHubRepositoryAccess({
 export function GitHubBotManagement({
   endpoint,
   view,
+  avatarUrl,
 }: {
   endpoint: ChatEndpoint;
   view: "settings" | "access";
+  avatarUrl?: string;
 }) {
   const client = useQueryClient();
   const query = useQuery({
@@ -314,6 +317,7 @@ export function GitHubBotManagement({
                 )}
               </div>
             </details>
+            <GitHubAppBranding endpoint={endpoint} avatarUrl={avatarUrl} />
           </>
         )}
       </fieldset>

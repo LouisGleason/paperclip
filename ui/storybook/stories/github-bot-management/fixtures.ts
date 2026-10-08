@@ -25,7 +25,15 @@ export const endpoint: ChatEndpoint = {
   botUsername: "maya-reviews[bot]",
   providerAccountLabel: "acme",
   allowUnlinkedPeople: false,
-  setup: { step: "complete" },
+  setup: {
+    step: "complete",
+    github: {
+      stage: "verify",
+      appSlug: "maya-reviews",
+      ownerType: "organization",
+      ownerLogin: "acme",
+    },
+  },
 };
 export const configuration: GitHubChatConfiguration = {
   version: 1,

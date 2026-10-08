@@ -1,13 +1,11 @@
-import { useId, useState } from "react";
-import {
-  ArrowRight,
-  Check,
-  Download,
-  ExternalLink,
-  Loader2,
-} from "lucide-react";
+import { useId } from "react";
+import { ArrowRight, Check, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SetupWizardFooter } from "@/components/SetupWizard";
+import {
+  AgentAvatarDownload,
+  agentAvatarFilename,
+} from "@/components/AgentAvatarDownload";
 
 export interface SlackAvatarProps {
   agentName: string;
@@ -23,35 +21,7 @@ export function SlackAvatarContent({
   compact = false,
 }: SlackAvatarProps & { compact?: boolean }) {
   const id = useId();
-  const filename = `${appName.replace(/[^a-zA-Z0-9_-]+/g, "-") || "agent"}-avatar.png`;
-  const [downloading, setDownloading] = useState(false);
-  const [downloadError, setDownloadError] = useState(false);
-  const download = async () => {
-    if (downloading) return;
-    setDownloading(true);
-    setDownloadError(false);
-    try {
-      const response = await fetch(avatarUrl);
-      if (
-        !response.ok ||
-        !response.headers.get("content-type")?.startsWith("image/png")
-      )
-        throw new Error("Avatar unavailable");
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = filename;
-      document.body.append(link);
-      link.click();
-      link.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 1_000);
-    } catch {
-      setDownloadError(true);
-    } finally {
-      setDownloading(false);
-    }
-  };
+  const filename = agentAvatarFilename(appName);
   return (
     <div className="space-y-8">
       <section
@@ -76,29 +46,7 @@ export function SlackAvatarContent({
               PNG · 512 × 512 · Ready for Slack
             </p>
           </div>
-          <Button variant="outline" asChild>
-            <a
-              href={avatarUrl}
-              download={filename}
-              aria-disabled={downloading}
-              onClick={(event) => {
-                event.preventDefault();
-                void download();
-              }}
-            >
-              {downloading ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : (
-                <Download className="size-4" />
-              )}
-              Download avatar
-            </a>
-          </Button>
-          {downloadError && (
-            <p role="alert" className="text-sm text-destructive">
-              Couldn’t download the avatar. Try downloading it again.
-            </p>
-          )}
+          <AgentAvatarDownload avatarUrl={avatarUrl} name={appName} />
         </div>
       </section>
 

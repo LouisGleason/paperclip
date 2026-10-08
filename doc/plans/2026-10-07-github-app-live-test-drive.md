@@ -325,3 +325,34 @@ copy edit and passes. Repository typecheck/build, production Storybook build,
 and token gates pass; the final discovery change also received focused server
 typecheck/build. These checks do not qualify a new provider or model run. The
 earlier full-suite failure and outstanding current-head CI/review still apply.
+
+### Custom App identity and branding qualification
+
+The live bot is the dedicated **Animal Bot E2E 20261007** App owned by
+`paperclipai`, not the shared Paperclip App. Its verified GitHub author is
+`animal-bot-e2e-20261007[bot]`; the human mention is
+`@animal-bot-e2e-20261007`. The published review's GitHub author and App fields
+agree with the saved endpoint identity.
+
+The setup name field now explains GitHub's derived mention. Connected bots show
+the verified, copyable mention in the header. Settings and wizard completion
+share an optional App name/logo disclosure, the agent's PNG download, and the
+owning App's GitHub settings link. Personal accounts use their corresponding App
+settings path. Unknown legacy ownership uses the settings list, never an assumed
+organization or the installation settings page. A renamed App can refresh its
+identity through existing-App reconnect with stored credentials.
+
+The preserved test drive was restarted after an interruption. The live header
+showed the correct mention; copying and pasting it into an unsaved field proved
+the exact text, then the original field was restored without saving. Downloaded
+avatar is a 512×512 PNG, 30,616 bytes. Desktop and 390px branding layouts were
+inspected. GitHub's App settings link reached its signed-in re-authentication
+gate; no name or logo was changed, and App rename/reconnect was not tested live.
+GitHub's manifest has no logo field, so provider upload remains an optional
+GitHub settings action. No configuration, credentials or permissions changed in
+this walkthrough.
+
+All 59 focused management, setup, avatar-download and clipboard tests pass,
+including Slack's existing download/error/retry coverage for the shared
+downloader. UI typecheck/build, production Storybook build and token gates pass.
+The earlier full-suite failure and current-head CI/review limits still apply.
