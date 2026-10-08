@@ -24,6 +24,8 @@ export interface RemoteNativeSetupArtifacts {
   providerPackRoot: string;
   codexCommand?: string;
   manifest: ReturnType<typeof import("./native-session-executor.js").readRemoteProviderPackManifest>;
+  /** Controller-only proof that provider teardown and credential handoff settled. */
+  onCleanupConfirmed?: () => void;
 }
 
 /** Prepare the task's exact artifacts on an owned root, before any account probe. */
@@ -36,6 +38,14 @@ export async function withRemoteNativeSetupArtifacts(
   const target = context.executionTarget;
   // SSH Codex already owns its task preparation and confirmed cleanup below.
   if (target?.kind !== "remote" || (target.transport === "ssh" && provider === "codex")) return probe();
+  let claimedRoot: string | undefined;
+  let cleanup: (() => Promise<void>) | undefined;
+  let probeStarted = false;
+  let probeCleanupConfirmed = false;
+  let result: AdapterEnvironmentTestResult;
+  const redact = (message: string) => redactNativeProbeMessage(message,
+    Object.fromEntries(Object.entries(context.config.env && typeof context.config.env === "object" && !Array.isArray(context.config.env) ? context.config.env : {})
+      .filter((entry): entry is [string, string] => typeof entry[1] === "string")));
   try {
     const runner = target.transport === "ssh" ? createNativeSshCommandRunner({ spec: target.spec, defaultCwd: target.remoteCwd }) : target.runner;
     if (!runner) throw new Error("runner_transport_ineligible: remote process runner is unavailable");
@@ -64,21 +74,36 @@ export async function withRemoteNativeSetupArtifacts(
     const providerArtifacts = createRemoteProviderPackPreparation({ target, runner, manifest, configuredProviderPackRoot: configuredPack, stagedRemoteProviderPackRoot: providerPackRoot });
     const created = await runner.execute({ command: "sh", args: ["-c", `set -eu; umask 077; mkdir -p -- ${shellQuote(posix.dirname(remoteRoot))}; test -d ${shellQuote(posix.dirname(remoteRoot))} && test ! -L ${shellQuote(posix.dirname(remoteRoot))}; mkdir -m 0700 -- ${shellQuote(remoteRoot)}`], cwd: target.remoteCwd, bypassSession: true, timeoutMs: 10_000 });
     if (created.timedOut || created.exitCode !== 0) throw new Error("Native setup could not claim a private runtime directory in the selected environment.");
-    await nativeArtifacts.prepare(target.transport === "sandbox" && target.effectiveCapabilities?.runnerWebSocketIngress === true ? "listen_ws" : "dial_wss");
-    await providerArtifacts.prepare();
-    const result = await probe({ runnerBinary, controllerRunnerBinary, providerPackRoot, manifest, ...(codexCommand ? { codexCommand } : {}) });
-    // A passing native receipt requires provider teardown/copy-back completion.
-    // On failure keep private state; never delete an unconfirmed active probe.
-    if (result.status === "pass") {
+    claimedRoot = remoteRoot;
+    cleanup = async () => {
       const cleaned = await runner.execute({ command: "rm", args: ["-rf", "--", remoteRoot], cwd: target.remoteCwd, bypassSession: true, timeoutMs: 10_000 });
       if (cleaned.timedOut || cleaned.exitCode !== 0) throw new Error("Native setup artifact cleanup is incomplete; private recovery state was retained.");
-    }
-    return result;
+    };
+    await nativeArtifacts.prepare(target.transport === "sandbox" && target.effectiveCapabilities?.runnerWebSocketIngress === true ? "listen_ws" : "dial_wss");
+    await providerArtifacts.prepare();
+    probeStarted = true;
+    result = await probe({ runnerBinary, controllerRunnerBinary, providerPackRoot, manifest, ...(codexCommand ? { codexCommand } : {}),
+      onCleanupConfirmed: () => { probeCleanupConfirmed = true; } });
   } catch (error) {
-    return { adapterType: "paperclip_runner", status: "fail", testedAt: new Date().toISOString(), checks: [{ code: "paperclip_runner_runtime_unavailable", level: "error",
-      message: redactNativeProbeMessage(error instanceof Error ? error.message : "The selected environment could not prepare the native runtime.", Object.fromEntries(Object.entries(context.config.env && typeof context.config.env === "object" && !Array.isArray(context.config.env) ? context.config.env : {}).filter((entry): entry is [string, string] => typeof entry[1] === "string"))),
+    result = { adapterType: "paperclip_runner", status: "fail", testedAt: new Date().toISOString(), checks: [{ code: "paperclip_runner_runtime_unavailable", level: "error",
+      message: redact(error instanceof Error ? error.message : "The selected environment could not prepare the native runtime."),
       hint: "Check the controller's matching runner and provider-pack artifacts and the selected environment's upload capability. Legacy runner is available explicitly in Advanced." }] };
   }
+  if (!cleanup || !claimedRoot) return result;
+  const hint = redact(`Private recovery directory on the selected environment: ${claimedRoot}. Confirm provider teardown and credential handoff before removing this directory.`);
+  // Artifact preparation starts no account probe. Once entered, only explicit
+  // production teardown/copy-back proof permits deleting the claimed root.
+  if (probeStarted && !probeCleanupConfirmed) {
+    return { ...result, status: "fail", checks: [...result.checks, { code: "paperclip_runner_setup_state_retained", level: "error",
+      message: "Native setup private recovery state was retained because provider teardown or credential handoff was not confirmed.", hint }] };
+  }
+  try {
+    await cleanup();
+  } catch {
+    return { ...result, status: "fail", checks: [...result.checks, { code: "paperclip_runner_setup_cleanup_failed", level: "error",
+      message: "Native setup artifact cleanup is incomplete; private recovery state was retained.", hint }] };
+  }
+  return result;
 }
 
 /** Check the selected runtime as well as the separate provider authentication probe. */
@@ -343,8 +368,7 @@ export async function testNativeRunnerAuthentication(context: AdapterEnvironment
           console.log(JSON.stringify({ ...result, cleanupConfirmed, ...(codexCredentialRefreshPath ? { runtimeDirectory, codexCredentialRefreshPath } : {}) }));
         } catch (error) {
           const message = redactNativeProbeMessage(error instanceof Error ? error.message : 'The selected native runtime could not verify this account.', sensitiveEnvironment);
-          if (codexCredentialRefreshPath) console.log(JSON.stringify({ nativeProbeError: message, cleanupConfirmed, runtimeDirectory, codexCredentialRefreshPath }));
-          else { console.error(message); process.exitCode = 1; }
+          console.log(JSON.stringify({ nativeProbeError: message, cleanupConfirmed, ...(codexCredentialRefreshPath ? { runtimeDirectory, codexCredentialRefreshPath } : {}) }));
         }
       `;
       const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
@@ -381,6 +405,7 @@ export async function testNativeRunnerAuthentication(context: AdapterEnvironment
           throw error;
         }
       }
+      if (result.cleanupConfirmed === true) artifacts?.onCleanupConfirmed?.();
       if (result.nativeProbeError) throw new Error(result.nativeProbeError);
       if (result.cleanupConfirmed !== true) throw new Error("Native setup cleanup is incomplete; private recovery state was retained.");
       receipt = result;
@@ -446,15 +471,16 @@ export async function testNativeAcpxAuthentication(context: AdapterEnvironmentTe
         const environment = Object.fromEntries([...new Set([...names, ...${JSON.stringify(PROBE_TRANSPORT_ENV_KEYS)}])].filter(name => typeof process.env[name] === 'string').map(name => [name, process.env[name]]));
         const runtimeDirectory = await mkdtemp(join(tmpdir(), 'paperclip-native-setup-'));
         let grokCredentialRefreshPath;
+        let cleanupConfirmed = false;
         try {
-          const result = await probeQualifiedAcpxEnvironment({ runtimeDirectory, agent: process.argv[2], model: process.argv[3], environment, hello: true, timeoutMs: ${timeoutMs}, onGrokCredentialRefresh: async path => { grokCredentialRefreshPath = path; } });
+          const result = await probeQualifiedAcpxEnvironment({ runtimeDirectory, agent: process.argv[2], model: process.argv[3], environment, hello: true, timeoutMs: ${timeoutMs}, onGrokCredentialRefresh: async path => { grokCredentialRefreshPath = path; cleanupConfirmed = true; } });
           if (!grokCredentialRefreshPath) await rm(runtimeDirectory, { recursive: true, force: true });
-          console.log(JSON.stringify({ ...result, ...(grokCredentialRefreshPath ? { runtimeDirectory, grokCredentialRefreshPath } : {}) }));
+          cleanupConfirmed = true;
+          console.log(JSON.stringify({ ...result, cleanupConfirmed, ...(grokCredentialRefreshPath ? { runtimeDirectory, grokCredentialRefreshPath } : {}) }));
         } catch (error) {
           let message = error instanceof Error ? error.message : 'The selected native runtime could not verify this account.';
           message = redactNativeProbeMessage(message, environment);
-          if (grokCredentialRefreshPath) console.log(JSON.stringify({ nativeProbeError: message.slice(0, 2000), runtimeDirectory, grokCredentialRefreshPath }));
-          else { console.error(message.slice(0, 2000)); process.exitCode = 1; }
+          console.log(JSON.stringify({ nativeProbeError: message.slice(0, 2000), cleanupConfirmed, ...(grokCredentialRefreshPath ? { runtimeDirectory, grokCredentialRefreshPath } : {}) }));
         }
       `;
       const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
@@ -480,9 +506,12 @@ export async function testNativeAcpxAuthentication(context: AdapterEnvironmentTe
           if (read.timedOut || read.exitCode !== 0) throw Object.assign(new Error("Native Grok credential refresh handoff unavailable."), { code: read.exitCode === 66 ? "ENOENT" : "INVALID_CREDENTIAL" });
           return Buffer.from(read.stdout, "base64");
         } });
-        const cleaned = await runAdapterExecutionTargetShellCommand(`native-cleanup-${crypto.randomUUID()}`, context.executionTarget, 'rm -rf -- ' + quote(result.runtimeDirectory), { cwd: context.executionTarget.remoteCwd, env: {}, timeoutSec: 10 });
-        if (cleaned.timedOut || cleaned.exitCode !== 0) throw new Error("Native Grok setup credential cleanup failed.");
+        if (result.cleanupConfirmed === true) {
+          const cleaned = await runAdapterExecutionTargetShellCommand(`native-cleanup-${crypto.randomUUID()}`, context.executionTarget, 'rm -rf -- ' + quote(result.runtimeDirectory), { cwd: target.remoteCwd, env: {}, timeoutSec: 10 });
+          if (cleaned.timedOut || cleaned.exitCode !== 0) throw new Error("Native Grok setup credential cleanup failed.");
+        }
       }
+      if (result.cleanupConfirmed === true) artifacts?.onCleanupConfirmed?.();
       if (result.nativeProbeError) throw new Error(result.nativeProbeError);
       receipt = result;
     } else {

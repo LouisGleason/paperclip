@@ -50,6 +50,7 @@ import {
   PAPERCLIP_EXECUTION_PROMPT,
   PAPERCLIP_EXECUTION_PROMPT_REVISION,
   canonicalNativeRuntimeContextDigest,
+  composeNativeSystemInstructions,
   nativeRuntimePromptDigest,
   type NativeRuntimeContextSnapshot,
 } from "../contracts/runtime-context.js";
@@ -525,6 +526,36 @@ it("carries the provider attachment seed across consecutive authority rotations"
     },
     workspace: { cwd: "/workspace" },
   });
+});
+
+it.each(["native", "semantic-tools"] as const)("retargets the trusted %s instruction frame without rewriting entry text or opaque instructions", (workingCopyAccess) => {
+  const prior = assignedRuntimeContext("/skills/one", "/instructions/one");
+  prior.instructions.workingCopy = { rootPath: "/private/agent-one", entryPath: "AGENTS.md" };
+  const current = assignedRuntimeContext("/skills/two", "/instructions/two");
+  current.instructions.workingCopy = { rootPath: "/private/agent-two", entryPath: "AGENTS.md" };
+  const priorSnapshot = structuredClone(prior);
+  const currentSnapshot = structuredClone(current);
+  const entry = `Keep this historical example: /private/agent-one/AGENTS.md\n\nQuoted frame:\n${composeNativeSystemInstructions(prior, "", { workingCopyAccess })}`;
+  const instructions = composeNativeSystemInstructions(prior, entry, { workingCopyAccess });
+  const identity = { runnerInstanceId: "runner", environmentLeaseId: "lease", runId: "new-run", normalizedSessionId: "session", turnId: "turn", itemId: "item" };
+  const seed = { provider: { kind: "acpx", instructions, runtimeContext: prior } };
+  for (const refreshed of [undefined, { text: instructions, context: prior }]) {
+    const payload = runnerdRecoveryInternals.rotatedRunAttachPayload(
+      { runAttachTemplate: seed }, identity, null, undefined, current, refreshed,
+    );
+    expect(payload).toMatchObject({ provider: {
+      instructions: composeNativeSystemInstructions(current, entry, { workingCopyAccess }),
+      runtimeContext: current,
+    } });
+  }
+  const opaque = "Opaque caller instructions with no trusted runtime framing.";
+  const opaquePayload = runnerdRecoveryInternals.rotatedRunAttachPayload(
+    { runAttachTemplate: { provider: { ...seed.provider, instructions: opaque } } },
+    identity, null, undefined, current,
+  );
+  expect(opaquePayload).toMatchObject({ provider: { instructions: opaque, runtimeContext: current } });
+  expect(prior).toEqual(priorSnapshot);
+  expect(current).toEqual(currentSnapshot);
 });
 
 it("replays the durable run attachment outcome and latest provider identity", () => {

@@ -18,6 +18,8 @@ import { promisify } from "node:util";
 import { getCACertificates } from "node:tls";
 import { createHash } from "node:crypto";
 import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
+import { gzipSync } from "node:zlib";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -702,6 +704,119 @@ describe("OpenCodeServerDriver", () => {
     }
   });
 
+  it.each([
+    ["openrouter", "OPENROUTER_API_KEY", "https://openrouter.ai/api/v1", "@openrouter/ai-sdk-provider", "chat"],
+    ["openai", "OPENAI_API_KEY", "https://api.openai.com/v1", "@ai-sdk/openai", "openai"],
+    ["anthropic", "ANTHROPIC_API_KEY", "https://api.anthropic.com/v1", "@ai-sdk/anthropic", "anthropic"],
+  ] as const)("keeps assigned %s authentication in the broker and out of inherited model-shell environment", async (provider, selectedKey, baseURL, npm, protocol) => {
+    await chmod(fixture, 0o755);
+    const root = await mkdtemp(join(tmpdir(), "paperclip-opencode-broker-credentials-"));
+    roots.push(root);
+    const credentials = { OPENROUTER_API_KEY: "assigned-router-canary", OPENAI_API_KEY: "assigned-openai-canary", ANTHROPIC_API_KEY: "assigned-anthropic-canary", PAPERCLIP_AI_PROVIDER_KEY: "unselected-gateway-canary" };
+    expect(openCodeServerDriverInternals.openCodeProviderBinding(provider, credentials)).toEqual({ baseURL, npm, protocol, key: credentials[selectedKey] });
+    const shellWrapper = join(root, "shell-environment.mjs");
+    // Match the pinned harness's shell environment inheritance, while recording
+    // only key-presence booleans. No real provider or inference is involved.
+    await writeFile(shellWrapper, `#!/usr/bin/env node\nimport {execFileSync} from "node:child_process";\nimport {writeFileSync} from "node:fs";\nimport {join} from "node:path";\nconst presence = execFileSync("sh", ["-c", '\"$1\" -e \"$2\"', "sh", process.execPath, ${JSON.stringify(`process.stdout.write(JSON.stringify(Object.fromEntries(${JSON.stringify(Object.keys(credentials))}.map(key => [key, process.env[key] !== undefined]))))`)}], {env: {...process.env}});\nwriteFileSync(join(process.env.XDG_DATA_HOME, "model-shell-credentials.json"), presence);\nawait import(${JSON.stringify(pathToFileURL(fixture).href)});\n`, { mode: 0o755 });
+    const driver = new OpenCodeServerDriver({ model: `${provider}/selected/model`, runtimeDirectory: root, command: shellWrapper, environment: { PATH: process.env.PATH, ...credentials } });
+    const session = await driver.openSession({ runId: provider, normalizedSessionId: provider, workingDirectory: root });
+    try {
+      const configText = await readFile(join(root, provider, "config/opencode/opencode.json"), "utf8");
+      const config = JSON.parse(configText);
+      expect(config.model).toBe(`${provider}/selected/model`);
+      expect(config.small_model).toBe(config.model);
+      expect(config.provider[provider]).toMatchObject({ npm, options: { baseURL: expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+\/v1$/), apiKey: expect.any(String) }, models: { "selected/model": { name: "selected/model" } } });
+      for (const key of Object.values(credentials)) expect(configText).not.toContain(key);
+      expect(JSON.parse(await readFile(join(root, provider, "data/model-shell-credentials.json"), "utf8"))).toEqual(Object.fromEntries(Object.keys(credentials).map(key => [key, false])));
+      const environment = JSON.parse(await readFile(join(root, provider, "data/fake-environment.json"), "utf8"));
+      expect(environment.credentialDigests).toEqual({});
+      for (const key of Object.keys(credentials)) expect(environment.keys).not.toContain(key);
+    } finally { await session.close({ reason: "credential isolation test" }); }
+  });
+
+  it.each([
+    ["openai", "@ai-sdk/openai", "/responses"],
+    ["chat", "@openrouter/ai-sdk-provider", "/chat/completions"],
+    ["anthropic", "@ai-sdk/anthropic", "/messages"],
+  ] as const)("brokers %s selected-model requests with provider-native authentication and revokes the capability", async (protocol, npm, endpoint) => {
+    const received: Array<{ path: string; headers: Record<string, unknown>; body: unknown }> = [];
+    const upstream = createHttpServer((request, response) => {
+      void (async () => {
+        const chunks = [];
+        for await (const chunk of request) chunks.push(Buffer.from(chunk));
+        const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+        received.push({ path: request.url!, headers: request.headers, body });
+        if (!body.stream) {
+          response.writeHead(401, { "content-type": "application/json", "content-encoding": "gzip" }).end(gzipSync('{"error":"runner-only-key"}'));
+          return;
+        }
+        response.writeHead(200, { "content-type": "text/event-stream", "retry-after": "runner-only-key", "x-private-header": "not-forwarded" });
+        response.write('data: {"type":"fixture","echo":"runner-');
+        setImmediate(() => response.end('only-key"}\n\n'));
+      })().catch(() => response.destroy());
+    });
+    await new Promise<void>(resolve => upstream.listen(0, "127.0.0.1", resolve));
+    const address = upstream.address();
+    if (!address || typeof address === "string") throw new Error("Missing provider fixture address");
+    const broker = await openCodeServerDriverInternals.startOpenCodeProviderProxy({ baseURL: `http://127.0.0.1:${address.port}/custom/v1`, key: "runner-only-key", protocol, npm }, "selected/model", {});
+    const otherBroker = await openCodeServerDriverInternals.startOpenCodeProviderProxy({ baseURL: `http://127.0.0.1:${address.port}/custom/v1`, key: "other-key", protocol, npm }, "other/model", {});
+    const authentication: Record<string, string> = protocol === "anthropic" ? { "x-api-key": broker.token } : { Authorization: `Bearer ${broker.token}` };
+    const headers = { ...authentication, "Content-Type": "application/json", "anthropic-version": "2023-06-01", "anthropic-beta": "fine-grained-tool-streaming-2025-05-14", "x-unapproved-header": "do-not-forward" };
+    const payload = { model: "selected/model", stream: true, ...(protocol === "openai" ? { input: "test" } : { messages: [{ role: "user", content: "test" }] }) };
+    try {
+      const request = (path: string, value = payload, requestHeaders: Record<string, string> = headers) => fetch(`${broker.baseURL}${path}`, { method: "POST", headers: requestHeaders, body: JSON.stringify(value) });
+      expect((await request(endpoint, payload, { "Content-Type": "application/json" })).status).toBe(401);
+      expect((await fetch(`${otherBroker.baseURL}${endpoint}`, { method: "POST", headers, body: JSON.stringify(payload) })).status).toBe(401);
+      expect((await request("/models")).status).toBe(404);
+      expect((await request(`${endpoint}?unapproved=true`)).status).toBe(404);
+      expect((await fetch(`${broker.baseURL}${endpoint}`, { headers })).status).toBe(404);
+      expect((await request(endpoint, { ...payload, model: "other/model" })).status).toBe(400);
+      if (protocol !== "openai") expect((await request("/responses")).status).toBe(404);
+      expect(received).toHaveLength(0);
+      const result = await request(endpoint);
+      expect(result.status).toBe(200);
+      expect(result.headers.get("x-private-header")).toBeNull();
+      expect(result.headers.get("retry-after")).toBe("[REDACTED]");
+      expect(await result.text()).toBe('data: {"type":"fixture","echo":"[REDACTED]"}\n\n');
+      expect(received).toHaveLength(1);
+      expect(received[0]!.path).toBe(`/custom/v1${endpoint}`);
+      expect(received[0]!.body).toEqual(payload);
+      expect(received[0]!.headers["x-unapproved-header"]).toBeUndefined();
+      if (protocol === "anthropic") {
+        expect(received[0]!.headers).toMatchObject({ "x-api-key": "runner-only-key", "anthropic-version": "2023-06-01", "anthropic-beta": "fine-grained-tool-streaming-2025-05-14" });
+        expect(received[0]!.headers.authorization).toBeUndefined();
+      } else {
+        expect(received[0]!.headers.authorization).toBe("Bearer runner-only-key");
+        expect(received[0]!.headers["x-api-key"]).toBeUndefined();
+        if (protocol === "chat") expect(received[0]!.headers).toMatchObject({ "http-referer": "https://opencode.ai/", "x-title": "opencode", "x-source": "opencode" });
+      }
+      const rejected = await request(endpoint, { ...payload, stream: false });
+      expect(rejected.status).toBe(401);
+      expect(rejected.headers.get("content-encoding")).toBeNull();
+      expect(await rejected.json()).toEqual({ error: "[REDACTED]" });
+      await broker.close();
+      await expect(request(endpoint)).rejects.toThrow();
+    } finally {
+      await broker.close();
+      await otherBroker.close();
+      await new Promise<void>(resolve => { upstream.close(() => resolve()); upstream.closeAllConnections(); });
+    }
+  });
+
+  it("redacts reusable provider keys across arbitrary byte boundaries without buffering the response", async () => {
+    const key = 'synthetic-"key\\value';
+    const redactor = openCodeServerDriverInternals.providerResponseRedactor(key);
+    const collected: Buffer[] = [];
+    const read = (async () => { for await (const chunk of redactor) collected.push(Buffer.from(chunk)); })();
+    const prefix = "stream-prefix ".repeat(1_000);
+    redactor.write(prefix);
+    expect(redactor.readableLength).toBeGreaterThan(prefix.length - key.length * 2);
+    for (const byte of Buffer.from(`direct=${key};json=${JSON.stringify(key)};suffix=✓`)) redactor.write(Buffer.from([byte]));
+    redactor.end();
+    await read;
+    expect(Buffer.concat(collected).toString("utf8")).toBe(`${prefix}direct=[REDACTED];json="[REDACTED]";suffix=✓`);
+  });
+
   it.each(["gateway-key", ""])("forwards selected-model streams without exposing the reusable key and revokes the proxy on close (%s)", async key => {
     const received: Array<{ path: string; authorization?: string; body: unknown }> = [];
     const upstream = createHttpServer((request, response) => {
@@ -962,11 +1077,8 @@ describe("OpenCodeServerDriver", () => {
         "utf8",
       ),
     );
-    expect(environment.keys).toContain("OPENROUTER_API_KEY");
-    expect(environment.credentialDigests).toEqual(Object.fromEntries(
-      Object.entries({ OPENROUTER_API_KEY: "test-openrouter-key", OPENAI_API_KEY: "test-openai-key", ANTHROPIC_API_KEY: "test-anthropic-key" })
-        .map(([key, value]) => [key, createHash("sha256").update(value).digest("hex")]),
-    ));
+    for (const key of ["OPENROUTER_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"]) expect(environment.keys).not.toContain(key);
+    expect(environment.credentialDigests).toEqual({});
     expect(environment.keys).not.toContain("PAPERCLIP_API_KEY");
     expect(environment.keys).not.toContain("UNRELATED_SECRET");
     expect(environment.keys).not.toContain("PAPERCLIP_PROVIDER_TRACE_PATH");
@@ -1006,10 +1118,8 @@ describe("OpenCodeServerDriver", () => {
       const session = await driver.openSession({ runId: `credentials-${mode}`, normalizedSessionId: mode, workingDirectory: workspace });
       try {
         const environment = JSON.parse(await readFile(join(root, mode, "data/fake-environment.json"), "utf8"));
-        expect(environment.credentialDigests).toEqual(mode === "blank"
-          ? Object.fromEntries(keys.map(key => [key, createHash("sha256").update("").digest("hex")]))
-          : {});
-        for (const key of keys) expect(environment.keys.includes(key)).toBe(mode === "blank");
+        expect(environment.credentialDigests).toEqual({});
+        for (const key of keys) expect(environment.keys).not.toContain(key);
         expect(environment.keys).not.toContain("UNRELATED_SECRET");
         expect(environment.projectConfigDisabled).toBe("true");
         expect(environment.home).not.toBe(process.env.HOME);

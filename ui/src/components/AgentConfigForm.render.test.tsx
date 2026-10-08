@@ -267,6 +267,7 @@ async function renderForm(
   options: {
     showAdapterTestEnvironmentButton?: boolean;
     showAdapterTypeField?: boolean;
+    compactTestFeedback?: boolean;
     content?: "configuration" | "secrets";
     environmentVariablesPlacement?: "configuration" | "secrets";
     hideInlineSave?: boolean;
@@ -306,6 +307,7 @@ async function renderForm(
               onCancelActionChange={options.onCancelActionChange}
               showAdapterTypeField={options.showAdapterTypeField ?? false}
               showAdapterTestEnvironmentButton={options.showAdapterTestEnvironmentButton ?? false}
+              compactTestFeedback={options.compactTestFeedback}
             />
           </TooltipProvider>
         </ToastProvider>
@@ -864,6 +866,53 @@ describe("AgentConfigForm environment selector", () => {
     expect(result.container.textContent).not.toContain("Unsaved changes");
     expect(result.container.querySelector('[aria-label="Runner"]')?.textContent).toBe("Legacy runner");
     expect(result.onSave).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])("does not resurrect a saved connection cleared by a harness change with compact feedback=%s", async (compactTestFeedback) => {
+    const savedConnection = { mode: "responsible_user", provider: "openai", method: "api_key" } as const;
+    const accountList = vi.spyOn(aiConnectionsApi, "list").mockResolvedValue({
+      currentUserId: "you",
+      canManageConnections: true,
+      connections: [],
+    });
+    try {
+      const result = await renderForm([], {
+        adapterType: "codex_local",
+        runtimeConfig: { aiConnection: savedConnection, heartbeat: { enabled: false } },
+      }, { showAdapterTypeField: true, showAdapterTestEnvironmentButton: true, compactTestFeedback });
+      roots.push(result.root);
+
+      // With no pending runtime edit, Test still uses the saved connection.
+      await clickByText(result.container, compactTestFeedback ? "Run test" : "Test");
+      expect(mockAgentsApi.testEnvironment).toHaveBeenCalled();
+      for (const call of mockAgentsApi.testEnvironment.mock.calls) {
+        expect(call[2]).toMatchObject({ aiConnection: savedConnection });
+      }
+      mockAgentsApi.testEnvironment.mockClear();
+
+      const menu = await openPicker(result.container, "Harness");
+      await act(async () => menu.querySelector<HTMLButtonElement>('[data-value="claude_local"]')!.click());
+      await flushReact();
+      expect(result.container.textContent).toContain("Existing authentication");
+
+      await clickByText(result.container, compactTestFeedback ? "Run test" : "Test");
+      expect(mockAgentsApi.testEnvironment).toHaveBeenCalled();
+      const runtimeRequest = mockAgentsApi.testEnvironment.mock.calls[0];
+      expect(runtimeRequest).toEqual([
+        "company-1", "paperclip_runner", expect.objectContaining({
+          adapterConfig: expect.objectContaining({ provider: "acpx", acpxAgent: "claude" }),
+        }),
+      ]);
+      for (const call of mockAgentsApi.testEnvironment.mock.calls) {
+        expect(call[2].aiConnection).toBeUndefined();
+      }
+      await clickByText(result.container, "Save");
+      expect(result.onSave).toHaveBeenCalledWith(expect.objectContaining({
+        runtimeConfig: { aiConnection: null, heartbeat: { enabled: false } },
+      }));
+    } finally {
+      accountList.mockRestore();
+    }
   });
 
   it.each(["modelReasoningEffort", "reasoningEffort", "effort"].flatMap(sourceEffortKey => ([

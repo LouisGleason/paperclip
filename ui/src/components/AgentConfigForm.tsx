@@ -1104,7 +1104,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
       const adapterConfig = buildAdapterConfigForTest(adapterConfigPatch);
       const agentId = isCreate ? undefined : props.agent.id;
       const aiConnection = isCreate ? undefined : aiRuntimeConnectionBindingSchema.safeParse(
-        (overlay.runtime.runtimeConfig as Record<string, unknown> | undefined)?.aiConnection ?? props.agent.runtimeConfig.aiConnection,
+        ((overlay.runtime.runtimeConfig as Record<string, unknown> | undefined) ?? runtimeConfig).aiConnection,
       ).data;
       if (props.compactTestFeedback) {
         const providerAdapter = adapterType === "paperclip_runner"

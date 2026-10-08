@@ -16,7 +16,9 @@ import { createServer } from "node:net";
 import { Agent as HttpAgent, createServer as createHttpServer, request as requestHttp, type IncomingMessage } from "node:http";
 import { Agent as HttpsAgent, request as requestHttps } from "node:https";
 import { getCACertificates } from "node:tls";
+import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import { createBrotliDecompress, createGunzip, createInflate } from "node:zlib";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import {
@@ -2049,9 +2051,60 @@ class OpenCodeHarnessSession implements HarnessSession {
   }
 }
 
-/** Retain the reusable gateway key in the runner; the harness gets a session-scoped capability. */
-async function startOpenCodeProviderProxy(baseUrl: string, key: string, model: string, environment: NodeJS.ProcessEnv) {
-  const upstreamUrl = new URL(`${baseUrl.replace(/\/+$/, "")}/chat/completions`);
+type OpenCodeProviderBinding = {
+  baseURL: string;
+  key: string;
+  protocol: "chat" | "openai" | "anthropic";
+  npm: string;
+};
+
+function openCodeProviderBinding(provider: string, environment: NodeJS.ProcessEnv | undefined): OpenCodeProviderBinding | null {
+  // Only assigned credentials may authenticate this session. Ambient keys are
+  // neither copied into the harness nor used by its provider broker.
+  if (provider === "paperclip" && environment?.PAPERCLIP_AI_PROVIDER_URL) {
+    return { baseURL: environment.PAPERCLIP_AI_PROVIDER_URL, key: environment.PAPERCLIP_AI_PROVIDER_KEY ?? "", protocol: "chat", npm: "@ai-sdk/openai-compatible" };
+  }
+  if (provider === "openrouter" && environment?.OPENROUTER_API_KEY) {
+    return { baseURL: "https://openrouter.ai/api/v1", key: environment.OPENROUTER_API_KEY, protocol: "chat", npm: "@openrouter/ai-sdk-provider" };
+  }
+  if (provider === "openai" && environment?.OPENAI_API_KEY) {
+    return { baseURL: "https://api.openai.com/v1", key: environment.OPENAI_API_KEY, protocol: "openai", npm: "@ai-sdk/openai" };
+  }
+  if (provider === "anthropic" && environment?.ANTHROPIC_API_KEY) {
+    return { baseURL: "https://api.anthropic.com/v1", key: environment.ANTHROPIC_API_KEY, protocol: "anthropic", npm: "@ai-sdk/anthropic" };
+  }
+  return null;
+}
+
+function providerResponseRedactor(key: string): Transform {
+  const secrets = [...new Set([key, JSON.stringify(key).slice(1, -1)])].filter(Boolean).map(value => Buffer.from(value));
+  const retainedBytes = Math.max(0, ...secrets.map(secret => secret.length - 1));
+  let pending = Buffer.alloc(0);
+  return new Transform({
+    transform(chunk, _encoding, callback) {
+      pending = Buffer.concat([pending, Buffer.from(chunk)]);
+      while (true) {
+        const matches = secrets.map(secret => ({ secret, index: pending.indexOf(secret) })).filter(match => match.index >= 0).sort((a, b) => a.index - b.index || b.secret.length - a.secret.length);
+        const match = matches[0];
+        if (!match) break;
+        this.push(pending.subarray(0, match.index));
+        this.push("[REDACTED]");
+        pending = pending.subarray(match.index + match.secret.length);
+      }
+      const readyBytes = Math.max(0, pending.length - retainedBytes);
+      this.push(pending.subarray(0, readyBytes));
+      pending = pending.subarray(readyBytes);
+      callback();
+    },
+    flush(callback) { this.push(pending); callback(); },
+  });
+}
+
+/** Retain reusable provider keys in the runner; the harness gets a revocable, selected-model capability. */
+async function startOpenCodeProviderProxy(binding: OpenCodeProviderBinding, model: string, environment: NodeJS.ProcessEnv) {
+  const upstreamBaseURL = new URL(binding.baseURL.replace(/\/+$/, "") + "/");
+  const paths = binding.protocol === "anthropic" ? ["/v1/messages"]
+    : binding.protocol === "openai" ? ["/v1/responses", "/v1/chat/completions"] : ["/v1/chat/completions"];
   const token = randomBytes(32).toString("base64url");
   // Agent-local settings keep one runtime's transport configuration out of other sessions.
   const proxyEnv = {
@@ -2069,18 +2122,20 @@ async function startOpenCodeProviderProxy(baseUrl: string, key: string, model: s
       }
     }
   }
-  const agent = upstreamUrl.protocol === "https:" ? new HttpsAgent({ proxyEnv, ca }) : new HttpAgent({ proxyEnv });
+  const agent = upstreamBaseURL.protocol === "https:" ? new HttpsAgent({ proxyEnv, ca }) : new HttpAgent({ proxyEnv });
   const controllers = new Set<AbortController>();
   const server = createHttpServer((request, response) => {
     const controller = new AbortController();
     controllers.add(controller);
     response.once("close", () => controller.abort());
     void (async () => {
-      if (request.headers.authorization !== `Bearer ${token}`) {
+      const authorized = binding.protocol === "anthropic"
+        ? request.headers["x-api-key"] === token : request.headers.authorization === `Bearer ${token}`;
+      if (!authorized) {
         response.writeHead(401).end();
         return;
       }
-      if (request.method !== "POST" || request.url !== "/v1/chat/completions") {
+      if (request.method !== "POST" || !paths.includes(request.url ?? "")) {
         response.writeHead(404).end();
         return;
       }
@@ -2102,11 +2157,27 @@ async function startOpenCodeProviderProxy(baseUrl: string, key: string, model: s
         response.writeHead(400).end();
         return;
       }
+      const upstreamUrl = new URL(request.url!.slice("/v1/".length), upstreamBaseURL);
+      const upstreamHeaders: Record<string, string | number> = {
+        "Content-Type": "application/json", "Content-Length": body.length,
+        ...(binding.key ? binding.protocol === "anthropic" ? { "x-api-key": binding.key } : { Authorization: `Bearer ${binding.key}` } : {}),
+      };
+      if (binding.protocol === "anthropic") {
+        const version = request.headers["anthropic-version"];
+        upstreamHeaders["anthropic-version"] = typeof version === "string" && /^\d{4}-\d{2}-\d{2}$/.test(version) ? version : "2023-06-01";
+        // Preserve SDK feature negotiation, not arbitrary caller headers.
+        const beta = request.headers["anthropic-beta"];
+        if (typeof beta === "string" && beta.length <= 4_096 && /^[a-zA-Z0-9,._-]+$/.test(beta)) upstreamHeaders["anthropic-beta"] = beta;
+      } else if (binding.npm === "@openrouter/ai-sdk-provider") {
+        upstreamHeaders["HTTP-Referer"] = "https://opencode.ai/";
+        upstreamHeaders["X-Title"] = "opencode";
+        upstreamHeaders["X-Source"] = "opencode";
+      }
       const upstream = await new Promise<IncomingMessage>((resolve, reject) => {
         const outgoing = (upstreamUrl.protocol === "https:" ? requestHttps : requestHttp)(upstreamUrl, {
           method: "POST",
           agent,
-          headers: { "Content-Type": "application/json", "Content-Length": body.length, ...(key ? { Authorization: `Bearer ${key}` } : {}) },
+          headers: upstreamHeaders,
           signal: AbortSignal.any([controller.signal, AbortSignal.timeout(600_000)]),
         }, resolve);
         outgoing.once("error", reject);
@@ -2119,12 +2190,21 @@ async function startOpenCodeProviderProxy(baseUrl: string, key: string, model: s
         throw new Error("Provider redirects are not supported");
       }
       const headers: Record<string, string> = {};
-      for (const name of ["content-type", "content-encoding", "cache-control", "retry-after"]) {
+      for (const name of ["content-type", "cache-control", "retry-after"]) {
         const value = upstream.headers[name];
-        if (typeof value === "string") headers[name] = value;
+        if (typeof value === "string") headers[name] = redactCredentials(value, [binding.key]);
+      }
+      const encoding = upstream.headers["content-encoding"];
+      const decoder = encoding === "gzip" ? createGunzip() : encoding === "deflate" ? createInflate() : encoding === "br" ? createBrotliDecompress() : null;
+      if (encoding && encoding !== "identity" && !decoder) {
+        upstream.destroy();
+        throw new Error("Unsupported provider response encoding");
       }
       response.writeHead(status, headers);
-      await pipeline(upstream, response);
+      // Provider errors can echo authorization. Scrub before returning any
+      // bytes to the harness, including matches split across streamed chunks.
+      if (decoder) await pipeline(upstream, decoder, providerResponseRedactor(binding.key), response);
+      else await pipeline(upstream, providerResponseRedactor(binding.key), response);
     })().catch(() => {
       if (!response.headersSent) response.writeHead(502).end("Provider request failed");
       else response.destroy();
@@ -2229,8 +2309,9 @@ async function startRuntime(input: {
   if (instructionRoot) externalDirectories[`${instructionRoot}/**`] = "allow";
   const [modelProvider, ...modelIdParts] = input.options.model.split("/");
   const providerModelId = modelIdParts.join("/");
-  const providerProxy = modelProvider === "paperclip" && input.options.environment?.PAPERCLIP_AI_PROVIDER_URL
-    ? await startOpenCodeProviderProxy(input.options.environment.PAPERCLIP_AI_PROVIDER_URL, input.options.environment.PAPERCLIP_AI_PROVIDER_KEY ?? "", providerModelId, input.options.environment).catch(async error => {
+  const providerBinding = openCodeProviderBinding(modelProvider!, input.options.environment);
+  const providerProxy = providerBinding
+    ? await startOpenCodeProviderProxy(providerBinding, providerModelId, input.options.environment ?? {}).catch(async error => {
         await bridge.close().catch(() => {});
         await rm(isolatedHome, { recursive: true, force: true }).catch(() => {});
         throw error;
@@ -2257,8 +2338,8 @@ async function startRuntime(input: {
       provider: {
         [modelProvider!]: {
           ...(providerProxy ? {
-            npm: "@ai-sdk/openai-compatible",
-            name: "Paperclip connection",
+            npm: providerBinding!.npm,
+            ...(modelProvider === "paperclip" ? { name: "Paperclip connection" } : {}),
             options: {
               baseURL: providerProxy.baseURL,
               apiKey: providerProxy.token,
@@ -2319,7 +2400,6 @@ async function startRuntime(input: {
         OPENCODE_SERVER_PASSWORD: password,
         ...(providerProxy ? { NO_PROXY: [input.options.environment?.no_proxy ?? input.options.environment?.NO_PROXY, "127.0.0.1", "localhost"].filter(Boolean).join(",") } : {}),
       },
-      input.options.environment,
     );
     const isolateProcessGroup = input.options.isolateProcessGroup ?? true;
     const stdio: Array<"ignore" | "pipe" | number> = ["ignore", "ignore", "pipe"];
@@ -2813,7 +2893,6 @@ async function* parseSse(
 function sanitizedEnvironment(
   source: NodeJS.ProcessEnv,
   overrides: Record<string, string>,
-  assignedEnvironment: NodeJS.ProcessEnv | undefined,
 ): NodeJS.ProcessEnv {
   const allowed = [
     "PAPERCLIP_AGENT_KEY_ID", "PAPERCLIP_AGENT_PUBLIC_KEY", "PAPERCLIP_AGENT_PRIVATE_KEY",
@@ -2832,9 +2911,8 @@ function sanitizedEnvironment(
   const result: NodeJS.ProcessEnv = {};
   for (const key of allowed)
     if (source[key] !== undefined) result[key] = source[key];
-  for (const key of OPENCODE_PROVIDER_CREDENTIAL_KEYS)
-    if (assignedEnvironment?.[key] !== undefined)
-      result[key] = assignedEnvironment[key];
+  // OpenCode's model-invoked shell inherits process.env. Reusable provider
+  // credentials must stay in the broker even when explicitly assigned.
   return { ...result, ...overrides };
 }
 
@@ -2851,9 +2929,6 @@ function sanitizedEnvironmentKeys(): string[] {
     "ALL_PROXY",
     "SSL_CERT_FILE",
     "SSL_CERT_DIR",
-    "OPENROUTER_API_KEY",
-    "OPENAI_API_KEY",
-    "ANTHROPIC_API_KEY",
   ];
 }
 
@@ -2982,7 +3057,7 @@ async function waitForExit(
   });
 }
 
-export const openCodeServerDriverInternals = { parseSse };
+export const openCodeServerDriverInternals = { parseSse, openCodeProviderBinding, startOpenCodeProviderProxy, providerResponseRedactor };
 
 class AsyncQueue<T> implements AsyncIterable<T> {
   #items: T[] = [];

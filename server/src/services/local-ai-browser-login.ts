@@ -4,6 +4,8 @@ import { constants } from "node:fs";
 import path from "node:path";
 import { runSetupTokenLogin } from "@paperclipai/adapter-claude-local/server";
 import { runDeviceLogin } from "@paperclipai/adapter-codex-local/server";
+import { ensureCommandResolvable, resolveCommandForLogs } from "@paperclipai/adapter-utils/server-utils";
+import { paperclipRunnerSupportsPlatform } from "@paperclipai/shared";
 import { resolvePinnedClaudeCommand, resolvePinnedCodexCommand } from "../vendor/paperclip-runner/index.js";
 
 export type LocalBrowserLoginState = {
@@ -54,11 +56,24 @@ export function startLocalBrowserLogin(provider: "anthropic" | "openai", home: s
   const driver = {
     async start(_command: string, onData: (chunk: string) => void): Promise<{ exitCode: number | null }> {
       let executable: string;
+      // Linux ARM64 ships the legacy CLIs, but has no qualified native
+      // distribution. This is platform selection, never dependency fallback.
+      const command = provider === "anthropic" ? "claude" : "codex";
+      const label = provider === "anthropic" ? "Claude Code" : "Codex";
+      const legacyPlatform = process.platform === "linux" && process.arch === "arm64"
+        && !paperclipRunnerSupportsPlatform(provider === "anthropic" ? "claude_local" : "codex_local", process.platform, process.arch);
       try {
-        executable = provider === "anthropic" ? await resolvePinnedClaudeCommand() : resolvePinnedCodexCommand();
+        if (legacyPlatform) {
+          await ensureCommandResolvable(command, home, process.env);
+          executable = path.resolve(home, await resolveCommandForLogs(command, home, process.env));
+        } else {
+          executable = provider === "anthropic" ? await resolvePinnedClaudeCommand() : resolvePinnedCodexCommand();
+        }
       } catch {
-        state.error = `${provider === "anthropic" ? "Claude Code" : "Codex"} browser sign-in requires the qualified runtime for this platform. Reinstall Paperclip's runtime dependencies, then start sign-in again.`;
-        throw new Error("Qualified browser login runtime unavailable");
+        state.error = legacyPlatform
+          ? `${label} browser sign-in requires the legacy ${label} CLI on this platform. Install ${label} on this execution host and ensure ${command} is on Paperclip's PATH, then start sign-in again.`
+          : `${label} browser sign-in requires the qualified runtime for this platform. Reinstall Paperclip's runtime dependencies, then start sign-in again.`;
+        throw new Error("Browser login runtime unavailable");
       }
       if (controller.signal.aborted) throw new Error("Local sign-in cancelled before launch");
       const env = { ...process.env,

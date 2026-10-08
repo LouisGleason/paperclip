@@ -12,7 +12,7 @@ vi.mock("../../vendor/paperclip-runner/index.js", async (original) => ({ ...awai
   bundledRemoteRunnerBinary: bundledRunner, readRunnerdArtifactBinding: runnerBinding }));
 vi.mock("./native-session-executor.js", async original => ({ ...await original<typeof import("./native-session-executor.js")>(), readBundledRemoteProviderPackManifest: remoteManifest, readRemoteProviderPackManifest: configuredManifest, createRemoteNativeArtifactPreparation: nativeArtifacts, createRemoteRunnerProcessLauncher: remoteLauncher }));
 import { QUALIFIED_ACPX_PROFILES, acpxRuntimeSessionDirectoryName, resolveQualifiedAcpxProfile } from "../../vendor/paperclip-runner/index.js";
-import { assertNativeRunnerSetupReady, assertRemoteAcpxSetupReady, testNativeAcpxAuthentication, testNativeRunnerAuthentication, withRemoteNativeSetupArtifacts } from "./setup-readiness.js";
+import { assertNativeRunnerSetupReady, assertRemoteAcpxSetupReady, testNativeAcpxAuthentication, testNativeRunnerAuthentication, withRemoteNativeSetupArtifacts, type RemoteNativeSetupArtifacts } from "./setup-readiness.js";
 import { requireVerifiedAcpxModel } from "../../vendor/paperclip-runner/testing.js";
 const context = {
   companyId: "company", adapterType: "paperclip_runner", config: {},
@@ -48,6 +48,10 @@ describe("sandbox setup task artifact preparation", () => {
   let preinstalled = false;
   const syncIn = vi.fn();
   const runnerExecute = vi.fn();
+  const passedProbe = async (artifacts?: RemoteNativeSetupArtifacts) => {
+    artifacts?.onCleanupConfirmed?.();
+    return { adapterType: "paperclip_runner", status: "pass" as const, testedAt: "", checks: [] };
+  };
   const selected = { ...context, config: { env: { OPENAI_API_KEY: "selected-secret", ANTHROPIC_API_KEY: "selected-anthropic" } }, executionTarget: {
     ...context.executionTarget, remoteCwd: "/selected workspace'qa", runner: { execute: runnerExecute, syncIn },
   } };
@@ -88,7 +92,7 @@ describe("sandbox setup task artifact preparation", () => {
         if (command.includes("--build-metadata")) return { exitCode: 0, timedOut: false, stdout: JSON.stringify({ binaryName: "paperclip-runnerd", prp: { minimumVersion: 1, maximumVersion: 1 } }), stderr: "" };
         if (command.includes("probeAcpxClaudeInstallation")) return { exitCode: 0, timedOut: false, stdout: "", stderr: "" };
         return { exitCode: 0, timedOut: false, stdout: JSON.stringify(provider === "acpx"
-          ? { helloProbePassed: true, effectiveModel: "chosen-model", commandDigest: QUALIFIED_ACPX_PROFILES.claude.commandDigest }
+          ? { helloProbePassed: true, effectiveModel: "chosen-model", commandDigest: QUALIFIED_ACPX_PROFILES.claude.commandDigest, cleanupConfirmed: true }
           : { provider, helloProbePassed: true, effectiveModel: "chosen-model", providerDriver: provider === "codex" ? "codex_app_server" : "opencode_server", cleanupConfirmed: true }), stderr: "" };
       });
       await assertNativeRunnerSetupReady(selected, artifacts);
@@ -114,7 +118,7 @@ describe("sandbox setup task artifact preparation", () => {
   });
   it("uses a fully verified preinstalled pack without an unnecessary upload", async () => {
     preinstalled = true;
-    expect((await withRemoteNativeSetupArtifacts(selected, "opencode", "chosen-model", async () => ({ adapterType: "paperclip_runner", status: "pass", testedAt: "", checks: [] }))).status).toBe("pass");
+    expect((await withRemoteNativeSetupArtifacts(selected, "opencode", "chosen-model", passedProbe)).status).toBe("pass");
     expect(syncIn).not.toHaveBeenCalled();
     expect(runnerExecute.mock.calls.some(([input]) => input.args?.[1]?.includes("ln -s"))).toBe(true);
   });
@@ -123,7 +127,7 @@ describe("sandbox setup task artifact preparation", () => {
     const original = runnerExecute.getMockImplementation()!;
     runnerExecute.mockImplementation(async input => input.args?.[0] === "-e" && input.command.startsWith("/opt/")
       ? { exitCode: 1, timedOut: false, stdout: "", stderr: "manifest mismatch" } : original(input));
-    const authenticate = vi.fn(async () => ({ adapterType: "paperclip_runner", status: "pass" as const, testedAt: "", checks: [] }));
+    const authenticate = vi.fn(passedProbe);
     expect((await withRemoteNativeSetupArtifacts(selected, "opencode", "chosen-model", authenticate)).status).toBe("pass");
     expect(syncIn).toHaveBeenCalledOnce();
     expect(authenticate).toHaveBeenCalledOnce();
@@ -135,7 +139,7 @@ describe("sandbox setup task artifact preparation", () => {
     const result = await withRemoteNativeSetupArtifacts(selected, "opencode", "chosen-model", async artifacts => {
       expect(artifacts!.controllerRunnerBinary).toBe("/release/linux-x64/paperclip-runnerd");
       expect(artifacts!.manifest).toEqual(manifest);
-      return { adapterType: "paperclip_runner", status: "pass", testedAt: "", checks: [] };
+      return passedProbe(artifacts);
     });
     expect(result.status).toBe("pass");
     expect(configuredManifest).not.toHaveBeenCalled();
@@ -150,6 +154,7 @@ describe("sandbox setup task artifact preparation", () => {
     expect(result.checks[0].message).toContain("image provider pack did not match");
     expect(authenticate).not.toHaveBeenCalled();
     expect(syncIn).not.toHaveBeenCalled();
+    expect(runnerExecute.mock.calls.at(-1)![0]).toMatchObject({ command: "rm", args: ["-rf", "--", expect.stringContaining("paperclip-native-setup-")] });
   });
   it.each(["controller-pack", "controller-runner", "platform", "upload-capability", "upload", "uploaded-manifest", "daemon"])("fails before authentication for incompatible %s artifacts", async failure => {
     const authenticate = vi.fn();
@@ -165,7 +170,7 @@ describe("sandbox setup task artifact preparation", () => {
     expect(result.status).toBe("fail");
     expect(result.checks[0].hint).toContain("Legacy runner is available explicitly");
     expect(authenticate).not.toHaveBeenCalled();
-    expect(runnerExecute.mock.calls.some(([input]) => input.command === "rm")).toBe(false);
+    expect(runnerExecute.mock.calls.some(([input]) => input.command === "rm")).toBe(!["controller-pack", "controller-runner", "platform"].includes(failure));
     if (["controller-pack", "controller-runner"].includes(failure)) expect(runnerExecute).not.toHaveBeenCalled();
     if (failure === "platform") expect(nativeArtifacts).not.toHaveBeenCalled();
   });
@@ -178,10 +183,81 @@ describe("sandbox setup task artifact preparation", () => {
     expect(result.checks[0].message).toContain("cleanup is incomplete");
     expect(runnerExecute.mock.calls.some(([input]) => input.command === "rm")).toBe(false);
   });
+  it.each([true, false, undefined, "[REDACTED]"])("cleans a failed native account probe only with explicit teardown proof (%s)", async cleanupConfirmed => {
+    execute.mockResolvedValue({ exitCode: 0, timedOut: false, stdout: JSON.stringify({ nativeProbeError: "Authentication failed: selected-secret", cleanupConfirmed }), stderr: "" });
+    const result = await withRemoteNativeSetupArtifacts(selected, "opencode", "chosen-model", artifacts => testNativeRunnerAuthentication(selected, "opencode", "chosen-model", artifacts));
+    expect(result).toMatchObject({ status: "fail", checks: [expect.objectContaining({ code: "opencode_hello_probe_auth_required", message: "Authentication failed: [REDACTED]" }),
+      ...(cleanupConfirmed === true ? [] : [expect.objectContaining({ code: "paperclip_runner_setup_state_retained", hint: expect.stringContaining("paperclip-native-setup-") })])] });
+    expect(runnerExecute.mock.calls.some(([input]) => input.command === "rm")).toBe(cleanupConfirmed === true);
+    expect(JSON.stringify(result)).not.toContain("selected-secret");
+  });
+  it("does not infer cleanup from a passing result without teardown confirmation", async () => {
+    const result = await withRemoteNativeSetupArtifacts(selected, "opencode", "chosen-model", async () => ({ adapterType: "paperclip_runner", status: "pass", testedAt: "", checks: [] }));
+    expect(result).toMatchObject({ status: "fail", checks: [{ code: "paperclip_runner_setup_state_retained" }] });
+    expect(runnerExecute.mock.calls.some(([input]) => input.command === "rm")).toBe(false);
+  });
+  it.each([false, true])("preserves failed ACPX authentication and honors its teardown receipt (%s)", async cleanupConfirmed => {
+    execute.mockResolvedValue({ exitCode: 0, timedOut: false, stdout: JSON.stringify({ nativeProbeError: "Authentication failed: selected-anthropic", cleanupConfirmed }), stderr: "" });
+    const result = await withRemoteNativeSetupArtifacts(selected, "acpx", "chosen-model", artifacts => testNativeAcpxAuthentication(selected, "claude", "chosen-model", artifacts));
+    expect(result.checks[0]).toMatchObject({ code: "claude_hello_probe_auth_required", message: "Authentication failed: [REDACTED]" });
+    expect(result.status).toBe("fail");
+    expect(runnerExecute.mock.calls.some(([input]) => input.command === "rm")).toBe(cleanupConfirmed);
+    expect(JSON.stringify(result)).not.toContain("selected-anthropic");
+  });
+  it("retains a claimed root when a probe throws without teardown proof", async () => {
+    const result = await withRemoteNativeSetupArtifacts(selected, "opencode", "chosen-model", async () => { throw new Error("Authentication failed: selected-secret"); });
+    expect(result.status).toBe("fail");
+    expect(result.checks[0].message).toBe("Authentication failed: [REDACTED]");
+    expect(result.checks[1]).toMatchObject({ code: "paperclip_runner_setup_state_retained", hint: expect.stringContaining("paperclip-native-setup-") });
+    expect(runnerExecute.mock.calls.some(([input]) => input.command === "rm")).toBe(false);
+  });
+  it("retains staged artifacts if credential copy-back fails after confirmed provider teardown", async () => {
+    const home = await mkdtemp(join(tmpdir(), "native-setup-copyback-control-"));
+    try {
+      await writeFile(join(home, "auth.json"), JSON.stringify({ tokens: { account_id: "qa-account", access_token: "old-token", refresh_token: "old-refresh" } }), { mode: 0o600 });
+      const selectedAccount = { ...selected, managedAiCredentialHome: home, config: { env: {} } };
+      execute.mockResolvedValueOnce({ exitCode: 0, timedOut: false, stdout: JSON.stringify({ nativeProbeError: "Authentication failed", cleanupConfirmed: true, runtimeDirectory: "/tmp/paperclip-native-setup-QA123", codexCredentialRefreshPath: "/tmp/paperclip-native-setup-QA123/codex-home/auth.json" }), stderr: "" })
+        .mockResolvedValueOnce({ exitCode: 1, timedOut: false, stdout: "", stderr: "credential unavailable" });
+      const result = await withRemoteNativeSetupArtifacts(selectedAccount, "codex", "chosen-model", artifacts => testNativeRunnerAuthentication(selectedAccount, "codex", "chosen-model", artifacts));
+      expect(result).toMatchObject({ status: "fail", checks: [expect.objectContaining({ code: "codex_hello_probe_auth_required", message: expect.stringContaining("credential refresh handoff unavailable") }), expect.objectContaining({ code: "paperclip_runner_setup_state_retained" })] });
+      expect(runnerExecute.mock.calls.some(([input]) => input.command === "rm")).toBe(false);
+      expect(execute).toHaveBeenCalledTimes(2);
+      expect(JSON.stringify(result)).not.toContain("old-token");
+    } finally { await rm(home, { recursive: true, force: true }); }
+  });
+  it.each([false, true])("does not delete an unclaimed root after an unsuccessful private-directory claim (timeout: %s)", async timedOut => {
+    const original = runnerExecute.getMockImplementation()!;
+    runnerExecute.mockImplementation(async input => input.args?.[1]?.includes("mkdir -m 0700")
+      ? { exitCode: 1, timedOut, stdout: "", stderr: "unconfirmed claim" } : original(input));
+    const authenticate = vi.fn(passedProbe);
+    const result = await withRemoteNativeSetupArtifacts(selected, "opencode", "chosen-model", authenticate);
+    expect(result.checks[0].message).toContain("could not claim a private runtime directory");
+    expect(authenticate).not.toHaveBeenCalled();
+    expect(nativeArtifacts.mock.results[0]!.value.prepare).not.toHaveBeenCalled();
+    expect(runnerExecute.mock.calls.some(([input]) => input.command === "rm")).toBe(false);
+  });
+  it.each(["reject", "exit", "timeout"])("preserves the staging failure when claimed-root cleanup also fails (%s)", async failure => {
+    const original = runnerExecute.getMockImplementation()!;
+    nativeArtifacts.mockReturnValue({ prepare: vi.fn().mockRejectedValue(new Error("Daemon digest mismatch: selected-secret")) });
+    runnerExecute.mockImplementation(async input => {
+      if (input.command !== "rm") return original(input);
+      if (failure === "reject") throw new Error("private transport output: selected-secret");
+      return { exitCode: failure === "exit" ? 1 : 0, timedOut: failure === "timeout", stdout: "", stderr: "selected-secret" };
+    });
+    const authenticate = vi.fn(passedProbe);
+    const result = await withRemoteNativeSetupArtifacts(selected, "opencode", "chosen-model", authenticate);
+    expect(result).toMatchObject({ status: "fail", checks: [expect.objectContaining({ code: "paperclip_runner_runtime_unavailable", message: "Daemon digest mismatch: [REDACTED]" }), expect.objectContaining({ code: "paperclip_runner_setup_cleanup_failed", hint: expect.stringContaining("paperclip-native-setup-") })] });
+    expect(authenticate).not.toHaveBeenCalled();
+    expect(runnerExecute.mock.calls.filter(([input]) => input.command === "rm")).toHaveLength(1);
+    expect(JSON.stringify(result)).not.toContain("selected-secret");
+    expect(result.checks[1].hint).toContain("Confirm provider teardown and credential handoff");
+  });
   it("reports owned artifact cleanup failure without a readiness pass", async () => {
     const original = runnerExecute.getMockImplementation()!;
     runnerExecute.mockImplementation(async input => input.command === "rm" ? { exitCode: 1, timedOut: false, stdout: "", stderr: "busy" } : original(input));
-    expect((await withRemoteNativeSetupArtifacts(selected, "opencode", "chosen-model", async () => ({ adapterType: "paperclip_runner", status: "pass", testedAt: "", checks: [] }))).status).toBe("fail");
+    const result = await withRemoteNativeSetupArtifacts(selected, "opencode", "chosen-model", passedProbe);
+    expect(result.status).toBe("fail");
+    expect(result.checks.at(-1)).toMatchObject({ code: "paperclip_runner_setup_cleanup_failed", hint: expect.stringContaining("paperclip-native-setup-") });
   });
   it.each(["opencode", "acpx"] as const)("prepares qualified SSH %s through the same task path", async provider => {
     preinstalled = true;
@@ -190,7 +266,7 @@ describe("sandbox setup task artifact preparation", () => {
     const result = await withRemoteNativeSetupArtifacts({ ...selected, executionTarget: sshTarget }, provider, "chosen-model", async artifacts => {
       expect(artifacts!.providerPackRoot).toContain(sshTarget.remoteCwd);
       expect(nativeArtifacts.mock.results[0]!.value.prepare).toHaveBeenCalledWith("dial_wss");
-      return { adapterType: "paperclip_runner", status: "pass", testedAt: "", checks: [] };
+      return passedProbe(artifacts);
     });
     expect(result.status).toBe("pass");
     expect(sshRunner).toHaveBeenCalledWith({ spec: sshTarget.spec, defaultCwd: sshTarget.remoteCwd });
@@ -205,18 +281,19 @@ describe("sandbox setup task artifact preparation", () => {
       const original = runnerExecute.getMockImplementation()!;
       runnerExecute.mockImplementation(async input => input.command === "rm" ? { exitCode: 1, timedOut: false, stdout: "", stderr: "busy" } : original(input));
     }
-    const authenticate = vi.fn(async () => ({ adapterType: "paperclip_runner", status: "pass" as const, testedAt: "", checks: [] }));
+    const authenticate = vi.fn(passedProbe);
     const result = await withRemoteNativeSetupArtifacts({ ...selected, executionTarget: sshTarget }, "opencode", "chosen-model", authenticate);
     expect(result.status).toBe("fail");
     expect(result.checks[0].message).toContain(failure === "missing-pack" ? "cannot stage a provider pack" : "cleanup is incomplete");
     expect(syncIn).not.toHaveBeenCalled();
     if (failure === "missing-pack") expect(authenticate).not.toHaveBeenCalled();
+    expect(runnerExecute.mock.calls.at(-1)![0]).toMatchObject({ command: "rm", args: ["-rf", "--", expect.stringContaining("paperclip-native-setup-")] });
   });
   it("honors controller-owned explicit daemon and Codex sources and the target transport mode", async () => {
     vi.stubEnv("PAPERCLIP_RUNNER_REMOTE_BINARY_PATH", "/controller/explicit/runnerd");
     vi.stubEnv("PAPERCLIP_RUNNER_REMOTE_CODEX_PATH", "/controller/explicit/codex");
     const ingressTarget = { ...selected, executionTarget: { ...selected.executionTarget, effectiveCapabilities: { runnerWebSocketIngress: true } } } as typeof selected;
-    await withRemoteNativeSetupArtifacts(ingressTarget, "codex", "chosen-model", async () => ({ adapterType: "paperclip_runner", status: "pass", testedAt: "", checks: [] }));
+    await withRemoteNativeSetupArtifacts(ingressTarget, "codex", "chosen-model", passedProbe);
     expect(nativeArtifacts).toHaveBeenCalledWith(expect.objectContaining({ controllerRunnerBinary: "/controller/explicit/runnerd", runnerRemoteBinaryPath: "/controller/explicit/runnerd", runnerRemoteCodexPath: "/controller/explicit/codex" }));
     expect(nativeArtifacts.mock.results[0]!.value.prepare).toHaveBeenCalledWith("listen_ws");
   });
@@ -662,7 +739,7 @@ describe("selected native account verification", () => {
     const newAuth = grokAuth("new", newerExpiry());
     try {
       await writeFile(join(home, "auth.json"), grokAuth("old", olderExpiry()), { mode: 0o600 });
-      execute.mockResolvedValueOnce({ exitCode: 0, timedOut: false, stdout: JSON.stringify({ ...(failed ? { nativeProbeError: "Provider rejected turn" } : grokReceipt), runtimeDirectory, grokCredentialRefreshPath }), stderr: "" })
+      execute.mockResolvedValueOnce({ exitCode: 0, timedOut: false, stdout: JSON.stringify({ ...(failed ? { nativeProbeError: "Provider rejected turn" } : grokReceipt), cleanupConfirmed: true, runtimeDirectory, grokCredentialRefreshPath }), stderr: "" })
         .mockResolvedValueOnce({ exitCode: 0, timedOut: false, stdout: Buffer.from(newAuth).toString("base64"), stderr: "" })
         .mockResolvedValueOnce({ exitCode: 0, timedOut: false, stdout: "", stderr: "" });
       const result = await testNativeAcpxAuthentication({ ...context, managedAiCredentialHome: home, config: { env: { HOME: "/controller/home", GROK_HOME: "/untrusted/home" } } }, "grok", "grok-4.7");
