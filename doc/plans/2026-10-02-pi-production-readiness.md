@@ -5,6 +5,56 @@ set of release gates. Pi remains a candidate until every required gate passes.
 Keep behavioral qualification on the accepted fixtures. Do not expand it to
 widgets, images, Cursor or Copilot qualification. The existing draft stack must be reviewed in dependency order.
 
+## Sonnet memory verification and cloud reader repair — 2026-10-08
+
+The user approved `openrouter/anthropic/claude-sonnet-4.6` as the explicit
+qualification model. Production still accepts caller-selected native models and
+custom providers. Native low thinking, case deadlines, permissions and cleanup
+requirements remain unchanged.
+
+The content-bound definition-21 local memory case passes on harness
+`3017852e9472130d1f14ec42d50b589556512083` and installed shipping source
+`06a3d9739f402baa7f8be7aaa29dda6db7354bfb`. Its two native reads contain the exact
+33-byte nonce and final LF. Public file bytes, controller restart, fresh-task
+persistence, denied cross-root write and independent cleanup pass. Its canonical
+23-file evidence set contains 4,156,756 bytes and is retained with archive SHA256
+`2763bda9dd460aecce56af1a6030d8810c3b02c1701520f4ac3a16299a5f55cd`.
+All 172 focused checks and all 54 applicable CI gates on that harness pass, with
+two expected skips and zero unresolved review threads.
+
+The cloud memory case fails before a provider turn with
+`runner_remote_provider_artifact_incompatible: invalid candidate identity`.
+Its original grade and 43-file, 70,371,196-byte evidence set remain retained;
+cleanup passes. The image builder publishes Pi in both qualified `providers`
+and `candidateProviders`, but the server reader only permits Cursor in
+`providers`. The reader now admits qualified Pi there using its existing exact
+field, qualification, path, digest and asset-tree checks. Regression coverage
+uses the normal builder shape through both complete and metadata-only readers.
+
+Free calibration reproduces the rejection against the actual immutable image
+and accepts its complete asset tree with the corrected source reader. Four
+malformed Pi declarations still fail. This is source-fragment calibration, not a
+fresh packaged runtime or live cloud qualification pass. The server unit run on
+the restored qualification host could not load its missing `supertest` dev
+dependency; full server tests, typecheck and build must run in CI. A fresh normal
+Linux package set and image must include this production reader correction.
+The prior source, installation and image receipts retain their exact identities.
+
+Cloud preparation also restored the test SDK dependency, ran the original
+Daytona plugin prepack hook and used normal `runtime import-remote` installation.
+All 60 compiled plugin files remain unchanged. The original 80,151 runtime files,
+16,441 plugin files and separately declared 24,992-entry companion inventory
+pass verification. The cloud account limits each host to 10 GB. Owned
+copy-on-write staging and disposable npm cache cleanup let normal verified
+import complete with 3.9 GB free. Failed imports and original package metadata
+remain retained. No local Docker, production environment override, fallback
+model, BYOK or automatic retry is used.
+
+Runner qualification remains 0/7: its first Sonnet case passes semantic checks
+but fails strict cost coverage because the evaluation SDK lacks priced Sonnet
+accounting. Unknown provider spend remains unknown. Do not insert a price row
+without validating fresh input, cache-read and cache-write counter semantics.
+
 ## Historical repairs before the current shipping freeze — 2026-10-07
 
 Pi 1.0.0 uses immutable profile 18. Production models remain caller-selected;
@@ -81,10 +131,10 @@ bytes. The source must be rebuilt and admitted before another paid attempt. All
 | Normal Linux build and public installation | Source `06a3d9739` passes normal workspace/public builds, npm installation and lifecycle hooks, full graph audits, Pi setup and real server/UI admission. All 20 archives and exact installed daemon bytes are retained and verified. |
 | Normal ARM Mac installation | [Native hosted ARM check](https://github.com/paperclipai/paperclip/actions/runs/37694650556) passes on shipping `06a3d9739`: normal workspace/public builds, npm lifecycle, graph audits, Pi setup and packaged admission. All 18 archives and logs are retained and hash-verified; no provider prompts. |
 | Normal Intel Mac installation | [Native Intel continuation](https://github.com/paperclipai/paperclip/actions/runs/37700732418) passes normal npm lifecycle, Pi setup, signed native daemon, graph audits and closed admission in 24,770 ms using the exact 18 retained archives. The original cancelled attempt remains retained; no Rosetta or provider prompts. |
-| Final Product acceptance | Sonnet 4.6 qualification uses native definition 21. Coverage is 0/26 for that definition until its live attempts pass. Earlier definition-18 and definition-19 Sonnet memory measurements remain canonical passes for their recorded fixtures; definition 19 proves exact LF, both native reads, restart persistence, denial and cleanup. The content-bound native-read guard in definitions 20 and 21 also passes calibration on those retained receipts. DeepSeek passes/failures remain historical and are not counted toward Sonnet. |
+| Final Product acceptance | Sonnet 4.6 qualification uses native definition 21. Coverage is 1/26 on frozen installed source `06a3d9739`: the local memory case passes. The cloud memory case fails before its provider turn because of the qualified-Pi manifest reader mismatch; 24 other cells remain unexecuted. Changed production reader bytes require fresh packaged qualification. Earlier definition-18 and definition-19 Sonnet memory measurements remain canonical passes for their recorded fixtures; definition 19 proves exact LF, both native reads, restart persistence, denial and cleanup. The content-bound native-read guard in definitions 20 and 21 also passes calibration on those retained receipts. DeepSeek passes/failures remain historical and are not counted toward Sonnet. |
 | Final Runner acceptance | Sonnet coverage is 0/7 on definitions `bf8c509d`. The first get-task-context attempt passed all semantic assertions but retained canonical `accounting_failure/provider_budget_coverage_unknown`: the installed evaluation SDK has no Sonnet 4.6 price entry. The six remaining cases did not run. Native low, 120-second limits and scoring rules remain required; no automatic retries. |
 | Cloud image | [Hosted Linux build](https://github.com/paperclipai/paperclip/actions/runs/37676853634) passes for source `06a3d9739`. Immutable image `sha256:5e62c8e294cd9d663316ba09b0aae1d7358a8938fe37d17936ef394cf1723ab2` passes anonymous OCI verification and actual credential-free Daytona guest admission; probe deletion is confirmed. No local Docker is used. |
-| PR CI and review | Head `dabe81bef` passes 53 checks with two skips; Greptile findings require current-facing Sonnet instructions, updated remote native-read fixtures and a content-bound read check. The fixes are being validated. Earlier green heads remain history. Prerequisite #14921 retains the valid premature-admission finding. No merge, release or rollout is authorized. |
+| PR CI and review | Harness head `3017852e9` passes all 54 applicable checks with two skips and zero unresolved review threads. The production reader correction needs fresh current-head CI, normal Linux packaging and a new cloud image. Prerequisite #14921 retains the valid premature-admission finding. No merge, release or rollout is authorized. |
 
 The earlier cancellation defect and all failed attempts remain retained. Pi omits
 service-failure metadata only for its authoritative cancelled terminal, preserving
@@ -2265,7 +2315,9 @@ Keep rollout held until every release gate is proven.
 
 ## Remaining work in order
 
-1. Complete the corrected Sonnet memory fixture (native definition 21). Its first
+1. Complete cloud memory acceptance after packaging the qualified-Pi reader repair.
+   Definition-21 local memory already passes; its exact source-bound receipt is
+   recorded above. Earlier evidence follows for provenance. Its first
    Sonnet measurement on harness `0104942b0` passed exact LF, saved memory,
    controller restart, fresh-task bytes, denied cross-root write and cleanup.
    Its canonical pass remains preserved: 23 files, 4,180,889 bytes. The fresh
@@ -2282,7 +2334,9 @@ Keep rollout held until every release gate is proven.
    `bf8c509df49a40e72509e8732b77516aea02bbbd` changes only qualification model,
    its matching test declaration and estimated pricing; all seven case bodies,
    scoring rules and 120-second limits remain unchanged. Seven free definitions
-   and 63 eval-program/roster tests pass. Definition-21 coverage starts at zero;
+   and 63 eval-program/roster tests pass. Definition-21 coverage on source `06a3d9739` is one local pass and one
+   pre-provider cloud failure. Resolve strict Runner price/counter accounting before
+   more Runner calls;
    historical model/fixture passes are not transferred. Preserve spending caps,
    zero automatic retries and independent cleanup. Normal Linux, native ARM and
    native Intel installation already pass for shipping `06a3d9739`; their own

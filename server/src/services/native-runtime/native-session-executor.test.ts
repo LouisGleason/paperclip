@@ -1265,6 +1265,17 @@ describe("remote provider pack manifest", () => {
     Object.assign(payload, { candidateProviders: candidates });
     await writeManifest();
     expect(readRemoteProviderPackManifest(root).payload.candidateProviders?.pi?.qualification).toBe("qualified");
+    // The normal pack builder publishes Pi in both inventories. A Pi image
+    // must pass the same reader used by real remote runtime preparation.
+    Object.assign(payload, { providers: { cursor, pi: candidates.pi } });
+    await writeManifest();
+    expect(readRemoteProviderPackManifest(root).payload.providers?.pi?.qualification).toBe("qualified");
+    await mkdir(releaseMetadata, { recursive: true });
+    await cp(join(root, "provider-pack.json"), manifestPath);
+    expect(readBundledRemoteProviderPackManifest(manifestPath).payload.providers?.pi?.qualification).toBe("qualified");
+    Object.assign(payload, { providers: { cursor } });
+    await rm(releaseMetadata, { recursive: true, force: true });
+    await writeManifest();
     await writeFile(join(root, candidatePath, "runtime"), "substitute runtime");
     expect(() => readRemoteProviderPackManifest(root)).toThrow("candidate asset tree digest mismatch");
     await writeFile(join(root, candidatePath, "runtime"), "pinned runtime");
