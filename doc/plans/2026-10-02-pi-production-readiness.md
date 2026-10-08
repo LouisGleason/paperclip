@@ -14,8 +14,9 @@ Done and a succeeded native run; three follow-up turns with continuity; browser
 questions and answers; plan approval; same-turn steering and denial; Stop; and
 controller recovery with the original native question and run. Use the retained
 `b696e131ae32a82418e570b32f4727b5adb14e49` packages and cloud image, the approved
-Sonnet 4.6 fixture and low thinking. No local Docker, provider expansion, image
-rebuild, or accounting change is needed for this scope.
+Sonnet 4.6 fixture and low thinking. No local Docker, provider expansion, or
+accounting change is in scope. Rebuild the cloud runtime only when a confirmed
+core-path defect requires a production change.
 
 The first current-cloud file attempt, `pi-core-0-1791470050`, edited, validated,
 published and finished through the real product. Its strict definition-4 grade
@@ -28,6 +29,41 @@ canonical files (91,468,056 bytes) are retained with archive SHA-256
 `065146a206da9f29b50999b5d931b54402edd5d30a516895a7ab8fb95e8a6029`;
 independent process and scratch cleanup pass. Definition 5 fences the unchanged
 command for literal Markdown paste; the one-command grader stays unchanged.
+
+The following current-cloud paths pass with runtime `b696e131`, harness
+`ee3b094d35719e4dd7cbc791d1924205c4fa474f` and the retained immutable image:
+
+| Core path | Canonical campaign | Retained evidence |
+| --- | --- | --- |
+| File edit, one exact successful command, authenticated public download, registered deliverable, finish, Done and finalized copy-back | `pi-core-0-1791470879` | 23 files; archive SHA256 `9a1c41e2ccad75f89a069ff571a3aa9f8cb94ae80c1bd397f7c886338b9a09bd`; definition 5 |
+| Three browser follow-up turns retain native session/process/workspace identity and append the earlier work | `pi-core-1-1791471072` | 23 files; archive SHA256 `d10310a2720a0d6c0636ce389fc6cc5faa887cc5c95bd697cdf0172619973609`; definition 2 |
+| Human plan approval resumes work and completion through the public product | `pi-core-3-1791472300` | 22 files; archive SHA256 `8c069ff176cb94166429901957f80e8b22c36ddf0f2047193889c4b7059aedf3`; definition 5 |
+
+Every listed canonical result and independent cleanup check passes. All retained
+files are hash-verified. These are exact-source passes; a changed runtime must
+be checked again before they qualify that runtime.
+
+Native-question campaign `pi-core-2-1791471416` remains failed. Its original
+machine classification is `transient_infrastructure`; the run times out after
+120 seconds. The evidence shows three rejected native-question calls: empty
+arguments, then two `select` calls with `options` encoded as a JSON string. The
+model subsequently asks confirmation while the browser waits for color. All
+45 canonical files (177,803,509 bytes) are retained with archive SHA256
+`66c801596d81b909ac2ad8004d885ddf69b7478d9ab9a0cce11a52ebfe8a6e28`;
+independent retirement and scratch cleanup pass. Do not regrade this failure or
+retry the unchanged runtime.
+
+The production question schema has method-specific branches but no root field
+definitions. Profile 19 exposes the same field types at the root and keeps every
+method-specific constraint and runtime validator. Root-only gateway tool
+rendering is the inferred compatibility cause; a fresh real question pass is
+still required. Stringified options, absent arguments and cross-method fields
+remain invalid. The existing 38 extension tests pass on the pinned Node 24.21.0.
+All three prior closure hashes are independently reproduced from the retained
+full manifest and reviewed Node pins; only `extensions/paperclip.js` changes.
+No model allowlist, model fallback, credential policy or question-answer coercion
+is added. The corrected runtime requires the normal hosted cloud build and
+public-install checks before another paid question attempt.
 
 ## Correct cloud memory-read authority — 2026-10-08
 
