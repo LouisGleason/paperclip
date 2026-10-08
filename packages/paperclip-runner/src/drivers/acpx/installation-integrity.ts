@@ -2057,6 +2057,26 @@ export async function probeAcpxClaudeInstallation(model: string): Promise<void> 
   await lease.close();
 }
 
+/** Resolve the already-installed, digest-verified CLI for isolated browser login. */
+export async function resolvePinnedClaudeCommand(
+  resolvePackageJson: AcpxPackageJsonResolver = defaultPackageJsonResolver,
+): Promise<string> {
+  const profile = resolveQualifiedAcpxProfile("claude", "default");
+  const serverManifest = resolvePackageJson(profile.agentServerPackage);
+  const runtimePackageJsonPath = await realpath(
+    resolvePackageJson(profile.agentRuntimePackage!, serverManifest),
+  );
+  const runtimePackage = await readPackageJson(runtimePackageJsonPath, profile.agentRuntimePackage!);
+  if (runtimePackage.version !== profile.agentRuntimeVersion) {
+    throw new Error("Claude browser login runtime does not match its qualified version");
+  }
+  const executable = await verifyQualifiedRuntimeExecutable({
+    profile, runtimePackage, runtimePackageJsonPath, resolvePackageJson,
+  });
+  if (!executable) throw new Error("Qualified Claude browser login runtime is unavailable");
+  return executable.path;
+}
+
 export async function probeAcpxGrokInstallation(model: string): Promise<void> {
   await verifyQualifiedAcpxInstallation(resolveQualifiedAcpxProfile("grok", model));
 }

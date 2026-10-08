@@ -406,6 +406,58 @@ export function stageBundledEsbuildOptionalDependencies(destinationDir, publishM
   return result;
 }
 
+// Keep OpenCode's pinned wrapper in the server graph, but let each consumer
+// install its own declared platform dependency rather than the producer binary.
+export function stageBundledOpenCodeOptionalDependencies(destinationDir, publishManifest) {
+  const bundled = publishManifest.bundleDependencies ?? publishManifest.bundledDependencies ?? [];
+  if (!bundled.includes("opencode-ai")) return structuredClone(publishManifest);
+  const expected = JSON.parse(readFileSync(resolve(repoRoot, "packages/paperclip-runner/package.json"), "utf8")).dependencies["opencode-ai"];
+  const graph = resolve(destinationDir, "node_modules");
+  const wrapper = resolve(graph, "opencode-ai");
+  if (!/^\d+\.\d+\.\d+$/.test(expected) || publishManifest.dependencies?.["opencode-ai"] !== expected
+    || realpathSync(graph) !== graph || realpathSync(wrapper) !== wrapper || !lstatSync(wrapper).isDirectory()) {
+    throw new Error("Bundled OpenCode must use its declared qualified dependency in the owned producer graph");
+  }
+  const metadata = JSON.parse(readFileSync(resolve(wrapper, "package.json"), "utf8"));
+  if (metadata.name !== "opencode-ai" || metadata.version !== expected || metadata.bin?.opencode !== "./bin/opencode.exe") {
+    throw new Error("Bundled OpenCode wrapper identity mismatch");
+  }
+  const optional = metadata.optionalDependencies;
+  if (!optional || typeof optional !== "object" || Array.isArray(optional)
+    || Object.keys(optional).length > 20
+    || ["opencode-linux-x64-baseline", "opencode-darwin-arm64", "opencode-darwin-x64-baseline"].some(name => optional[name] !== expected)) {
+    throw new Error("Bundled OpenCode omitted a supported platform dependency");
+  }
+  const remove = new Set();
+  for (const [name, version] of Object.entries(optional)) {
+    if (!/^opencode-(?:darwin|linux|windows)-(?:arm64|x64)(?:-baseline)?(?:-musl)?$/.test(name) || version !== expected
+      || (publishManifest.optionalDependencies?.[name] !== undefined && publishManifest.optionalDependencies[name] !== expected)) {
+      throw new Error("Bundled OpenCode platform dependency version mismatch");
+    }
+    for (const candidate of [resolve(graph, name), resolve(wrapper, "node_modules", name)]) {
+      if (!lstatExists(candidate)) continue;
+      if (!lstatSync(candidate).isDirectory() || realpathSync(candidate) !== candidate || !inside(graph, candidate)) {
+        throw new Error("Bundled OpenCode platform artifact escapes its producer graph");
+      }
+      const artifact = JSON.parse(readFileSync(resolve(candidate, "package.json"), "utf8"));
+      if (artifact.name !== name || artifact.version !== expected) {
+        throw new Error("Bundled OpenCode installed platform identity mismatch");
+      }
+      remove.add(candidate);
+    }
+  }
+  const materialized = resolve(wrapper, "bin/opencode.exe");
+  if (lstatExists(materialized) && (!lstatSync(materialized).isFile() || realpathSync(materialized) !== materialized)) {
+    throw new Error("Bundled OpenCode materialized executable must be a regular owned file");
+  }
+  for (const candidate of remove) rmSync(candidate, { recursive: true, force: true });
+  if (lstatExists(materialized)) rmSync(materialized);
+  return {
+    ...structuredClone(publishManifest),
+    optionalDependencies: { ...publishManifest.optionalDependencies, ...optional },
+  };
+}
+
 export function materializeDockerProviderGraph(serverDirectory, architecture, { sourceRoot = repoRoot } = {}) {
   const runtimeData = JSON.parse(readFileSync(resolve(sourceRoot, runtimeDataPath), "utf8"));
   const target = dockerBundledProviderTarget(architecture, runtimeData);
@@ -594,6 +646,8 @@ export function prepareBundledPackage(sourceDir, destinationDir, { sourceRoot = 
     rmSync(resolve(destinationDir, "node_modules/@embedded-postgres"), { recursive: true, force: true });
   }
   writeFileSync(deployedPackagePath, `${JSON.stringify(stageBundledEsbuildOptionalDependencies(destinationDir,
+    JSON.parse(readFileSync(deployedPackagePath, "utf8"))), null, 2)}\n`);
+  writeFileSync(deployedPackagePath, `${JSON.stringify(stageBundledOpenCodeOptionalDependencies(destinationDir,
     JSON.parse(readFileSync(deployedPackagePath, "utf8"))), null, 2)}\n`);
 }
 

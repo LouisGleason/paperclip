@@ -43,6 +43,7 @@ import { ACPX_CREDENTIAL_BINDING_ENV, createAcpxCredentialBinding, createAcpxSid
 import { DurablePrpControlPlane } from "../control-plane/durable-prp-control-plane.js";
 import * as durableControlPlane from "../control-plane/durable-prp-control-plane.js";
 import * as codexCommandRuntime from "../drivers/codex/codex-command.js";
+import * as openCodeCommandRuntime from "../drivers/opencode/opencode-server-driver.js";
 
 import {
   NATIVE_RUNTIME_ASSET_SCHEMA,
@@ -1987,6 +1988,9 @@ it("rejects remote Codex without a guest executable before resolving controller 
 
 it("rejects remote OpenCode before spawn when provider-pack paths are absent", async () => {
   const root = await mkdtemp(join(tmpdir(), "paperclip-runner-remote-pack-"));
+  const resolver = vi.spyOn(openCodeCommandRuntime, "resolvePinnedOpenCodeCommand").mockImplementation(() => {
+    throw new Error("Controller package resolution must not authorize a guest executable");
+  });
   const { transport } = createCapabilityRunnerdCodexTransport({
     provider: "opencode",
     stateDirectory: root,
@@ -2000,8 +2004,10 @@ it("rejects remote OpenCode before spawn when provider-pack paths are absent", a
         baseInstructions: "Complete the task.",
         dynamicTools: [],
       }),
-    ).rejects.toThrow("runner_remote_provider_artifact_incompatible");
+    ).rejects.toThrow("runner_remote_provider_artifact_incompatible: remote OpenCode omitted its qualified guest executable");
+    expect(resolver).not.toHaveBeenCalled();
   } finally {
+    resolver.mockRestore();
     await transport.close();
     await rm(root, { recursive: true, force: true });
   }

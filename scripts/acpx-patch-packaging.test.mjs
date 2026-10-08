@@ -30,6 +30,7 @@ import {
   mergeBundledProviderGraph,
   selectBundledDependencyPatches,
   stageBundledEsbuildOptionalDependencies,
+  stageBundledOpenCodeOptionalDependencies,
   stageBundledProviderOptionalDependencies,
 } from "./prepare-bundled-package.mjs";
 
@@ -90,6 +91,46 @@ const dbPackage = JSON.parse(
 const releaseScript = await readFile(new URL("./release.sh", import.meta.url), "utf8");
 const releaseLib = await readFile(new URL("./release-lib.sh", import.meta.url), "utf8");
 const buildNpmScript = await readFile(new URL("./build-npm.sh", import.meta.url), "utf8");
+
+function opencodeFixture(t) {
+  const directory = realpathSync(mkdtempSync(join(tmpdir(), "paperclip-bundled-opencode-")));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const graph = join(directory, "node_modules"), wrapper = join(graph, "opencode-ai");
+  const optional = Object.fromEntries(["opencode-linux-x64-baseline", "opencode-darwin-arm64", "opencode-darwin-x64", "opencode-darwin-x64-baseline"].map(name => [name, "1.18.34"]));
+  const metadata = { name: "opencode-ai", version: "1.18.34", bin: { opencode: "./bin/opencode.exe" }, optionalDependencies: optional, scripts: { postinstall: "node postinstall.mjs" } };
+  mkdirSync(join(wrapper, "bin"), { recursive: true });
+  writeFileSync(join(wrapper, "package.json"), JSON.stringify(metadata));
+  writeFileSync(join(wrapper, "bin/opencode.exe"), "producer Linux executable");
+  const producer = join(graph, "opencode-linux-x64-baseline"); mkdirSync(producer);
+  writeFileSync(join(producer, "package.json"), JSON.stringify({ name: "opencode-linux-x64-baseline", version: "1.18.34" }));
+  return { directory, wrapper, producer, metadata, publish: { name: "@paperclipai/server", dependencies: { "opencode-ai": "1.18.34" }, bundleDependencies: ["opencode-ai"], optionalDependencies: { unrelated: "1.0.0" } } };
+}
+
+test("published OpenCode keeps its qualified dependency and consumer platform declarations without producer executables", (t) => {
+  assert.equal(serverPackage.dependencies["opencode-ai"], runnerPackage.dependencies["opencode-ai"]);
+  assert.ok(serverPackage.bundleDependencies.includes("opencode-ai"));
+  const { directory, wrapper, producer, metadata, publish } = opencodeFixture(t);
+  const staged = stageBundledOpenCodeOptionalDependencies(directory, publish);
+  assert.deepEqual(staged.optionalDependencies, { unrelated: "1.0.0", ...metadata.optionalDependencies });
+  assert.equal(existsSync(producer), false);
+  assert.equal(existsSync(join(wrapper, "bin/opencode.exe")), false);
+  assert.deepEqual(JSON.parse(readFileSync(join(wrapper, "package.json"))), metadata, "The original version, optional declarations and consumer hook remain intact");
+  assert.deepEqual(publish.optionalDependencies, { unrelated: "1.0.0" });
+});
+
+test("bundled OpenCode rejects version drift and escaped payloads before deleting producer artifacts", (t) => {
+  const { directory, wrapper, producer, metadata, publish } = opencodeFixture(t);
+  for (const version of ["1.18.18", "^1.18.34"]) assert.throws(() => stageBundledOpenCodeOptionalDependencies(directory, { ...publish, dependencies: { "opencode-ai": version } }), /qualified dependency/);
+  writeFileSync(join(wrapper, "package.json"), JSON.stringify({ ...metadata, optionalDependencies: { ...metadata.optionalDependencies, "opencode-darwin-arm64": "1.18.18" } }));
+  assert.throws(() => stageBundledOpenCodeOptionalDependencies(directory, publish), /supported platform/);
+  assert.equal(existsSync(producer), true);
+  writeFileSync(join(wrapper, "package.json"), JSON.stringify(metadata));
+  const external = join(directory, "external"); mkdirSync(external); writeFileSync(join(external, "package.json"), JSON.stringify({ name: "opencode-linux-x64-baseline", version: "1.18.34" }));
+  rmSync(producer, { recursive: true }); symlinkSync(external, producer, "dir");
+  assert.throws(() => stageBundledOpenCodeOptionalDependencies(directory, publish), /escapes/);
+  assert.equal(existsSync(join(external, "package.json")), true);
+  assert.equal(existsSync(join(wrapper, "bin/opencode.exe")), true);
+});
 const acpxRuntimePatch = await readFile(
   new URL("../patches/acpx@0.13.1.patch", import.meta.url),
   "utf8",
@@ -583,6 +624,7 @@ printf 'npm %s\\n' "$*" >> "$FAKE_CALL_LOG"
 [ "$*" = "install --omit=dev --ignore-scripts --no-audit --no-fund" ] || [ "$*" = "install --force --omit=dev --ignore-scripts --no-audit --no-fund" ]
 node -e 'const fs = require("node:fs"); const path=require("node:path"); const pkg = require("./package.json"); if ("devDependencies" in pkg) process.exit(1); if(pkg.name === "paperclip-native-artifact-staging"){for(const name of Object.keys(pkg.dependencies)){fs.cpSync(path.join(process.env.FAKE_NATIVE_ARTIFACTS,name),path.join("node_modules",name),{recursive:true});}process.exit(0);} for (const [name, version] of Object.entries(pkg.dependencies)) { const dir = "node_modules/" + name; fs.mkdirSync(dir + "/dist", { recursive: true }); fs.writeFileSync(dir + "/package.json", JSON.stringify({ name, version })); } for (const [bridge, runtimes] of Object.entries(pkg.overrides ?? {})) { for (const [name, version] of Object.entries(runtimes)) { const dir = "node_modules/" + name; fs.mkdirSync(dir, { recursive: true }); const native = ["@openai/codex","@anthropic-ai/claude-agent-sdk"].includes(name); const optionalDependencies = native ? Object.fromEntries(["linux-x64","darwin-arm64","darwin-x64"].map(target => [name+"-"+target,name === "@openai/codex" ? "npm:"+name+"@"+version+"-"+target : version])) : undefined; fs.writeFileSync(dir + "/package.json", JSON.stringify({ name, version, optionalDependencies })); } } const claude="node_modules/@agentclientprotocol/claude-agent-acp/package.json"; const c=JSON.parse(fs.readFileSync(claude));c.dependencies={"@agentclientprotocol/sdk":"1.4.0","@anthropic-ai/claude-agent-sdk":"0.3.257",zod:"^4.0.0"};fs.writeFileSync(claude,JSON.stringify(c));'
 if [ -f package.json ] && node -e 'process.exit(require("./package.json").name === "paperclip-native-artifact-staging" ? 0 : 1)'; then exit 0; fi
+node -e 'const fs=require("node:fs");const pkg=require("./package.json");if(pkg.dependencies["opencode-ai"]){const root="node_modules/opencode-ai";fs.mkdirSync(root+"/bin",{recursive:true});fs.writeFileSync(root+"/package.json",JSON.stringify({name:"opencode-ai",version:pkg.dependencies["opencode-ai"],bin:{opencode:"./bin/opencode.exe"},scripts:{postinstall:"node postinstall.mjs"},optionalDependencies:Object.fromEntries(["opencode-linux-x64-baseline","opencode-darwin-arm64","opencode-darwin-x64","opencode-darwin-x64-baseline"].map(name=>[name,"1.18.34"]))}));fs.writeFileSync(root+"/bin/opencode.exe","producer executable");fs.mkdirSync("node_modules/opencode-linux-x64-baseline");fs.writeFileSync("node_modules/opencode-linux-x64-baseline/package.json",JSON.stringify({name:"opencode-linux-x64-baseline",version:"1.18.34"}));}'
 mkdir -p node_modules/acpx/dist
 node -e 'const fs=require("node:fs");fs.mkdirSync("node_modules/esbuild",{recursive:true});fs.writeFileSync("node_modules/esbuild/package.json",JSON.stringify({name:"esbuild",version:"0.28.2",scripts:{postinstall:"node install.js"},optionalDependencies:Object.fromEntries(["linux-x64","darwin-arm64","darwin-x64"].map(target=>["@esbuild/"+target,"0.28.2"]))}));fs.mkdirSync("node_modules/@esbuild/linux-x64",{recursive:true});fs.writeFileSync("node_modules/@esbuild/linux-x64/package.json",JSON.stringify({name:"@esbuild/linux-x64",version:"0.28.2",os:["linux"],cpu:["x64"]}));'
 printf 'unpatched runtime\\n' > node_modules/acpx/dist/runtime.js
@@ -644,6 +686,10 @@ printf 'patched spawnEnvironment runtime\\n' > "$target/dist/runtime.js"
   assert.equal(stagedManifest.optionalDependencies["@esbuild/darwin-arm64"], "0.28.2");
   assert.equal(stagedManifest.optionalDependencies["@esbuild/darwin-x64"], "0.28.2");
   assert.equal(existsSync(join(destinationDir, "node_modules/@esbuild/linux-x64")), false);
+  assert.equal(stagedManifest.optionalDependencies["opencode-darwin-arm64"], "1.18.34");
+  assert.equal(stagedManifest.optionalDependencies["opencode-linux-x64-baseline"], "1.18.34");
+  assert.equal(existsSync(join(destinationDir, "node_modules/opencode-ai/bin/opencode.exe")), false);
+  assert.equal(existsSync(join(destinationDir, "node_modules/opencode-linux-x64-baseline")), false);
   assert.equal(JSON.parse(readFileSync(join(destinationDir, "node_modules/esbuild/package.json"))).scripts.postinstall, "node install.js");
   assert.match(
     readFileSync(join(stagedAcpxDir, "dist/runtime.js"), "utf8"),
@@ -653,13 +699,14 @@ printf 'patched spawnEnvironment runtime\\n' > "$target/dist/runtime.js"
     readFileSync(callLog, "utf8"),
     /patch -p1 --forward -d .*node_modules\/acpx/,
   );
+  const patchedBundledDependencies = serverPackage.bundleDependencies.filter(name => rootPackage.pnpm.patchedDependencies[`${name}@${serverPackage.dependencies[name]}`]);
   assert.equal(
     readFileSync(callLog, "utf8")
       .split("\n")
       .filter((line) => line.startsWith("patch ")).length,
-    serverPackage.bundleDependencies.length,
+    patchedBundledDependencies.length,
   );
-  for (const name of serverPackage.bundleDependencies) {
+  for (const name of patchedBundledDependencies) {
     const specifier = `${name}@${serverPackage.dependencies[name]}`;
     const patchPath = rootPackage.pnpm.patchedDependencies[specifier];
     assert.equal(

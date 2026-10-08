@@ -5,6 +5,7 @@ import { RunnerdTraceFrameIndex } from "./runnerd-trace-frame-index.js";
 import { waitForWarmAttachmentReadiness } from "./warm-attachment-readiness.js";
 import { codexExecutableReadOnlyRoots } from "../drivers/codex/codex-security-config.js";
 import { resolvePinnedCodexCommand } from "../drivers/codex/codex-command.js";
+import { resolvePinnedOpenCodeCommand } from "../drivers/opencode/opencode-server-driver.js";
 import { isCanonicalProviderEventType } from "../provider-events.js";
 import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
@@ -4577,6 +4578,9 @@ class DurablePrpCodexTransport implements CodexAppServerTransport {
     if (provider === "codex" && this.options.runnerFilesystemRoot && !this.options.codexCommand) {
       throw new Error("runner_remote_provider_artifact_incompatible: remote Codex omitted its qualified guest executable; verify the selected environment's provider artifacts or choose Legacy runner in Advanced");
     }
+    if (provider === "opencode" && this.options.runnerFilesystemRoot && !this.options.opencodeCommand) {
+      throw new Error("runner_remote_provider_artifact_incompatible: remote OpenCode omitted its qualified guest executable; verify the selected environment's provider artifacts or choose Legacy runner in Advanced");
+    }
     const runtimeContext =
       this.options.runnerRuntimeContext ?? sourceRuntimeContext;
     const localRuntimeContextPath = resolve(this.#root, "runtime-context.json");
@@ -4631,8 +4635,7 @@ class DurablePrpCodexTransport implements CodexAppServerTransport {
       : undefined;
     const opencodeExecutable =
       provider === "opencode"
-        ? (this.options.opencodeCommand ??
-          resolve(packageRoot, "node_modules/opencode-ai/bin/opencode.exe"))
+        ? (this.options.opencodeCommand ?? resolvePinnedOpenCodeCommand())
         : null;
     const runnerAcpxLaunchProfile =
       provider === "acpx"
@@ -5230,6 +5233,9 @@ class DurablePrpCodexTransport implements CodexAppServerTransport {
     this.#eventIdentity = structuredClone(identity);
     const provider = this.options.provider ?? "codex";
     const sourceRuntimeContext = this.options.runtimeContext ?? null;
+    if (provider === "opencode" && this.options.runnerFilesystemRoot && !this.options.opencodeCommand) {
+      throw new Error("runner_remote_provider_artifact_incompatible: remote OpenCode omitted its qualified guest executable; verify the selected environment's provider artifacts or choose Legacy runner in Advanced");
+    }
     const runtimeContext =
       this.options.runnerRuntimeContext ?? sourceRuntimeContext;
     const localRuntimeContextPath = resolve(this.#root, "runtime-context.json");
@@ -5258,8 +5264,7 @@ class DurablePrpCodexTransport implements CodexAppServerTransport {
       this.options.providerNodeCommand ?? process.execPath;
     const opencodeExecutable =
       provider === "opencode"
-        ? (this.options.opencodeCommand ??
-          resolve(packageRoot, "node_modules/opencode-ai/bin/opencode.exe"))
+        ? (this.options.opencodeCommand ?? resolvePinnedOpenCodeCommand())
         : null;
     const runnerAcpxLaunchProfile =
       provider === "acpx"

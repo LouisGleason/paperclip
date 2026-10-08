@@ -141,6 +141,55 @@ afterAll(async () => {
 });
 
 describe("OpenCodeServerDriver", () => {
+  it("resolves pinned native commands from standalone and vendored server layouts without postinstall or PATH", async () => {
+    // Use the maintained Node/tsx boundary so Vitest's global module lookup
+    // cannot supply a missing fixture dependency from the developer workspace.
+    const source = `
+      import assert from "node:assert/strict";
+      import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+      import { tmpdir } from "node:os";
+      import { dirname, join, resolve } from "node:path";
+      import { resolvePinnedOpenCodeCommand } from ${JSON.stringify(new URL("./opencode-server-driver.ts", import.meta.url).href)};
+      const root = realpathSync(mkdtempSync(join(tmpdir(), "paperclip-pinned-opencode-")));
+      const targets = [["linux", "x64", "opencode-linux-x64-baseline"], ["darwin", "arm64", "opencode-darwin-arm64"], ["darwin", "x64", "opencode-darwin-x64-baseline"]];
+      try {
+        for (const layout of ["standalone", "vendored"]) for (const [platform, architecture, name] of targets) {
+          const owner = join(root, layout + "-" + platform + "-" + architecture);
+          const issuer = join(owner, layout === "vendored" ? "dist/vendor/paperclip-runner/drivers/opencode/driver.js" : "dist/drivers/opencode/driver.js");
+          const wrapper = join(owner, "node_modules/opencode-ai"), artifact = join(owner, "node_modules", name);
+          const executable = join(artifact, "bin/opencode");
+          const metadata = { name: "opencode-ai", version: "1.18.34", optionalDependencies: { [name]: "1.18.34", "opencode-darwin-x64": "1.18.34" } };
+          const platformMetadata = { name, version: "1.18.34", os: [platform], cpu: [architecture] };
+          mkdirSync(dirname(issuer), { recursive: true }); mkdirSync(wrapper, { recursive: true }); mkdirSync(dirname(executable), { recursive: true });
+          writeFileSync(join(wrapper, "package.json"), JSON.stringify(metadata));
+          writeFileSync(join(artifact, "package.json"), JSON.stringify(platformMetadata));
+          writeFileSync(executable, "synthetic executable; not invoked", { mode: 0o755 });
+          const target = { platform, architecture };
+          assert.equal(resolvePinnedOpenCodeCommand(issuer, target), executable);
+          // The old packageRoot-relative path is absent in this real layout.
+          assert.throws(() => realpathSync(resolve(dirname(issuer), "../../node_modules/opencode-ai/bin/opencode.exe")), { code: "ENOENT" });
+          writeFileSync(join(wrapper, "package.json"), JSON.stringify({ ...metadata, version: "1.18.18" }));
+          assert.throws(() => resolvePinnedOpenCodeCommand(issuer, target), /version mismatch/);
+          writeFileSync(join(wrapper, "package.json"), JSON.stringify(metadata));
+          for (const invalid of [{ ...platformMetadata, version: "1.18.18" }, { ...platformMetadata, name: "wrong-package" }, { ...platformMetadata, cpu: ["other"] }]) {
+            writeFileSync(join(artifact, "package.json"), JSON.stringify(invalid));
+            assert.throws(() => resolvePinnedOpenCodeCommand(issuer, target), /identity mismatch/);
+          }
+          writeFileSync(join(artifact, "package.json"), JSON.stringify(platformMetadata));
+          chmodSync(executable, 0o600); assert.throws(() => resolvePinnedOpenCodeCommand(issuer, target), /runtime unavailable/);
+          rmSync(executable); const outside = join(owner, "outside"); writeFileSync(outside, "outside", { mode: 0o755 }); symlinkSync(outside, executable);
+          assert.throws(() => resolvePinnedOpenCodeCommand(issuer, target), /escapes/);
+          rmSync(artifact, { recursive: true, force: true });
+          assert.throws(() => resolvePinnedOpenCodeCommand(issuer, target), /dependency is missing/);
+          rmSync(wrapper, { recursive: true, force: true });
+          assert.throws(() => resolvePinnedOpenCodeCommand(issuer, target), /runtime unavailable.*Legacy runner/);
+          assert.throws(() => resolvePinnedOpenCodeCommand(issuer, { platform: "win32", architecture: "x64" }), /not qualified/);
+        }
+      } finally { rmSync(root, { recursive: true, force: true }); }
+    `;
+    const loader = new URL("../../../../../cli/node_modules/tsx/dist/loader.mjs", import.meta.url);
+    await promisify(execFile)(process.execPath, ["--import", loader.href, "--input-type=module", "-e", source], { timeout: 20_000, maxBuffer: 16 * 1024 });
+  });
   it("advertises within-turn plans as unsupported", async () => {
     const driver = new OpenCodeServerDriver({
       model: "openrouter/deepseek/deepseek-v4-flash-0731",

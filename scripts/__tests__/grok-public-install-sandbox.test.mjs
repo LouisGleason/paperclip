@@ -7,6 +7,7 @@ import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import test from 'node:test';
 import { GROK_PUBLIC_INSTALL_IMAGE, GROK_PUBLIC_INSTALL_LIFECYCLE, MAC_PUBLIC_INSTALL_INITIAL_TIMEOUT_MS, assertMacDeveloperRoot, discoverMacPublicInstallToolchain, grokConsumerDockerArgs, macPublicInstallLifecyclePolicy, prepareMacPublicInstallNodeHeaders, publicPackProducerLock, runMacPublicInstallPhase, verifyPublicPackProducerLock } from '../grok-public-install-sandbox.mjs';
 import { assertStandardImageIdentity, inspectInstalledDaemon, inspectInstalledProviderReadiness, inspectInstalledUi, inspectManagedServiceInstall, installedProbeMode, installedProbePaths, standardImageDockerArgs, standardImageRequest } from '../../tests/release-smoke/installed-cli-probe.mjs';
@@ -501,7 +502,7 @@ test('installed UI readiness checks a real HTTP response, exact serving commit, 
   }
 });
 
-test('installed provider readiness uses the production pinned Codex resolver and server-bound Claude verifier', async () => {
+test('installed provider readiness uses public login and OpenCode resolvers with the server-bound Claude verifier', async () => {
   // Unit fixtures exercise the probe contract. Actual package qualification
   // invokes these checks against the installed graph, never these fixtures.
   const root = realpathSync(await mkdtemp(join(tmpdir(), 'paperclip-provider-readiness-test-')));
@@ -511,6 +512,7 @@ test('installed provider readiness uses the production pinned Codex resolver and
     await mkdir(bin); await mkdir(installed, { recursive: true });
     await mkdir(join(server, 'dist/vendor/paperclip-runner/drivers/codex'));
     await writeFile(join(root, 'package.json'), JSON.stringify({ type: 'module' }));
+    await writeFile(join(server, 'package.json'), JSON.stringify({ type: 'module', dependencies: { 'opencode-ai': '1.18.34' } }));
     await writeFile(join(bin, 'codex'), `#!${process.execPath}\nimport fs from 'node:fs';
       fs.writeFileSync(${JSON.stringify(join(root, 'codex-arguments.json'))}, JSON.stringify(process.argv.slice(2)));
       if (process.argv.slice(2).join(' ') !== '--version') process.exit(9);
@@ -519,6 +521,21 @@ test('installed provider readiness uses the production pinned Codex resolver and
       export function resolvePinnedCodexCommand() {
         if (fs.existsSync(${JSON.stringify(join(root, 'missing-codex'))})) throw new Error('Pinned Codex runtime unavailable: missing installed package; choose Legacy runner in Advanced');
         return ${JSON.stringify(join(bin, 'codex'))};
+      }`);
+    await writeFile(join(bin, 'claude'), `#!${process.execPath}\nprocess.exit(9);\n`, { mode: 0o755 });
+    await writeFile(join(bin, 'opencode'), `#!${process.execPath}\nimport fs from 'node:fs';
+      fs.writeFileSync(${JSON.stringify(join(root, 'opencode-arguments.json'))}, JSON.stringify(process.argv.slice(2)));
+      if (process.argv.slice(2).join(' ') !== '--version') process.exit(9);
+      console.log('1.18.34');\n`, { mode: 0o755 });
+    await writeFile(join(server, 'dist/vendor/paperclip-runner/index.js'), `import fs from 'node:fs';
+      export { resolvePinnedCodexCommand } from './drivers/codex/codex-command.js';
+      export async function resolvePinnedClaudeCommand() {
+        if (fs.existsSync(${JSON.stringify(join(root, 'missing-claude'))})) throw new Error('Qualified Claude login bundle missing');
+        return ${JSON.stringify(join(bin, 'claude'))};
+      }
+      export function resolvePinnedOpenCodeCommand() {
+        if (fs.existsSync(${JSON.stringify(join(root, 'missing-opencode'))})) throw new Error('Packaged OpenCode runtime unavailable');
+        return ${JSON.stringify(join(bin, 'opencode'))};
       }`);
     await writeFile(join(installed, 'qualified-profiles.js'), `export const QUALIFIED_ACPX_PROFILES={codex:{agentRuntimeVersion:'0.160.0'}};
       export function resolveQualifiedAcpxProfile(agent, model) {
@@ -542,18 +559,29 @@ test('installed provider readiness uses the production pinned Codex resolver and
     assert.equal(receipt.providerCalls, 0);
     assert.equal(receipt.codex.executable, join(bin, 'codex'));
     assert.equal(receipt.codex.version, 'codex-cli 0.160.0');
+    assert.equal(receipt.codex.publicEntryPointVerified, true);
+    assert.equal(receipt.codex.loginCommandResolved, true);
     assert.deepEqual(JSON.parse(readFileSync(join(root, 'codex-arguments.json'), 'utf8')), ['--version']);
     assert.equal(readFileSync(join(root, 'claude-model'), 'utf8'), '@agentclientprotocol/claude-agent-acp');
     assert.equal(readFileSync(join(root, 'claude-lease-closed'), 'utf8'), 'closed');
     assert.equal(receipt.claude.packageAuthority, server);
     assert.equal(receipt.claude.agentRuntimeVersion, '0.3.286');
     assert.equal(receipt.claude.commandLeasePassed, true);
+    assert.equal(receipt.claude.executable, join(bin, 'claude'));
+    assert.equal(receipt.claude.publicEntryPointVerified, true);
+    assert.equal(receipt.claude.loginCommandResolved, true);
+    assert.equal(receipt.opencode.executable, join(bin, 'opencode'));
+    assert.equal(receipt.opencode.version, '1.18.34');
+    assert.equal(receipt.opencode.dependencyVersion, '1.18.34');
+    assert.equal(receipt.opencode.publicEntryPointVerified, true);
+    assert.deepEqual(JSON.parse(readFileSync(join(root, 'opencode-arguments.json'), 'utf8')), ['--version']);
     assert.equal(receipt.runnerd.manifestVerified, true);
     assert.equal(receipt.runnerd.executable, daemon.executable);
     assert.deepEqual(JSON.parse(readFileSync(daemon.argumentsPath, 'utf8')), ['--build-metadata']);
 
-    assert.equal((await inspectInstalledProviderReadiness({ server, commandPath: join(root, 'empty-runtime-path') })).codex.versionProbePassed, true,
-      'A pinned executable does not require a global Codex command on PATH');
+    const noGlobalCommands = await inspectInstalledProviderReadiness({ server, commandPath: join(root, 'empty-runtime-path') });
+    assert.equal(noGlobalCommands.codex.versionProbePassed, true, 'A pinned executable does not require a global Codex command on PATH');
+    assert.equal(noGlobalCommands.opencode.versionProbePassed, true, 'The default OpenCode path must use its packaged dependency');
     await writeFile(join(root, 'missing-codex'), 'missing installed package');
     await assert.rejects(inspectInstalledProviderReadiness({ server, commandPath: bin }), error => {
       assert.match(error.message, /Pinned Codex runtime unavailable.*Legacy runner/);
@@ -562,6 +590,24 @@ test('installed provider readiness uses the production pinned Codex resolver and
       return true;
     });
     await rm(join(root, 'missing-codex'));
+    await writeFile(join(root, 'missing-claude'), 'missing installed login bundle');
+    await assert.rejects(inspectInstalledProviderReadiness({ server, commandPath: bin }), error => {
+      assert.match(error.message, /Qualified Claude login bundle missing/);
+      assert.equal(error.providerReadiness.claude, undefined);
+      assert.equal(error.providerReadiness.codex.versionProbePassed, true);
+      assert.equal(error.providerReadiness.opencode.versionProbePassed, true);
+      return true;
+    });
+    await rm(join(root, 'missing-claude'));
+    await writeFile(join(root, 'missing-opencode'), 'missing packaged dependency');
+    await assert.rejects(inspectInstalledProviderReadiness({ server, commandPath: bin }), error => {
+      assert.match(error.message, /Packaged OpenCode runtime unavailable/);
+      assert.equal(error.providerReadiness.opencode, undefined, 'An ambient OpenCode command cannot replace the missing package');
+      assert.equal(error.providerReadiness.codex.versionProbePassed, true);
+      assert.equal(error.providerReadiness.claude.installationIntegrityPassed, true);
+      return true;
+    });
+    await rm(join(root, 'missing-opencode'));
     await writeFile(join(root, 'bad-claude'), 'mismatched installed runtime');
     await assert.rejects(inspectInstalledProviderReadiness({ server, commandPath: bin }), error => {
       assert.match(error.message, /Claude: ACPX claude runtime version mismatch/);
@@ -572,6 +618,34 @@ test('installed provider readiness uses the production pinned Codex resolver and
     await writeFile(join(bin, 'codex'), `#!${process.execPath}\nconsole.log('authentication required');\n`, { mode: 0o755 });
     await assert.rejects(inspectInstalledProviderReadiness({ server, commandPath: bin }), /Codex did not return its CLI version/);
     await assert.rejects(inspectInstalledProviderReadiness({ server: '../checkout' }), /Invalid installed server/);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('installed readiness rejects missing public resolver exports even when the deep Codex driver works', async () => {
+  const root = realpathSync(await mkdtemp(join(tmpdir(), 'paperclip-missing-public-resolver-test-')));
+  const server = join(root, 'server'), installed = join(server, 'dist/vendor/paperclip-runner');
+  try {
+    await mkdir(join(installed, 'drivers/codex'), { recursive: true });
+    await writeFile(join(root, 'package.json'), JSON.stringify({ type: 'module' }));
+    const executable = join(root, 'codex');
+    await writeFile(executable, `#!${process.execPath}\nconsole.log('codex-cli 0.160.0');\n`, { mode: 0o755 });
+    await writeFile(join(installed, 'drivers/codex/codex-command.js'), `export function resolvePinnedCodexCommand(){return ${JSON.stringify(executable)}}`);
+    await mkdir(join(installed, 'drivers/acpx'));
+    await writeFile(join(installed, 'drivers/acpx/qualified-profiles.js'), "export const QUALIFIED_ACPX_PROFILES={codex:{agentRuntimeVersion:'0.160.0'}};\n");
+    await writeFile(join(installed, 'index.js'), 'export {};\n');
+    await daemonFixture(root, server);
+    const deepDriver = await import(pathToFileURL(join(installed, 'drivers/codex/codex-command.js')).href);
+    assert.equal(execFileSync(deepDriver.resolvePinnedCodexCommand(), ['--version'], { encoding: 'utf8' }).trim(), 'codex-cli 0.160.0');
+    await assert.rejects(inspectInstalledProviderReadiness({ server, commandPath: '/usr/bin:/bin' }), error => {
+      assert.match(error.message, /public runner entry point must export the qualified Codex login resolver/);
+      assert.match(error.message, /public runner entry point must export the qualified Claude login resolver/);
+      assert.match(error.message, /public runner entry point must export the packaged OpenCode command resolver/);
+      assert.equal(error.providerReadiness.codex, undefined);
+      assert.equal(error.providerReadiness.claude, undefined);
+      assert.equal(error.providerReadiness.opencode, undefined);
+      assert.equal(error.providerReadiness.runnerd.metadataProbePassed, true);
+      return true;
+    });
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 

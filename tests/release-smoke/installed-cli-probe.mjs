@@ -74,7 +74,10 @@ export async function inspectInstalledProviderReadiness({ server, commandPath = 
   try {
     assert.ok(typeof commandPath === 'string' && commandPath.length > 0, 'Codex requires the runtime PATH');
     const installed = join(server, 'dist/vendor/paperclip-runner');
-    const { resolvePinnedCodexCommand } = await import(pathToFileURL(join(installed, 'drivers/codex/codex-command.js')).href);
+    // Login imports this public boundary. A working deep driver alone cannot
+    // prove that the shipped server can load the exported login resolver.
+    const { resolvePinnedCodexCommand } = await import(pathToFileURL(join(installed, 'index.js')).href);
+    assert.equal(typeof resolvePinnedCodexCommand, 'function', 'Installed public runner entry point must export the qualified Codex login resolver');
     const { QUALIFIED_ACPX_PROFILES } = await import(pathToFileURL(join(installed, 'drivers/acpx/qualified-profiles.js')).href);
     const executable = resolvePinnedCodexCommand();
     const version = execFileSync(executable, ['--version'], { cwd: server,
@@ -83,9 +86,16 @@ export async function inspectInstalledProviderReadiness({ server, commandPath = 
     const versionMatch = version.match(/^codex(?:-cli)? (\d+\.\d+\.\d+(?:[-+][a-zA-Z0-9.-]+)?)$/);
     assert.ok(versionMatch, 'Codex did not return its CLI version');
     assert.equal(versionMatch[1], QUALIFIED_ACPX_PROFILES.codex.agentRuntimeVersion, 'Installed Codex executable must match its qualification pin');
-    readiness.codex = { command: 'codex', executable, version, resolution: 'qualified installed dependency', versionProbePassed: true };
+    readiness.codex = { command: 'codex', executable, version, resolution: 'qualified installed public runtime entry point',
+      publicEntryPointVerified: true, loginCommandResolved: true, versionProbePassed: true };
   } catch (error) { failures.push(`Codex: ${error.message}`); }
   try {
+    const { resolvePinnedClaudeCommand } = await import(pathToFileURL(join(server, 'dist/vendor/paperclip-runner/index.js')).href);
+    assert.equal(typeof resolvePinnedClaudeCommand, 'function', 'Installed public runner entry point must export the qualified Claude login resolver');
+    const executable = await resolvePinnedClaudeCommand();
+    assert.ok(isAbsolute(executable) && realpathSync(executable) === executable && lstatSync(executable).isFile(),
+      'The qualified Claude login resolver must select a regular installed executable');
+    accessSync(executable, constants.X_OK);
     const installed = join(server, 'dist/vendor/paperclip-runner/drivers/acpx');
     const { createAcpxPackageJsonResolver, verifyQualifiedAcpxInstallation } = await import(pathToFileURL(join(installed, 'installation-integrity.js')).href);
     const { resolveQualifiedAcpxProfile } = await import(pathToFileURL(join(installed, 'qualified-profiles.js')).href);
@@ -99,9 +109,25 @@ export async function inspectInstalledProviderReadiness({ server, commandPath = 
     await lease.close();
     readiness.claude = { agentServerPackage: profile.agentServerPackage, agentServerVersion: profile.agentServerVersion,
       agentRuntimePackage: profile.agentRuntimePackage, agentRuntimeVersion: profile.agentRuntimeVersion,
-      commandDigest: profile.commandDigest, packageAuthority: server,
+      commandDigest: profile.commandDigest, packageAuthority: server, executable,
+      publicEntryPointVerified: true, loginCommandResolved: true,
       installationIntegrityPassed: true, commandLeasePassed: true };
   } catch (error) { failures.push(`Claude: ${error.message}`); }
+  try {
+    const { resolvePinnedOpenCodeCommand } = await import(pathToFileURL(join(server, 'dist/vendor/paperclip-runner/index.js')).href);
+    assert.equal(typeof resolvePinnedOpenCodeCommand, 'function', 'Installed public runner entry point must export the packaged OpenCode command resolver');
+    const dependencyVersion = JSON.parse(readFileSync(join(server, 'package.json'), 'utf8')).dependencies?.['opencode-ai'];
+    assert.match(dependencyVersion ?? '', /^\d+\.\d+\.\d+(?:[-+][a-zA-Z0-9.-]+)?$/, 'Installed server must declare its exact OpenCode dependency');
+    const executable = resolvePinnedOpenCodeCommand();
+    const version = execFileSync(executable, ['--version'], { cwd: server,
+      env: { PATH: commandPath, ...(process.env.HOME ? { HOME: process.env.HOME } : {}) },
+      encoding: 'utf8', timeout: 30_000, maxBuffer: 16 * 1024 }).trim();
+    const versionMatch = version.match(/^(?:opencode(?:-cli)? )?(\d+\.\d+\.\d+(?:[-+][a-zA-Z0-9.-]+)?)$/);
+    assert.ok(versionMatch, 'OpenCode did not return its CLI version');
+    assert.equal(versionMatch[1], dependencyVersion, 'Installed OpenCode executable must match the server dependency pin');
+    readiness.opencode = { executable, version, dependencyVersion, resolution: 'packaged public runtime entry point',
+      publicEntryPointVerified: true, packagedCommandResolved: true, versionProbePassed: true };
+  } catch (error) { failures.push(`OpenCode: ${error.message}`); }
   if (failures.length) {
     const error = new Error(`Installed provider readiness failed: ${failures.join('; ')}`);
     error.providerReadiness = { ...readiness, failures };
