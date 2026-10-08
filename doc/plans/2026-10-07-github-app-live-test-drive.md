@@ -469,3 +469,70 @@ Logs: `/private/tmp/github-mentions-repo-tests.log` and
 `/private/tmp/github-mentions-workspace-runtime-failure.log`.
 
 Live review evidence: `/private/tmp/paperclip-github-e2e-evidence/github-description-mention-review.png`.
+
+
+## Tool-owned GitHub replies — 2026-10-08
+
+This supersedes the earlier receipt-dependent native-final policy and the
+completed-marker behavior recorded above. GitHub discussion replies use the
+agent's `comment` tool. Review replies use `submit_review`, which publishes the
+summary and check. Runner final prose remains internal for every GitHub run.
+Routine queued, working, native progress and completed comments are suppressed,
+including retained automatic publications from an earlier instance version.
+Explicit Board sends and real question cards remain available.
+
+A failed run can publish one safe fallback if no reply was delivered. Confirmed
+comments, formal reviews, assessment summaries and partial finding receipts
+suppress it. Pending or ambiguous tool writes hold the fallback; an exhausted
+retry or later authorization denial cannot disprove a possible earlier write.
+The guard checks company, endpoint, conversation, task, assigned agent and run,
+and repeats the check after acquiring the credential lane. Terminal reaction
+cleanup stays independent of a provider comment. Legacy test-based setup accepts
+a confirmed, causally bound tool reply instead of requiring a runner summary.
+
+Mention and follow-up comments now start with the authorized GitHub username,
+explain discussion and review tools, preserve custom guidance and ignored paths,
+and identify provider context as untrusted. They omit the revision header and
+empty exclusion list. They tell the agent not to quote the internal instructions
+or add a separate review-completion announcement.
+
+### Live evidence
+
+The same low-trust Animal Bot, Daytona environment, dedicated Banana Bot Man
+App, sole permitted repository and configuring member were reused. Configuration
+revision **1** remains unchanged. These were real signed gateway deliveries and
+native model runs; no synthetic webhook or host credential substituted for them.
+
+- Issue #5: request comment `6061889213`, run
+  `9ca64f81-6dcb-4db8-814b-922616a9a80d` succeeded at 14:19:46 UTC.
+  [One ASCII fish reply](https://github.com/paperclipai/paperclip-permissions-smoke-20260926-pap57-fee7428e/issues/5#issuecomment-6061907432)
+  was delivered by the `comment` tool. No routine or final-summary comment
+  followed. The new task message names `cryppadotta` and uses the revised prose.
+- The first PR retest, run `28e2f640-c9ec-4663-901b-6dbcbc8f4538`, submitted a
+  review and separately called `comment` to announce completion. This was an
+  agent-authored tool write, not an automatic stack publication. The prompt was
+  corrected to explain that `submit_review` already publishes the answer.
+- Final PR #7 request `6062038664`, run
+  `1098a204-539b-4151-a5bc-4e161d8400c6` succeeded at 14:27:29 UTC.
+  It called only the assessment publication tool, updating the
+  [existing 5/5 summary with an ASCII rabbit](https://github.com/paperclipai/paperclip-permissions-smoke-20260926-pap57-fee7428e/pull/7#issuecomment-6059614330).
+  The [current-head check passed](https://github.com/paperclipai/paperclip-permissions-smoke-20260926-pap57-fee7428e/runs/113363466934)
+  on `7f456f37881bf4bfe39692f897d60e1625521298`. No new bot comment followed.
+- All three runs retained internal final comments, cancelled their completion
+  milestones without provider IDs, and completed acknowledgement removal.
+  Read-only proof is retained at `/private/tmp/github-tool-owned-reply-proof.json`.
+
+### Validation
+
+- Full chat-channel integration file: **1,096 passed**, including unaffected
+  providers, question cards, explicit Board attachments and recovery fencing.
+- Final GitHub workflow, receipt cleanup, setup and replay subset: **78 passed**.
+- Complete GitHub guidance/publication, event, receipt, webhook, origin and native
+  access unit suites: **208 passed**.
+- A concurrent policy run used the two old prompt expectations; the final updated
+  policy suite passed. It is not counted as a final green combined run.
+- Workspace typecheck and build passed. The final server build passed after the
+  partial-assessment receipt guard changed. The previously recorded repository
+  full-suite and current-head CI limitations remain; this is not a merge-ready
+  claim. Failure-only and ambiguous-delivery cases were tested with fixtures,
+  without deliberately breaking the live bot's sandbox or permissions.

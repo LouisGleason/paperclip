@@ -248,6 +248,23 @@ latest head's assessment.
 
 See [GitHub status checks](https://docs.github.com/en/pull-requests/reference/status-checks).
 
+## How the agent replies
+
+The agent chooses what to send through its task-scoped GitHub tools. For
+discussion, it uses `comment`. For a review, `submit_review` publishes the
+assessment summary and updates the check. It should not add another comment
+just to announce that the review is complete.
+
+Paperclip does not post routine queued, working, progress or completion comments
+on GitHub. The runner's final text stays inside the Paperclip task, including
+when the agent has not sent a reply. An acknowledgement reaction is removed
+when the run ends. A real question can still link to its answer form in Paperclip.
+
+If a run fails without a tool reply, Paperclip can send one safe failure notice.
+A confirmed reply suppresses that notice. A pending or uncertain tool delivery
+holds it until the delivery is resolved, so a missing receipt does not cause a
+duplicate comment. A check alone does not count as a conversation reply.
+
 ## Formal Approve and Request changes reviews are separate
 
 GitHub also supports formal PR reviews: **Approve**, **Request changes**, and
