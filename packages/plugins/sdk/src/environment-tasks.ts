@@ -9,16 +9,18 @@ const secureUrl = z.string().url().refine(value => {
   return url.protocol === "wss:" && !url.username && !url.password && !url.search && !url.hash;
 }, "Expected a credential-free WSS URL");
 
-/** One durable execution attempt. Secrets are transient RPC input, never lease metadata. */
+/** One remote Paperclip Runner execution attempt over PRP. Secrets are transient RPC input. */
 export const environmentTaskOperationSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("submit"),
     runner: z.object({
-      revision: z.string().regex(/^[a-f0-9]{40}$/),
+      /** Inclusive PRP version range supported by the submitting client. */
+      protocolMin: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+      protocolMax: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
       harness: identifier,
       runnerId: identifier, leaseId: identifier, runId: identifier,
       sessionId: identifier, turnId: identifier, itemId: identifier,
-    }).strict(),
+    }).strict().refine(value => value.protocolMin <= value.protocolMax, "Invalid PRP version range"),
     bootstrapTicket: z.string().min(1).max(65_536),
   }).strict(),
   z.object({ kind: z.literal("status") }).strict(),

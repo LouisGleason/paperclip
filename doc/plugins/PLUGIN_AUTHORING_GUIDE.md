@@ -680,8 +680,8 @@ menu when no unique contribution exists, discovery fails, the module is missing,
 or rendering throws. The slot is a React-only contract; do not use a custom
 element export. This replaces only the menu, not company policy or authorization.
 
-## Typed task admission
+## Remote Paperclip Runner tasks
 
-Environment drivers can implement [typed task operations](ENVIRONMENT_TASKS.md) for
-provider-owned Runner launch, status, connections, completion, and cancellation.
-This contract is separate from shell execution and readiness checks.
+Environment drivers can [submit tasks directly to a remote Paperclip Runner](ENVIRONMENT_TASKS.md)
+and connect to it using Paperclip Runner Protocol (PRP). The driver manages Runner
+launch, status, connections, completion, and cancellation for each task lease.

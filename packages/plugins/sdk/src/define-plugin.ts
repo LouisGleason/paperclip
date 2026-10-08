@@ -372,7 +372,7 @@ export interface PluginDefinition {
     params: PluginEnvironmentValidateConfigParams,
   ): Promise<PluginEnvironmentValidationResult>;
 
-  /** Admit, inspect, connect to, or finish a typed task on a persisted lease. */
+  /** Submit, inspect, connect to, or finish a remote Paperclip Runner task over PRP. */
   onEnvironmentTask?(params: PluginEnvironmentTaskParams): Promise<PluginEnvironmentTaskResult>;
 
   /** Called to test reachability or readiness of a plugin-hosted environment. */

@@ -21,12 +21,12 @@ function database(value: ReturnType<typeof row> | null = row()) {
 function worker(result: unknown = { kind: "accepted", taskId: "attempt-1" }) {
   return { getWorker: vi.fn(() => ({ supportedMethods: ["environmentTask"] })), call: vi.fn(async () => result) };
 }
-const submit = { kind: "submit" as const, runner: { revision: "a".repeat(40), harness: "codex", runnerId: "runner", leaseId, runId: "run", sessionId: "session", turnId: "turn", itemId: "item" }, bootstrapTicket: "transient-test-ticket" };
+const submit = { kind: "submit" as const, runner: { protocolMin: 1, protocolMax: 2, harness: "codex", runnerId: "runner", leaseId, runId: "run", sessionId: "session", turnId: "turn", itemId: "item" }, bootstrapTicket: "transient-test-ticket" };
 
 beforeEach(() => {
   state.plugin = { id: "original", pluginKey: "test.provider", status: "ready", manifestJson: { capabilities: ["environment.drivers.register"], environmentDrivers: [{ driverKey: "tasks", supportsTasks: true }] } };
 });
-describe("typed environment task admission", () => {
+describe("remote Paperclip Runner tasks", () => {
   it("dispatches with host-derived scope and a persisted attempt identity", async () => {
     const { db, query } = database(); const workers = worker();
     await expect(executeEnvironmentTask(db, workers as never, { companyId: "company", leaseId, operation: submit })).resolves.toEqual({ kind: "accepted", taskId: "attempt-1" });
@@ -108,6 +108,19 @@ describe("typed environment task admission", () => {
     await expect(executeEnvironmentTask(database().db, worker({ kind: "accepted", taskId: "other" }) as never, { companyId: "company", leaseId, operation: submit })).rejects.toThrow("reconcile the same task");
     const workers = worker(); workers.call.mockRejectedValue(new Error("private-credential"));
     await expect(executeEnvironmentTask(database().db, workers as never, { companyId: "company", leaseId, operation: submit })).rejects.toThrow(/^Environment task operation unavailable; reconcile the same task before retrying$/);
+  });
+  it("validates the client's inclusive PRP version range", () => {
+    for (const range of [{ protocolMin: 1, protocolMax: 1 }, { protocolMin: 1, protocolMax: 2 }, { protocolMin: 3, protocolMax: 5 }]) {
+      expect(environmentTaskOperationSchema.safeParse({ ...submit, runner: { ...submit.runner, ...range } }).success).toBe(true);
+    }
+    for (const range of [
+      { protocolMin: 0, protocolMax: 2 }, { protocolMin: 2, protocolMax: 1 },
+      { protocolMin: 1.5, protocolMax: 2 }, { protocolMin: 1, protocolMax: 2.5 },
+      { protocolMin: 1, protocolMax: Number.MAX_SAFE_INTEGER + 1 },
+      { protocolMin: undefined, protocolMax: 2 }, { protocolMin: 1, protocolMax: undefined },
+    ]) {
+      expect(environmentTaskOperationSchema.safeParse({ ...submit, runner: { ...submit.runner, ...range } }).success).toBe(false);
+    }
   });
   it("validates operation and result shape without making acceptance mean readiness", () => {
     expect(environmentTaskOperationSchema.safeParse({ ...submit, surprise: true }).success).toBe(false);

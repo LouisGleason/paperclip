@@ -1,9 +1,9 @@
-# Typed environment tasks
+# Remote Paperclip Runner tasks
 
-An environment driver can own task admission without exposing a shell or creating
-one disposable resource per run. Declare `supportsTasks: true` on the driver and
-implement `onEnvironmentTask`. The worker advertises `environmentTask` during
-initialization. Both declarations must be present. The existing
+An environment driver can submit tasks directly to a remote Paperclip Runner
+and connect to it using Paperclip Runner Protocol (PRP). Declare `supportsTasks: true`
+on the driver and implement `onEnvironmentTask`. The worker advertises
+`environmentTask` during initialization. Both declarations must be present. The existing
 `environment.drivers.register` capability applies.
 
 The server-only `environmentRuntime.task({companyId, leaseId, operation})` method
@@ -25,8 +25,9 @@ the task's durable attempt ID. Save it before a remote call. Do not use a persis
 machine ID as this task ID. Multiple attempts can use the same underlying resource. Provider task IDs are
 opaque strings; each provider owns its addressing constraints.
 
-- `submit`: supplies typed Runner identity, source revision, harness,
-  and a transient bootstrap ticket. The Runner run and lease IDs
+- `submit`: supplies Runner identity, harness, the client's supported PRP version
+  range (`runner.protocolMin` and `runner.protocolMax`, inclusive), and a transient
+  bootstrap ticket. The Runner run and lease IDs
   must match the persisted host records. Only a running run with an active,
   unexpired lease can submit.
 - `status`: returns the phase and optional exit code. Optional `executionStopped`
@@ -41,7 +42,10 @@ opaque strings; each provider owns its addressing constraints.
   termination receipt. Reconcile status before treating execution as stopped.
 
 Submit the task, wait until it is running, then request `connection` and connect
-to its WSS endpoint with the returned headers.
+to its WSS endpoint with the returned headers. The provider must select a Runner
+whose supported PRP range overlaps the client's range. The client uses that same
+range during the PRP handshake, which negotiates the highest shared version and
+verifies Runner identity and artifacts before execution.
 
 Submission, completion and stop return `accepted`. Acceptance does not imply
 readiness or success. Status and connection return distinct typed results. Every

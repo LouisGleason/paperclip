@@ -191,7 +191,7 @@ export interface SandboxProviderCapabilities {
 }
 
 export interface PluginEnvironmentDriverDeclaration {
-  /** Implements the typed environmentTask worker RPC; no shell execution is implied. */
+  /** Submits tasks directly to a remote Paperclip Runner over PRP via environmentTask. */
   supportsTasks?: boolean;
   /** Stable driver key, unique within the plugin. Namespaced by plugin ID at runtime. */
   driverKey: string;

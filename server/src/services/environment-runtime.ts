@@ -3872,7 +3872,7 @@ export function environmentRuntimeService(
       return resolveSandboxDuplexBridgeInput(experimental);
     },
 
-    /** Typed task providers own process admission; this does not execute a shell command. */
+    /** Submit and manage tasks on a remote Paperclip Runner over PRP. */
     async task(input: { companyId: string; leaseId: string; operation: PluginEnvironmentTaskOperation }) {
       if (!options.pluginWorkerManager) throw new Error("Environment task worker manager unavailable");
       return executeEnvironmentTask(db, options.pluginWorkerManager, input);
