@@ -16,15 +16,79 @@ import { resolvePaperclipRunnerTransport } from "@paperclipai/adapter-utils/runn
 import { registerRunnerPrpAuthority } from "../../realtime/runner-prp-ws.js";
 
 const execFileAsync = promisify(execFile);
+const shellQuote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
+
+export interface RemoteNativeSetupArtifacts {
+  runnerBinary: string;
+  controllerRunnerBinary: string;
+  providerPackRoot: string;
+  codexCommand?: string;
+  manifest: ReturnType<typeof import("./native-session-executor.js").readRemoteProviderPackManifest>;
+}
+
+/** Prepare the task's exact artifacts on an owned root, before any account probe. */
+export async function withRemoteNativeSetupArtifacts(
+  context: AdapterEnvironmentTestContext,
+  provider: "codex" | "opencode" | "acpx",
+  model: string | null,
+  probe: (artifacts?: RemoteNativeSetupArtifacts) => Promise<AdapterEnvironmentTestResult>,
+): Promise<AdapterEnvironmentTestResult> {
+  const target = context.executionTarget;
+  // SSH Codex already owns its task preparation and confirmed cleanup below.
+  if (target?.kind !== "remote" || (target.transport === "ssh" && provider === "codex")) return probe();
+  try {
+    const runner = target.transport === "ssh" ? createNativeSshCommandRunner({ spec: target.spec, defaultCwd: target.remoteCwd }) : target.runner;
+    if (!runner) throw new Error("runner_transport_ineligible: remote process runner is unavailable");
+    const { createRemoteNativeArtifactPreparation, createRemoteProviderPackPreparation, readRemoteProviderPackManifest, readBundledRemoteProviderPackManifest } = await import("./native-session-executor.js");
+    const configuredPack = process.env.PAPERCLIP_RUNNER_REMOTE_PROVIDER_PACK_PATH?.trim() || null;
+    const manifest = configuredPack ? readRemoteProviderPackManifest(configuredPack) : readBundledRemoteProviderPackManifest();
+    const explicitRunner = process.env.PAPERCLIP_RUNNER_REMOTE_BINARY_PATH?.trim() || null;
+    const controllerRunnerBinary = explicitRunner || (configuredPack ? resolvePaperclipRunnerBinary() : bundledRemoteRunnerBinary());
+    // Validate controller identity before writing to the selected environment.
+    readRunnerdArtifactBinding(controllerRunnerBinary);
+    const platform = await runner.execute({ command: "sh", args: ["-c", "uname -s && uname -m"], cwd: target.remoteCwd, bypassSession: true, timeoutMs: 15_000 });
+    const [os, arch] = platform.stdout.trim().split(/\s+/);
+    if (platform.timedOut || platform.exitCode !== 0 || ({ Linux: "linux", Darwin: "darwin" } as Record<string, string>)[os] !== manifest.payload.target.platform
+      || ({ x86_64: "x64", arm64: "arm64" } as Record<string, string>)[arch] !== manifest.payload.target.architecture) {
+      throw new Error("runner_remote_provider_artifact_incompatible: the controller provider pack does not match the selected environment platform. Configure PAPERCLIP_RUNNER_REMOTE_PROVIDER_PACK_PATH with its qualified build-owned pack.");
+    }
+    const remoteRoot = posix.join(target.remoteCwd, ".paperclip-runtime", `paperclip-native-setup-${crypto.randomUUID()}`);
+    const runnerBinary = posix.join(remoteRoot, "bin", "paperclip-runnerd");
+    const providerPackRoot = posix.join(remoteRoot, "provider-pack");
+    const codexNpmSpec = process.env.PAPERCLIP_RUNNER_REMOTE_CODEX_NPM_SPEC?.trim() || null;
+    const codexCommand = provider === "codex" ? (codexNpmSpec
+      ? posix.join(remoteRoot, "harnesses", "codex", "node_modules", ".bin", "codex")
+      : posix.join(remoteRoot, "bin", "codex")) : undefined;
+    const nativeArtifacts = createRemoteNativeArtifactPreparation({ target, runner, remoteBinary: runnerBinary, controllerRunnerBinary, remoteRuntimeRoot: remoteRoot,
+      remoteCodexBinary: codexCommand, runnerRemoteBinaryPath: explicitRunner, runnerRemoteCodexPath: process.env.PAPERCLIP_RUNNER_REMOTE_CODEX_PATH?.trim(), runnerRemoteCodexNpmSpec: codexNpmSpec, model: provider === "codex" ? model : null });
+    const providerArtifacts = createRemoteProviderPackPreparation({ target, runner, manifest, configuredProviderPackRoot: configuredPack, stagedRemoteProviderPackRoot: providerPackRoot });
+    const created = await runner.execute({ command: "sh", args: ["-c", `set -eu; umask 077; mkdir -p -- ${shellQuote(posix.dirname(remoteRoot))}; test -d ${shellQuote(posix.dirname(remoteRoot))} && test ! -L ${shellQuote(posix.dirname(remoteRoot))}; mkdir -m 0700 -- ${shellQuote(remoteRoot)}`], cwd: target.remoteCwd, bypassSession: true, timeoutMs: 10_000 });
+    if (created.timedOut || created.exitCode !== 0) throw new Error("Native setup could not claim a private runtime directory in the selected environment.");
+    await nativeArtifacts.prepare(target.transport === "sandbox" && target.effectiveCapabilities?.runnerWebSocketIngress === true ? "listen_ws" : "dial_wss");
+    await providerArtifacts.prepare();
+    const result = await probe({ runnerBinary, controllerRunnerBinary, providerPackRoot, manifest, ...(codexCommand ? { codexCommand } : {}) });
+    // A passing native receipt requires provider teardown/copy-back completion.
+    // On failure keep private state; never delete an unconfirmed active probe.
+    if (result.status === "pass") {
+      const cleaned = await runner.execute({ command: "rm", args: ["-rf", "--", remoteRoot], cwd: target.remoteCwd, bypassSession: true, timeoutMs: 10_000 });
+      if (cleaned.timedOut || cleaned.exitCode !== 0) throw new Error("Native setup artifact cleanup is incomplete; private recovery state was retained.");
+    }
+    return result;
+  } catch (error) {
+    return { adapterType: "paperclip_runner", status: "fail", testedAt: new Date().toISOString(), checks: [{ code: "paperclip_runner_runtime_unavailable", level: "error",
+      message: redactNativeProbeMessage(error instanceof Error ? error.message : "The selected environment could not prepare the native runtime.", Object.fromEntries(Object.entries(context.config.env && typeof context.config.env === "object" && !Array.isArray(context.config.env) ? context.config.env : {}).filter((entry): entry is [string, string] => typeof entry[1] === "string"))),
+      hint: "Check the controller's matching runner and provider-pack artifacts and the selected environment's upload capability. Legacy runner is available explicitly in Advanced." }] };
+  }
+}
 
 /** Check the selected runtime as well as the separate provider authentication probe. */
-export async function assertNativeRunnerSetupReady(context: AdapterEnvironmentTestContext): Promise<void> {
+export async function assertNativeRunnerSetupReady(context: AdapterEnvironmentTestContext, artifacts?: RemoteNativeSetupArtifacts): Promise<void> {
   let stdout: string;
   if (context.executionTarget?.kind === "remote") {
     const probe = await runAdapterExecutionTargetShellCommand(
       `runner-setup-${crypto.randomUUID()}`,
       context.executionTarget,
-      'for runner in /opt/paperclip-runner/bin/paperclip-runnerd "$HOME/.local/bin/paperclip-runnerd"; do if [ -x "$runner" ]; then exec "$runner" --build-metadata; fi; done; exec paperclip-runnerd --build-metadata',
+      artifacts ? shellQuote(artifacts.runnerBinary) + ' --build-metadata' : 'for runner in /opt/paperclip-runner/bin/paperclip-runnerd "$HOME/.local/bin/paperclip-runnerd"; do if [ -x "$runner" ]; then exec "$runner" --build-metadata; fi; done; exec paperclip-runnerd --build-metadata',
       { cwd: context.executionTarget.remoteCwd, env: {}, timeoutSec: 15 },
     );
     if (probe.timedOut || probe.exitCode !== 0) {
@@ -42,7 +106,7 @@ export async function assertNativeRunnerSetupReady(context: AdapterEnvironmentTe
 }
 
 /** Probe the installed provider pack on the selected target, without credentials. */
-export async function assertRemoteAcpxSetupReady(context: AdapterEnvironmentTestContext, agent: "claude" | "grok" | "cursor", model: string): Promise<void> {
+export async function assertRemoteAcpxSetupReady(context: AdapterEnvironmentTestContext, agent: "claude" | "grok" | "cursor", model: string, artifacts?: RemoteNativeSetupArtifacts): Promise<void> {
   if (context.executionTarget?.kind !== "remote") return;
   const expected = QUALIFIED_ACPX_PROFILES[agent];
   const script = `
@@ -60,9 +124,9 @@ export async function assertRemoteAcpxSetupReady(context: AdapterEnvironmentTest
     await probes[{claude:'probeAcpxClaudeInstallation',grok:'probeAcpxGrokInstallation',cursor:'probeAcpxCursorInstallation'}[agent]](model);
   `;
   const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
-  const command = 'for pack in /opt/paperclip-runner/provider-pack "$HOME/.local/share/paperclip-runner/provider-pack"; do if [ -f "$pack/provider-pack.json" ]; then exec "$pack/node_modules/node/bin/node" --input-type=module -e '
+  const command = (artifacts ? 'pack=' + quote(artifacts.providerPackRoot) + '; ' : 'for pack in /opt/paperclip-runner/provider-pack "$HOME/.local/share/paperclip-runner/provider-pack"; do if [ -f "$pack/provider-pack.json" ]; then ') + 'exec "$pack/node_modules/node/bin/node" --input-type=module -e '
     + quote(script) + ' "$pack" ' + [agent, model, JSON.stringify(expected)].map(quote).join(' ')
-    + '; fi; done; echo "Qualified provider pack is missing" >&2; exit 1';
+    + (artifacts ? '' : '; fi; done; echo "Qualified provider pack is missing" >&2; exit 1');
   const result = await runAdapterExecutionTargetShellCommand(`provider-setup-${crypto.randomUUID()}`, context.executionTarget, command,
     { cwd: context.executionTarget.remoteCwd, env: {}, timeoutSec: 30 });
   if (result.timedOut || result.exitCode !== 0) {
@@ -189,7 +253,7 @@ async function probeSshNativeCodex(options: {
 }
 
 /** Codex/OpenCode readiness requires their selected native daemon and provider turn. */
-export async function testNativeRunnerAuthentication(context: AdapterEnvironmentTestContext, provider: "codex" | "opencode", model: string | null): Promise<AdapterEnvironmentTestResult> {
+export async function testNativeRunnerAuthentication(context: AdapterEnvironmentTestContext, provider: "codex" | "opencode", model: string | null, artifacts?: RemoteNativeSetupArtifacts): Promise<AdapterEnvironmentTestResult> {
   const remote = context.executionTarget?.kind === "remote";
   const configured = context.config.env;
   const environment: Record<string, string> = Object.fromEntries([
@@ -224,10 +288,10 @@ export async function testNativeRunnerAuthentication(context: AdapterEnvironment
       // Standard Linux images provide their qualified pack directly. Assembled
       // npm controllers instead ship the image manifest and Linux daemon.
       const configuredPack = process.env.PAPERCLIP_RUNNER_REMOTE_PROVIDER_PACK_PATH?.trim();
-      const expectedPack = configuredPack ? readRemoteProviderPackManifest(configuredPack) : readBundledRemoteProviderPackManifest();
-      const controllerRunnerBinary = configuredPack
+      const expectedPack = artifacts?.manifest ?? (configuredPack ? readRemoteProviderPackManifest(configuredPack) : readBundledRemoteProviderPackManifest());
+      const controllerRunnerBinary = artifacts?.controllerRunnerBinary ?? (configuredPack
         ? process.env.PAPERCLIP_RUNNER_REMOTE_BINARY_PATH?.trim() || resolvePaperclipRunnerBinary()
-        : bundledRemoteRunnerBinary();
+        : bundledRemoteRunnerBinary());
       const expectedRunner = readRunnerdArtifactBinding(controllerRunnerBinary);
       const canonical = (value: unknown): string => Array.isArray(value) ? "[" + value.map(canonical).join(",") + "]"
         : value && typeof value === "object" ? "{" + Object.keys(value).sort().map(key => JSON.stringify(key) + ":" + canonical((value as Record<string, unknown>)[key])).join(",") + "}" : JSON.stringify(value);
@@ -273,7 +337,7 @@ export async function testNativeRunnerAuthentication(context: AdapterEnvironment
             if (environment.${configKey} !== undefined) await writeFile(join(sourceCodexHome, 'config.toml'), environment.${configKey}, { mode: 384 });
           }
           delete environment.${authKey}; delete environment.${configKey};
-          const result = await probeNativeRunnerEnvironment({ ...input, runtimeDirectory, environment, timeoutMs: ${timeoutMs}, transportOptions: { runnerBinary: process.argv[4], sourceCodexHome: sourceCodexHome ?? '' },
+          const result = await probeNativeRunnerEnvironment({ ...input, runtimeDirectory, environment, timeoutMs: ${timeoutMs}, transportOptions: { runnerBinary: process.argv[4], sourceCodexHome: sourceCodexHome ?? '', ...(input.codexCommand ? { codexCommand: input.codexCommand } : {}) },
             onCleanupConfirmed: async () => { if (!codexCredentialRefreshPath) await rm(runtimeDirectory, { recursive: true, force: true }); cleanupConfirmed = true; },
             ...(input.copyBack ? { onCodexCredentialRefresh: async path => { codexCredentialRefreshPath = path; } } : {}) });
           console.log(JSON.stringify({ ...result, cleanupConfirmed, ...(codexCredentialRefreshPath ? { runtimeDirectory, codexCredentialRefreshPath } : {}) }));
@@ -284,9 +348,9 @@ export async function testNativeRunnerAuthentication(context: AdapterEnvironment
         }
       `;
       const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
-      const input = { provider, model, ...(provider === "codex" && typeof effort === "string" && effort ? { reasoningEffort: effort } : {}), copyBack: Boolean(context.managedAiCredentialHome && provider === "codex") };
-      const command = 'runner=""; for candidate in /opt/paperclip-runner/bin/paperclip-runnerd "$HOME/.local/bin/paperclip-runnerd"; do if [ -x "$candidate" ]; then runner="$candidate"; break; fi; done; if [ -z "$runner" ]; then echo "Qualified Paperclip Runner is missing" >&2; exit 1; fi; for pack in /opt/paperclip-runner/provider-pack "$HOME/.local/share/paperclip-runner/provider-pack"; do if [ -f "$pack/provider-pack.json" ]; then exec "$pack/' + expectedPack.payload.artifacts.nodeCommand.path + '" --input-type=module -e '
-        + quote(script) + ' "$pack" ' + [JSON.stringify(input), JSON.stringify(Object.keys(environment))].map(quote).join(' ') + ' "$runner" ' + [expectedRunner.digest, expectedManifest].map(quote).join(' ') + '; fi; done; echo "Qualified provider pack is missing" >&2; exit 1';
+      const input = { provider, model, ...(artifacts?.codexCommand ? { codexCommand: artifacts.codexCommand } : {}), ...(provider === "codex" && typeof effort === "string" && effort ? { reasoningEffort: effort } : {}), copyBack: Boolean(context.managedAiCredentialHome && provider === "codex") };
+      const command = (artifacts ? 'runner=' + quote(artifacts.runnerBinary) + '; pack=' + quote(artifacts.providerPackRoot) + '; ' : 'runner=""; for candidate in /opt/paperclip-runner/bin/paperclip-runnerd "$HOME/.local/bin/paperclip-runnerd"; do if [ -x "$candidate" ]; then runner="$candidate"; break; fi; done; if [ -z "$runner" ]; then echo "Qualified Paperclip Runner is missing" >&2; exit 1; fi; for pack in /opt/paperclip-runner/provider-pack "$HOME/.local/share/paperclip-runner/provider-pack"; do if [ -f "$pack/provider-pack.json" ]; then ') + 'exec "$pack/' + expectedPack.payload.artifacts.nodeCommand.path + '" --input-type=module -e '
+        + quote(script) + ' "$pack" ' + [JSON.stringify(input), JSON.stringify(Object.keys(environment))].map(quote).join(' ') + ' "$runner" ' + [expectedRunner.digest, expectedManifest].map(quote).join(' ') + (artifacts ? '' : '; fi; done; echo "Qualified provider pack is missing" >&2; exit 1');
       const probe = await runAdapterExecutionTargetShellCommand(`native-hello-${crypto.randomUUID()}`, target, command,
         { cwd: target.remoteCwd, env: environment, timeoutSec: 110 });
       if (probe.timedOut) throw new Error("Native provider hello probe timed out.");
@@ -300,7 +364,7 @@ export async function testNativeRunnerAuthentication(context: AdapterEnvironment
             || result.codexCredentialRefreshPath !== posix.join(result.runtimeDirectory, "codex-home", "auth.json")) throw new Error("The native Codex credential refresh handoff is invalid.");
           const readScript = `const fs=require('node:fs'),path=require('node:path');let fd;try{let parent=path.dirname(process.argv[1]);while(true){if(!fs.lstatSync(parent).isDirectory())throw Error('directory');const next=path.dirname(parent);if(next===parent)break;parent=next;}fd=fs.openSync(process.argv[1],fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);const st=fs.fstatSync(fd);if(!st.isFile()||st.uid!==process.getuid()||(st.mode&511)!==384||st.size>65536)throw Error('credential');const b=Buffer.alloc(65537);let n=0;while(n<b.length){const k=fs.readSync(fd,b,n,b.length-n,n);if(!k)break;n+=k;}if(n>65536)throw Error('size');process.stdout.write(b.subarray(0,n).toString('base64'));b.fill(0);}catch(e){process.exitCode=e.code==='ENOENT'?66:1;}finally{if(fd!==undefined)fs.closeSync(fd);}`;
           await copyBackCodexAuth({ hostAuthPath: join(context.managedAiCredentialHome, "auth.json"), log: () => {}, readSandboxAuth: async () => {
-            const readCommand = 'for pack in /opt/paperclip-runner/provider-pack "$HOME/.local/share/paperclip-runner/provider-pack"; do if [ -f "$pack/provider-pack.json" ]; then exec "$pack/' + expectedPack.payload.artifacts.nodeCommand.path + '" -e ' + quote(readScript) + ' ' + quote(result.codexCredentialRefreshPath) + '; fi; done; exit 1';
+            const readCommand = artifacts ? quote(posix.join(artifacts.providerPackRoot, expectedPack.payload.artifacts.nodeCommand.path)) + ' -e ' + quote(readScript) + ' ' + quote(result.codexCredentialRefreshPath) : 'for pack in /opt/paperclip-runner/provider-pack "$HOME/.local/share/paperclip-runner/provider-pack"; do if [ -f "$pack/provider-pack.json" ]; then exec "$pack/' + expectedPack.payload.artifacts.nodeCommand.path + '" -e ' + quote(readScript) + ' ' + quote(result.codexCredentialRefreshPath) + '; fi; done; exit 1';
             const read = await runAdapterExecutionTargetShellCommand(`native-refresh-${crypto.randomUUID()}`, target, readCommand, { cwd: target.remoteCwd, env: {}, timeoutSec: 10 });
             if (read.timedOut || read.exitCode !== 0) throw Object.assign(new Error("Native Codex credential refresh handoff unavailable."), { code: read.exitCode === 66 ? "ENOENT" : "INVALID_CREDENTIAL" });
             return Buffer.from(read.stdout, "base64");
@@ -344,7 +408,7 @@ export async function testNativeRunnerAuthentication(context: AdapterEnvironment
 }
 
 /** Use the qualified native host and bound account, without borrowing a legacy CLI or ambient login. */
-export async function testNativeAcpxAuthentication(context: AdapterEnvironmentTestContext, agent: "claude" | "grok" | "cursor", model: string): Promise<AdapterEnvironmentTestResult> {
+export async function testNativeAcpxAuthentication(context: AdapterEnvironmentTestContext, agent: "claude" | "grok" | "cursor", model: string, artifacts?: RemoteNativeSetupArtifacts): Promise<AdapterEnvironmentTestResult> {
   const configured = context.config.env;
   const remote = context.executionTarget?.kind === "remote";
   let environment: Record<string, string> = Object.fromEntries([
@@ -394,9 +458,9 @@ export async function testNativeAcpxAuthentication(context: AdapterEnvironmentTe
         }
       `;
       const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
-      const command = 'for pack in /opt/paperclip-runner/provider-pack "$HOME/.local/share/paperclip-runner/provider-pack"; do if [ -f "$pack/provider-pack.json" ]; then exec "$pack/node_modules/node/bin/node" --input-type=module -e '
+      const command = (artifacts ? 'pack=' + quote(artifacts.providerPackRoot) + '; ' : 'for pack in /opt/paperclip-runner/provider-pack "$HOME/.local/share/paperclip-runner/provider-pack"; do if [ -f "$pack/provider-pack.json" ]; then ') + 'exec "$pack/node_modules/node/bin/node" --input-type=module -e '
         + quote(script) + ' "$pack" ' + [agent, model, JSON.stringify(Object.keys(environment))].map(quote).join(' ')
-        + '; fi; done; echo "Qualified provider pack is missing" >&2; exit 1';
+        + (artifacts ? '' : '; fi; done; echo "Qualified provider pack is missing" >&2; exit 1');
       const probe = await runAdapterExecutionTargetShellCommand(`native-hello-${crypto.randomUUID()}`, context.executionTarget, command,
         { cwd: context.executionTarget.remoteCwd, env: environment, timeoutSec: 110 });
       if (probe.timedOut) throw new Error("Native provider hello probe timed out.");
@@ -412,7 +476,7 @@ export async function testNativeAcpxAuthentication(context: AdapterEnvironmentTe
         // credential bytes never enter the setup result or public diagnostics.
         const readScript = `const fs=require('node:fs'),path=require('node:path');let fd;try{let parent=path.dirname(process.argv[1]);while(true){if(!fs.lstatSync(parent).isDirectory())throw Error('directory');const next=path.dirname(parent);if(next===parent)break;parent=next;}fd=fs.openSync(process.argv[1],fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);const st=fs.fstatSync(fd);if(!st.isFile()||st.uid!==process.getuid()||(st.mode&511)!==384||st.size>65536)throw Error('credential');const b=Buffer.alloc(65537);let n=0;while(n<b.length){const k=fs.readSync(fd,b,n,b.length-n,n);if(!k)break;n+=k;}if(n>65536)throw Error('size');process.stdout.write(b.subarray(0,n).toString('base64'));b.fill(0);}catch(e){process.exitCode=e.code==='ENOENT'?66:1;}finally{if(fd!==undefined)fs.closeSync(fd);}`;
         await copyBackGrokAuth({ hostHomeDir: grokCredential.home, log: () => {}, readSandboxAuth: async () => {
-          const read = await runAdapterExecutionTargetShellCommand(`native-refresh-${crypto.randomUUID()}`, target, 'node -e ' + quote(readScript) + ' ' + quote(result.grokCredentialRefreshPath), { cwd: target.remoteCwd, env: {}, timeoutSec: 10 });
+          const read = await runAdapterExecutionTargetShellCommand(`native-refresh-${crypto.randomUUID()}`, target, (artifacts ? quote(posix.join(artifacts.providerPackRoot, artifacts.manifest.payload.artifacts.nodeCommand.path)) : 'node') + ' -e ' + quote(readScript) + ' ' + quote(result.grokCredentialRefreshPath), { cwd: target.remoteCwd, env: {}, timeoutSec: 10 });
           if (read.timedOut || read.exitCode !== 0) throw Object.assign(new Error("Native Grok credential refresh handoff unavailable."), { code: read.exitCode === 66 ? "ENOENT" : "INVALID_CREDENTIAL" });
           return Buffer.from(read.stdout, "base64");
         } });

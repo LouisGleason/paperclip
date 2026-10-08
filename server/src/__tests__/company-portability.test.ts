@@ -108,6 +108,12 @@ const instanceSettingsSvc = {
   getExperimental: vi.fn(async (): Promise<{ enableNativeRunner: boolean; enableOpenAiDot?: boolean }> => ({ enableNativeRunner: false })),
 };
 
+const environmentSvc = {
+  getById: vi.fn(async (_id: string): Promise<{ id: string; driver: string } | null> => null),
+};
+
+const importSsh = vi.hoisted(() => ({ run: vi.fn() }));
+
 const managedAgentProfileSvc = {
   requireQualified: vi.fn(),
 };
@@ -176,6 +182,19 @@ vi.mock("../services/instance-settings.js", () => ({
   instanceSettingsService: () => instanceSettingsSvc,
 }));
 
+vi.mock("../services/environments.js", () => ({
+  environmentService: () => environmentSvc,
+}));
+
+vi.mock("@paperclipai/adapter-utils/ssh", () => ({ runSshCommand: importSsh.run }));
+
+vi.mock("../services/environment-config.js", () => ({
+  resolveEnvironmentDriverConfigForRuntime: vi.fn(async () => ({
+    driver: "ssh",
+    config: { host: "import-test-host" },
+  })),
+}));
+
 vi.mock("../services/managed-agent-profiles.js", () => ({
   managedAgentProfileService: () => managedAgentProfileSvc,
 }));
@@ -201,6 +220,9 @@ describe("company portability", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    instanceSettingsSvc.get.mockResolvedValue({ defaultEnvironmentId: null });
+    environmentSvc.getById.mockResolvedValue(null);
+    importSsh.run.mockResolvedValue({ stdout: "Linux\naarch64\n" });
     instanceSettingsSvc.getExperimental.mockResolvedValue({ enableNativeRunner: false });
     managedAgentProfileSvc.requireQualified.mockResolvedValue({
       id: "managed-primary",
@@ -6062,7 +6084,10 @@ describe("company portability", () => {
     expect(agentSvc.create).toHaveBeenCalledWith("company-1", expect.objectContaining({ runner, adapterType, adapterConfig: expect.objectContaining(adapterConfig) }), { createdByUserId: "user-1" });
   });
 
-  it("uses creation defaults for a runner-omitted package", async () => {
+  it.each([
+    { instanceDriver: "local", expectedAdapterType: "paperclip_runner" },
+    { instanceDriver: "ssh", expectedAdapterType: "codex_local" },
+  ])("uses $instanceDriver creation defaults for a runner-omitted package", async ({ instanceDriver, expectedAdapterType }) => {
     const portability = companyPortabilityService({} as any);
     const [sourceAgent] = await agentSvc.list();
     agentSvc.list.mockResolvedValue([{ ...sourceAgent, adapterType: "codex_local", adapterConfig: { model: "gpt-5.6-sol" } }]);
@@ -6073,6 +6098,8 @@ describe("company portability", () => {
     expect(files[".paperclip.yaml"]).not.toContain("runner:");
     agentSvc.list.mockResolvedValue([]);
     agentSvc.create.mockImplementation(async (_companyId: string, input: Record<string, unknown>) => ({ id: "agent-created", ...input }));
+    instanceSettingsSvc.get.mockResolvedValue({ defaultEnvironmentId: "instance-default" } as any);
+    environmentSvc.getById.mockImplementation(async (id) => ({ id, driver: instanceDriver }));
 
     await portability.importBundle({
       source: { type: "inline", rootPath: exported.rootPath, files },
@@ -6083,8 +6110,14 @@ describe("company portability", () => {
     }, "user-1");
 
     expect(agentSvc.create).toHaveBeenCalledWith("company-1", expect.objectContaining({
-      runner: "paperclip", adapterType: "paperclip_runner", adapterConfig: expect.objectContaining({ provider: "codex", model: "gpt-5.6-sol" }),
+      runner: expectedAdapterType === "paperclip_runner" ? "paperclip" : "legacy",
+      adapterType: expectedAdapterType,
+      adapterConfig: expect.objectContaining({
+        model: "gpt-5.6-sol",
+        ...(expectedAdapterType === "paperclip_runner" ? { provider: "codex" } : {}),
+      }),
     }), { createdByUserId: "user-1" });
+    expect(environmentSvc.getById).toHaveBeenCalledWith("instance-default");
   });
 
   it.each([
@@ -6098,9 +6131,11 @@ describe("company portability", () => {
       include: { company: false, agents: true, projects: false, issues: false },
     });
     const files = { ...exported.files, ".paperclip.yaml": asTextFile(exported.files[".paperclip.yaml"]).replace(/^\s*runner: "legacy"\n/gm, "") };
-    const existingAgent = { ...sourceAgent, adapterType, adapterConfig };
+    const existingAgent = { ...sourceAgent, adapterType, adapterConfig, defaultEnvironmentId: "agent-local" };
     agentSvc.list.mockResolvedValue([existingAgent]);
     agentSvc.update.mockImplementation(async (id: string, input: Record<string, unknown>) => ({ ...existingAgent, id, ...input }));
+    instanceSettingsSvc.get.mockResolvedValue({ defaultEnvironmentId: "instance-ssh" } as any);
+    environmentSvc.getById.mockImplementation(async (id) => ({ id, driver: id === "agent-local" ? "local" : "ssh" }));
 
     const imported = await portability.importBundle({
       source: { type: "inline", rootPath: exported.rootPath, files },
@@ -6114,6 +6149,97 @@ describe("company portability", () => {
     expect(agentSvc.create).not.toHaveBeenCalled();
     expect(agentSvc.update).toHaveBeenCalledWith(existingAgent.id, expect.objectContaining({ adapterType, adapterConfig: expect.objectContaining(adapterConfig) }));
     expect(agentSvc.update.mock.calls.every(([, patch]) => !patch.adapterType || patch.adapterType === adapterType)).toBe(true);
+    expect(agentSvc.update.mock.calls.every(([, patch]) => !("defaultEnvironmentId" in patch))).toBe(true);
+    expect(importSsh.run).not.toHaveBeenCalled();
+    if (adapterType === "paperclip_runner") {
+      expect(environmentSvc.getById).toHaveBeenCalledWith("agent-local");
+    }
+  });
+
+  it("checks an exported native replacement against its saved environment instead of the instance default", async () => {
+    const portability = companyPortabilityService({} as any);
+    const [sourceAgent] = await agentSvc.list();
+    const existingAgent = {
+      ...sourceAgent,
+      adapterType: "paperclip_runner",
+      adapterConfig: { provider: "codex", model: "gpt-5.6-sol" },
+      defaultEnvironmentId: "agent-local",
+    };
+    agentSvc.list.mockResolvedValue([existingAgent]);
+    const exported = await portability.exportBundle("company-1", {
+      include: { company: false, agents: true, projects: false, issues: false },
+    });
+    agentSvc.update.mockImplementation(async (id: string, input: Record<string, unknown>) => ({ ...existingAgent, id, ...input }));
+    instanceSettingsSvc.get.mockResolvedValue({ defaultEnvironmentId: "instance-ssh" } as any);
+    environmentSvc.getById.mockImplementation(async (id) => ({ id, driver: id === "agent-local" ? "local" : "ssh" }));
+
+    await portability.importBundle({
+      source: { type: "inline", rootPath: exported.rootPath, files: exported.files },
+      include: { company: false, agents: true, projects: false, issues: false },
+      target: { mode: "existing_company", companyId: "company-1" },
+      agents: "all",
+      collisionStrategy: "replace",
+    }, "user-1");
+
+    expect(agentSvc.create).not.toHaveBeenCalled();
+    expect(agentSvc.update).toHaveBeenCalledWith(existingAgent.id, expect.objectContaining({
+      adapterType: "paperclip_runner",
+      adapterConfig: expect.objectContaining({ provider: "codex", model: "gpt-5.6-sol" }),
+    }));
+    expect(environmentSvc.getById).toHaveBeenCalledWith("agent-local");
+    expect(environmentSvc.getById).not.toHaveBeenCalledWith("instance-ssh");
+    expect(importSsh.run).not.toHaveBeenCalled();
+    expect(agentSvc.update.mock.calls.every(([, patch]) => !("defaultEnvironmentId" in patch))).toBe(true);
+  });
+
+  it.each([
+    { runner: "paperclip", expectedAdapterType: null },
+    { runner: "auto", expectedAdapterType: "codex_local" },
+    { runner: "legacy", expectedAdapterType: "codex_local" },
+  ] as const)("honors explicit $runner replacement availability on the saved environment", async ({ runner, expectedAdapterType }) => {
+    const portability = companyPortabilityService({} as any);
+    const [sourceAgent] = await agentSvc.list();
+    const existingAgent = {
+      ...sourceAgent,
+      adapterType: "paperclip_runner",
+      adapterConfig: { provider: "codex", model: "gpt-5.6-sol" },
+      defaultEnvironmentId: "agent-ssh",
+    };
+    agentSvc.list.mockResolvedValue([existingAgent]);
+    const exported = await portability.exportBundle("company-1", {
+      include: { company: false, agents: true, projects: false, issues: false },
+    });
+    agentSvc.update.mockImplementation(async (id: string, input: Record<string, unknown>) => ({ ...existingAgent, id, ...input }));
+    instanceSettingsSvc.get.mockResolvedValue({ defaultEnvironmentId: "instance-local" } as any);
+    environmentSvc.getById.mockImplementation(async (id) => ({ id, driver: id === "agent-ssh" ? "ssh" : "local" }));
+    const imported = portability.importBundle({
+      source: { type: "inline", rootPath: exported.rootPath, files: exported.files },
+      include: { company: false, agents: true, projects: false, issues: false },
+      target: { mode: "existing_company", companyId: "company-1" },
+      agents: "all",
+      collisionStrategy: "replace",
+      adapterOverrides: { claudecoder: { runner } },
+    }, "user-1");
+
+    if (expectedAdapterType === null) {
+      await expect(imported).rejects.toMatchObject({ status: 422, message: expect.stringContaining("unavailable") });
+      expect(agentSvc.update).not.toHaveBeenCalled();
+    } else {
+      await imported;
+      expect(agentSvc.update).toHaveBeenCalledWith(existingAgent.id, expect.objectContaining({
+        adapterType: expectedAdapterType,
+        adapterConfig: expect.objectContaining({ model: "gpt-5.6-sol" }),
+      }));
+    }
+    expect(agentSvc.create).not.toHaveBeenCalled();
+    expect(agentSvc.update.mock.calls.every(([, patch]) => !("defaultEnvironmentId" in patch))).toBe(true);
+    expect(environmentSvc.getById).not.toHaveBeenCalledWith("instance-local");
+    if (runner === "legacy") {
+      expect(importSsh.run).not.toHaveBeenCalled();
+    } else {
+      expect(environmentSvc.getById).toHaveBeenCalledWith("agent-ssh");
+      expect(importSsh.run).toHaveBeenCalledWith({ host: "import-test-host" }, "uname -s; uname -m", { timeoutMs: 10_000 });
+    }
   });
 
   it("gates unpaired Dot imports independently while ordinary native imports remain available", async () => {

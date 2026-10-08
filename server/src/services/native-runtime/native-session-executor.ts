@@ -11041,6 +11041,184 @@ export function remoteCheckpointIncompleteFailure(
   );
 }
 
+/** Task and setup probes share the same release-bound provider-pack preparation. */
+export function createRemoteProviderPackPreparation(input: {
+  target: Extract<AdapterExecutionTarget, { kind: "remote" }>;
+  runner: CommandManagedRuntimeRunner;
+  manifest: RemoteProviderPackManifest;
+  configuredProviderPackRoot: string | null;
+  stagedRemoteProviderPackRoot: string;
+  trace?: NativeRunTrace;
+  onLog?: (stream: "stdout" | "stderr", chunk: string) => Promise<void>;
+}) {
+  const remoteTarget = input.target;
+  const remoteCommandRunner = input.runner;
+  const expectedProviderPackManifest = input.manifest;
+  const { configuredProviderPackRoot, stagedRemoteProviderPackRoot } = input;
+  const verifyRemoteProviderPack = async (packRoot: string) => {
+    if (!remoteTarget || !remoteCommandRunner || !expectedProviderPackManifest)
+      return;
+    const expected = Buffer.from(
+      canonicalJson(expectedProviderPackManifest),
+      "utf8",
+    ).toString("base64");
+    const providerNodeCommand = posix.join(
+      packRoot,
+      expectedProviderPackManifest.payload.artifacts.nodeCommand.path,
+    );
+    const verifyScript = remoteProviderPackVerificationScript();
+    const verified = await remoteCommandRunner.execute({
+      command: providerNodeCommand,
+      args: ["-e", verifyScript, packRoot, expected],
+      cwd: remoteTarget.remoteCwd,
+      bypassSession: true,
+      timeoutMs: 30_000,
+    });
+    if (verified.exitCode !== 0 || verified.timedOut) {
+      throw new Error(
+        `runner_remote_provider_artifact_incompatible: provider pack verification failed (${verified.stderr.trim().slice(-1_024)})`,
+      );
+    }
+    const opencodeCommand = posix.join(
+      packRoot,
+      expectedProviderPackManifest.payload.artifacts.opencodeCommand.path,
+    );
+    const opencodeVersion = await remoteCommandRunner.execute({
+      command: opencodeCommand,
+      args: ["--version"],
+      cwd: remoteTarget.remoteCwd,
+      bypassSession: true,
+      timeoutMs: 30_000,
+    });
+    if (
+      opencodeVersion.exitCode !== 0 ||
+      opencodeVersion.timedOut ||
+      opencodeVersion.stdout.trim() !== REMOTE_PROVIDER_PACK_PINS.opencode
+    ) {
+      throw new Error(
+        "runner_remote_provider_artifact_incompatible: OpenCode version mismatch",
+      );
+    }
+  };
+
+  const discoverPreinstalledProviderPack = async () => {
+    if (!remoteTarget || !remoteCommandRunner) return null;
+    const result = await remoteCommandRunner.execute({
+      command: "sh",
+      args: [
+        "-c",
+        'for candidate in /opt/paperclip-runner/provider-pack "$HOME/.local/share/paperclip-runner/provider-pack"; do if [ -f "$candidate/provider-pack.json" ]; then printf \'%s\\n\' "$candidate"; break; fi; done',
+      ],
+      cwd: remoteTarget.remoteCwd,
+      bypassSession: true,
+      timeoutMs: 10_000,
+    });
+    if (result.exitCode !== 0 || result.timedOut) return null;
+    return parseRemoteExecutableCandidate(result.stdout);
+  };
+
+  return {
+    verify: verifyRemoteProviderPack,
+    prepare: async () => {
+      const packSource = await prepareVerifiedRemoteProviderPack({
+        verifyStaged: () => measureNativeRunnerSpan(
+          input.trace,
+          "provider_pack.verify",
+          () => verifyRemoteProviderPack(stagedRemoteProviderPackRoot),
+        ),
+        usePreinstalled: async () => {
+          let preinstalledProviderPack = await discoverPreinstalledProviderPack();
+          if (preinstalledProviderPack) {
+            try {
+              await measureNativeRunnerSpan(
+                input.trace,
+                "provider_pack.verify_preinstalled",
+                () => verifyRemoteProviderPack(preinstalledProviderPack!),
+              );
+              const escapedSource = preinstalledProviderPack.replaceAll(
+                "'",
+                "'\\''",
+              );
+              const escapedTarget = stagedRemoteProviderPackRoot.replaceAll(
+                "'",
+                "'\\''",
+              );
+              const escapedParent = posix
+                .dirname(stagedRemoteProviderPackRoot)
+                .replaceAll("'", "'\\''");
+              const linked = await remoteCommandRunner.execute({
+                command: "sh",
+                args: [
+                  "-c",
+                  `umask 077; mkdir -p '${escapedParent}' && rm -rf '${escapedTarget}' && ln -s '${escapedSource}' '${escapedTarget}'`,
+                ],
+                cwd: remoteTarget.remoteCwd,
+                bypassSession: true,
+                timeoutMs: 10_000,
+              });
+              if (linked.exitCode !== 0 || linked.timedOut) {
+                throw new Error(
+                  "runner_remote_provider_artifact_incompatible: preinstalled provider pack could not be linked",
+                );
+              }
+              await input.onLog?.(
+                "stderr",
+                "[paperclip-runner] using manifest-matched provider pack from the sandbox image\n",
+              );
+            } catch {
+              preinstalledProviderPack = null;
+            }
+          }
+          return preinstalledProviderPack !== null;
+        },
+        stageAndVerify: async () => {
+          if (!configuredProviderPackRoot) {
+            throw new Error("runner_remote_provider_artifact_incompatible: install the matching Paperclip package and Daytona image; the image provider pack did not match the bundled release identity");
+          }
+          if (!remoteCommandRunner.syncIn) {
+            throw new Error(
+              "runner_remote_provider_artifact_incompatible: this remote transport cannot stage a provider pack; preinstall the exact manifest-matched pack",
+            );
+          }
+          const escapedPackRoot = stagedRemoteProviderPackRoot.replaceAll(
+            "'",
+            "'\\''",
+          );
+          const cleared = await remoteCommandRunner.execute({
+            command: "sh",
+            args: ["-c", `rm -rf '${escapedPackRoot}'`],
+            cwd: remoteTarget.remoteCwd,
+            bypassSession: true,
+            timeoutMs: 10_000,
+          });
+          if (cleared.exitCode !== 0 || cleared.timedOut) {
+            throw new Error(
+              "runner_remote_provider_artifact_incompatible: stale provider pack could not be replaced",
+            );
+          }
+          await stageRemoteRunnerDirectory({
+            target: remoteTarget,
+            runner: remoteCommandRunner,
+            sourcePath: configuredProviderPackRoot,
+            targetPath: stagedRemoteProviderPackRoot,
+            mode: 0o700,
+          });
+          await measureNativeRunnerSpan(input.trace, "provider_pack.verify", () =>
+            verifyRemoteProviderPack(stagedRemoteProviderPackRoot),
+          );
+        },
+      });
+      if (packSource === "staged") {
+        await input.onLog?.(
+          "stderr",
+          "[paperclip-runner] reusing manifest-matched provider pack from the workspace\n",
+        );
+      }
+      return packSource;
+    },
+  };
+}
+
 /** The shared task/setup staging path for a remote native daemon and Codex CLI. */
 export function createRemoteNativeArtifactPreparation(input: {
   target: Extract<AdapterExecutionTarget, { kind: "remote" }>;
@@ -11797,67 +11975,10 @@ async function createRunnerdBackendWithinSessionClaim(
       })
     : { prepare: async (_mode: "dial_wss" | "listen_ws") => {}, verifyRemoteRunner: async (_mode: "dial_wss" | "listen_ws") => {}, verifyRemoteCodex: async () => {} };
 
-  const verifyRemoteProviderPack = async (packRoot: string) => {
-    if (!remoteTarget || !remoteCommandRunner || !expectedProviderPackManifest)
-      return;
-    const expected = Buffer.from(
-      canonicalJson(expectedProviderPackManifest),
-      "utf8",
-    ).toString("base64");
-    const providerNodeCommand = posix.join(
-      packRoot,
-      expectedProviderPackManifest.payload.artifacts.nodeCommand.path,
-    );
-    const verifyScript = remoteProviderPackVerificationScript();
-    const verified = await remoteCommandRunner.execute({
-      command: providerNodeCommand,
-      args: ["-e", verifyScript, packRoot, expected],
-      cwd: remoteTarget.remoteCwd,
-      bypassSession: true,
-      timeoutMs: 30_000,
-    });
-    if (verified.exitCode !== 0 || verified.timedOut) {
-      throw new Error(
-        `runner_remote_provider_artifact_incompatible: provider pack verification failed (${verified.stderr.trim().slice(-1_024)})`,
-      );
-    }
-    const opencodeCommand = posix.join(
-      packRoot,
-      expectedProviderPackManifest.payload.artifacts.opencodeCommand.path,
-    );
-    const opencodeVersion = await remoteCommandRunner.execute({
-      command: opencodeCommand,
-      args: ["--version"],
-      cwd: remoteTarget.remoteCwd,
-      bypassSession: true,
-      timeoutMs: 30_000,
-    });
-    if (
-      opencodeVersion.exitCode !== 0 ||
-      opencodeVersion.timedOut ||
-      opencodeVersion.stdout.trim() !== REMOTE_PROVIDER_PACK_PINS.opencode
-    ) {
-      throw new Error(
-        "runner_remote_provider_artifact_incompatible: OpenCode version mismatch",
-      );
-    }
-  };
-
-  const discoverPreinstalledProviderPack = async () => {
-    if (!remoteTarget || !remoteCommandRunner) return null;
-    const result = await remoteCommandRunner.execute({
-      command: "sh",
-      args: [
-        "-c",
-        'for candidate in /opt/paperclip-runner/provider-pack "$HOME/.local/share/paperclip-runner/provider-pack"; do if [ -f "$candidate/provider-pack.json" ]; then printf \'%s\\n\' "$candidate"; break; fi; done',
-      ],
-      cwd: remoteTarget.remoteCwd,
-      bypassSession: true,
-      timeoutMs: 10_000,
-    });
-    if (result.exitCode !== 0 || result.timedOut) return null;
-    return parseRemoteExecutableCandidate(result.stdout);
-  };
+  const providerPackPreparation = remoteTarget && remoteCommandRunner && expectedProviderPackManifest && stagedRemoteProviderPackRoot
+    ? createRemoteProviderPackPreparation({ target: remoteTarget, runner: remoteCommandRunner, manifest: expectedProviderPackManifest,
+      configuredProviderPackRoot, stagedRemoteProviderPackRoot, trace: input.trace, onLog: input.onLog })
+    : null;
 
   const prepareRemoteRunner = async (
     requiredMode: "dial_wss" | "listen_ws",
@@ -11873,7 +11994,7 @@ async function createRunnerdBackendWithinSessionClaim(
     if (input.restartRecovery?.kind === "reattach_remote_runner") {
       await verifyRemoteRunner(requiredMode);
       if (requiresRemoteProviderPack && stagedRemoteProviderPackRoot) {
-        await verifyRemoteProviderPack(stagedRemoteProviderPackRoot);
+        await providerPackPreparation!.verify(stagedRemoteProviderPackRoot);
         activeRemoteProviderPackRoot = stagedRemoteProviderPackRoot;
       }
       remotePrepared = true;
@@ -11885,103 +12006,8 @@ async function createRunnerdBackendWithinSessionClaim(
       expectedProviderPackManifest &&
       stagedRemoteProviderPackRoot
     ) {
-      const packSource = await prepareVerifiedRemoteProviderPack({
-        verifyStaged: () => measureNativeRunnerSpan(
-          input.trace,
-          "provider_pack.verify",
-          () => verifyRemoteProviderPack(stagedRemoteProviderPackRoot),
-        ),
-        usePreinstalled: async () => {
-          let preinstalledProviderPack = await discoverPreinstalledProviderPack();
-          if (preinstalledProviderPack) {
-            try {
-              await measureNativeRunnerSpan(
-                input.trace,
-                "provider_pack.verify_preinstalled",
-                () => verifyRemoteProviderPack(preinstalledProviderPack!),
-              );
-              const escapedSource = preinstalledProviderPack.replaceAll(
-                "'",
-                "'\\''",
-              );
-              const escapedTarget = stagedRemoteProviderPackRoot.replaceAll(
-                "'",
-                "'\\''",
-              );
-              const escapedParent = posix
-                .dirname(stagedRemoteProviderPackRoot)
-                .replaceAll("'", "'\\''");
-              const linked = await remoteCommandRunner.execute({
-                command: "sh",
-                args: [
-                  "-c",
-                  `umask 077; mkdir -p '${escapedParent}' && rm -rf '${escapedTarget}' && ln -s '${escapedSource}' '${escapedTarget}'`,
-                ],
-                cwd: remoteTarget.remoteCwd,
-                bypassSession: true,
-                timeoutMs: 10_000,
-              });
-              if (linked.exitCode !== 0 || linked.timedOut) {
-                throw new Error(
-                  "runner_remote_provider_artifact_incompatible: preinstalled provider pack could not be linked",
-                );
-              }
-              activeRemoteProviderPackRoot = stagedRemoteProviderPackRoot;
-              await input.onLog?.(
-                "stderr",
-                "[paperclip-runner] using manifest-matched provider pack from the sandbox image\n",
-              );
-            } catch {
-              preinstalledProviderPack = null;
-            }
-          }
-          return preinstalledProviderPack !== null;
-        },
-        stageAndVerify: async () => {
-          if (!configuredProviderPackRoot) {
-            throw new Error("runner_remote_provider_artifact_incompatible: install the matching Paperclip package and Daytona image; the image provider pack did not match the bundled release identity");
-          }
-          if (!remoteCommandRunner.syncIn) {
-            throw new Error(
-              "runner_remote_provider_artifact_incompatible: this remote transport cannot stage a provider pack; preinstall the exact manifest-matched pack",
-            );
-          }
-          const escapedPackRoot = stagedRemoteProviderPackRoot.replaceAll(
-            "'",
-            "'\\''",
-          );
-          const cleared = await remoteCommandRunner.execute({
-            command: "sh",
-            args: ["-c", `rm -rf '${escapedPackRoot}'`],
-            cwd: remoteTarget.remoteCwd,
-            bypassSession: true,
-            timeoutMs: 10_000,
-          });
-          if (cleared.exitCode !== 0 || cleared.timedOut) {
-            throw new Error(
-              "runner_remote_provider_artifact_incompatible: stale provider pack could not be replaced",
-            );
-          }
-          await stageRemoteRunnerDirectory({
-            target: remoteTarget,
-            runner: remoteCommandRunner,
-            sourcePath: configuredProviderPackRoot,
-            targetPath: stagedRemoteProviderPackRoot,
-            mode: 0o700,
-          });
-          await measureNativeRunnerSpan(input.trace, "provider_pack.verify", () =>
-            verifyRemoteProviderPack(stagedRemoteProviderPackRoot),
-          );
-          activeRemoteProviderPackRoot = stagedRemoteProviderPackRoot;
-        },
-      });
+      await providerPackPreparation!.prepare();
       activeRemoteProviderPackRoot = stagedRemoteProviderPackRoot;
-      if (packSource === "staged") {
-        await input.onLog?.(
-          "stderr",
-          "[paperclip-runner] reusing manifest-matched provider pack from the workspace\n",
-        );
-      }
     }
     remotePrepared = true;
   };
@@ -12346,7 +12372,7 @@ async function createRunnerdBackendWithinSessionClaim(
                 "runner_remote_provider_artifact_incompatible: provider pack was not prepared",
               );
             }
-            await verifyRemoteProviderPack(activeRemoteProviderPackRoot);
+            await providerPackPreparation!.verify(activeRemoteProviderPackRoot);
           }
         } catch {
           remotePrepared = false;

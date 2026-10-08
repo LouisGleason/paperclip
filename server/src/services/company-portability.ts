@@ -3645,8 +3645,14 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
     desiredSkills: string[],
     mode: ImportMode,
     runner?: AgentRunnerChoice,
+    defaultEnvironmentId?: string | null,
   ) {
-    const resolved = await resolveNewAgentRunnerForCompany(db, companyId, { adapterType, adapterConfig, runner });
+    const resolved = await resolveNewAgentRunnerForCompany(db, companyId, {
+      adapterType,
+      adapterConfig,
+      runner,
+      defaultEnvironmentId,
+    });
     adapterConfig = resolved.adapterConfig;
     const effectiveAdapterType = assertKnownImportAdapterType(resolved.adapterType);
     if (mode === "agent_safe" && IMPORT_FORBIDDEN_ADAPTER_TYPES.has(effectiveAdapterType)) {
@@ -5604,6 +5610,7 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
             desiredSkills,
             mode,
             adapterOverride?.runner ?? (adapterOverride?.adapterType ? "auto" : manifestAgent.runner ?? (existingImportAgent ? agentRunner(existingImportAgent.adapterType) : undefined)),
+            existingImportAgent?.defaultEnvironmentId,
           );
           const patch = {
             name: planAgent.plannedName,

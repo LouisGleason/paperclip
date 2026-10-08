@@ -4748,6 +4748,8 @@ it.each(["held-ack", "lost-ack", "rejected-attach"] as const)(
     let providerPid: number | null = null;
     let primaryError: unknown;
     let cleanupProven = false;
+    let retirementSpy: { mockRestore(): void } | undefined;
+    let observerSpy: { mockRestore(): void } | undefined;
     try {
       const opened = await within(
         "initial thread",
@@ -4761,11 +4763,49 @@ it.each(["held-ack", "lost-ack", "rejected-attach"] as const)(
       const oldIdentity = structuredClone(core.store.state.identity);
       const runnerPid = bundle.evidence().runnerPid;
       providerPid = bundle.evidence().codexPid;
-      const rotations: (typeof core.store.state)[] = [];
+      const retiredSnapshots: (typeof core.store.state)[] = [];
+      const store = core.store as typeof core.store & {
+        commit(candidate: typeof core.store.state): void;
+      };
+      const commit = store.commit.bind(store);
+      retirementSpy = vi
+        .spyOn(store, "commit")
+        .mockImplementation((candidate) => {
+          if (
+            store.state.identity.runId === oldIdentity.runId &&
+            candidate.identity.runId === "run-warm-ack-next"
+          ) {
+            // Successor authentication may activate before the attach observer.
+            // Capture the retiring authority at the actual durable boundary.
+            expect(store.state.identity).toEqual(oldIdentity);
+            retiredSnapshots.push(structuredClone(store.state));
+          }
+          commit(candidate);
+        });
+      if (mode === "lost-ack") {
+        const getCommand = core.getCommand.bind(core);
+        observerSpy = vi
+          .spyOn(core, "getCommand")
+          .mockImplementation((commandId) => {
+            const command = getCommand(commandId);
+            if (
+              command?.type === "run.attach" &&
+              core.store.state.completedWarmTransition?.command.commandId !==
+                commandId
+            ) {
+              return { ...command, status: "pending", result: null };
+            }
+            return command;
+          });
+      }
       const rotate = core.rotateRunIdentity.bind(core);
-      vi.spyOn(core, "rotateRunIdentity").mockImplementation(
+      const rotateSpy = vi.spyOn(core, "rotateRunIdentity").mockImplementation(
         (identity, template) => {
-          rotations.push(structuredClone(core.store.state));
+          if (mode === "lost-ack") {
+            expect(core.store.state.identity).toEqual(identity);
+            expect(core.store.state.completedWarmTransition?.receipt.newIdentity)
+              .toEqual(identity);
+          }
           return rotate(identity, template);
         },
       );
@@ -4800,7 +4840,8 @@ it.each(["held-ack", "lost-ack", "rejected-attach"] as const)(
         await expect(within("rejected attach", attachment)).rejects.toThrow(
           "run.attach cannot change the durable Codex provider profile",
         );
-        expect(rotations).toHaveLength(0);
+        expect(rotateSpy).not.toHaveBeenCalled();
+        expect(retiredSnapshots).toHaveLength(0);
         expect(core.store.state.identity).toEqual(oldIdentity);
         expect((await readRunner()).runId).toBe(oldIdentity.runId);
         const read = await within(
@@ -4830,15 +4871,19 @@ it.each(["held-ack", "lost-ack", "rejected-attach"] as const)(
           core.store.state.commands.find((entry) => entry.type === "run.attach")
             ?.status,
         ).toBe("pending");
-        expect(rotations).toHaveLength(0);
+        expect(rotateSpy).not.toHaveBeenCalled();
+        expect(retiredSnapshots).toHaveLength(0);
         if (mode === "lost-ack") core.disconnectActiveRunner();
         releaseCommit();
         await within("warm attach after old ACK", attachment, 10_000);
-        expect(rotations).toHaveLength(1);
-        const retired = rotations[0]!;
+        expect(rotateSpy).toHaveBeenCalledTimes(1);
+        expect(retiredSnapshots).toHaveLength(1);
+        const retired = retiredSnapshots[0]!;
         const attachedEvent = retired.committedEvents.find(
           (entry) => entry.sourceEventId === heldEvent!.sourceEventId,
         )!;
+        expect(attachedEvent).toBeDefined();
+        expect(retired.identity).toEqual(oldIdentity);
         expect(attachedEvent.logicalEffectCount).toBe(1);
         expect(retired.ackedSourceSeq).toBeGreaterThanOrEqual(
           attachedEvent.sourceSeq,
@@ -4885,6 +4930,8 @@ it.each(["held-ack", "lost-ack", "rejected-attach"] as const)(
       throw error;
     } finally {
       releaseCommit();
+      observerSpy?.mockRestore();
+      retirementSpy?.mockRestore();
       try {
         await within(
           "warm fixture close",

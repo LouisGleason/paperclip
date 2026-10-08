@@ -4,15 +4,17 @@ import { listServerAdapters, requireServerAdapter } from "./registry.js";
 import * as executionTarget from "@paperclipai/adapter-utils/execution-target";
 import { BUILTIN_ADAPTER_TYPES } from "./builtin-adapter-types.js";
 
-const { probeInstallation, probeGrokInstallation, probeRunner, probeRemoteProvider, probeAuthentication, nativeAuthentication } = vi.hoisted(() => ({
+const { probeInstallation, probeGrokInstallation, probeRunner, probeRemoteProvider, probeAuthentication, nativeAuthentication, prepareRemoteSetup } = vi.hoisted(() => ({
   probeInstallation: vi.fn(),
   probeGrokInstallation: vi.fn(),
   probeRunner: vi.fn(),
   probeRemoteProvider: vi.fn(),
   probeAuthentication: vi.fn(),
   nativeAuthentication: vi.fn(),
+  prepareRemoteSetup: vi.fn(),
 }));
 vi.mock("../services/native-runtime/setup-readiness.js", () => ({
+  withRemoteNativeSetupArtifacts: prepareRemoteSetup,
   assertNativeRunnerSetupReady: probeRunner,
   assertRemoteAcpxSetupReady: probeRemoteProvider,
   testNativeAcpxAuthentication: probeAuthentication,
@@ -104,6 +106,7 @@ describe("built-in runtime connection tool delivery", () => {
 
 describe("native ACPX environment checks", () => {
   beforeEach(() => {
+    prepareRemoteSetup.mockReset().mockImplementation(async (_context, _provider, _model, probe) => probe());
     probeInstallation.mockReset().mockResolvedValue(undefined);
     probeGrokInstallation.mockReset().mockResolvedValue(undefined);
     probeRunner.mockReset().mockResolvedValue(undefined);
@@ -137,7 +140,7 @@ describe("native ACPX environment checks", () => {
     const result = await requireServerAdapter("paperclip_runner").testEnvironment!(context);
     expect(result.status).toBe("pass");
     expect(probeInstallation).toHaveBeenCalledWith(context.config.model);
-    expect(probeAuthentication).toHaveBeenCalledWith(context, "claude", context.config.model);
+    expect(probeAuthentication).toHaveBeenCalledWith(context, "claude", context.config.model, undefined);
     expect(result.checks).toContainEqual(expect.objectContaining({ code: "claude_hello_probe_passed" }));
   });
 
@@ -177,6 +180,34 @@ describe("native ACPX environment checks", () => {
     expect(probeInstallation).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["codex", { provider: "codex", model: "gpt-6.1-sol" }],
+    ["opencode", { provider: "opencode", model: "openrouter/example/model" }],
+    ["acpx", { provider: "acpx", acpxAgent: "claude", model: "claude-sonnet-5" }],
+  ] as const)("uses prepared sandbox artifacts throughout %s setup", async (provider, config) => {
+    const artifacts = { runnerBinary: "/workspace/.paperclip-runtime/owned/bin/paperclip-runnerd", providerPackRoot: "/workspace/.paperclip-runtime/owned/provider-pack" };
+    prepareRemoteSetup.mockImplementationOnce(async (_context, _provider, _model, probe) => probe(artifacts));
+    const selected = { ...context, config, executionTarget: {
+      kind: "remote" as const, transport: "sandbox" as const, remoteCwd: "/workspace", providerKey: "test",
+      runner: { execute: vi.fn().mockResolvedValue({ exitCode: 0, timedOut: false, stdout: "Linux\nx86_64\n" }) },
+    } };
+    expect((await requireServerAdapter("paperclip_runner").testEnvironment!(selected)).status).toBe("pass");
+    expect(prepareRemoteSetup).toHaveBeenCalledWith(selected, provider, config.model, expect.any(Function));
+    expect(probeRunner).toHaveBeenCalledWith(selected, artifacts);
+    if (provider === "acpx") {
+      expect(probeRemoteProvider).toHaveBeenCalledWith(selected, "claude", config.model, artifacts);
+      expect(probeAuthentication).toHaveBeenCalledWith(selected, "claude", config.model, artifacts);
+    } else expect(nativeAuthentication).toHaveBeenCalledWith(selected, provider, config.model, artifacts);
+  });
+  it("does not authenticate or report readiness when sandbox artifact preparation fails", async () => {
+    prepareRemoteSetup.mockResolvedValueOnce({ adapterType: "paperclip_runner", status: "fail", testedAt: new Date(0).toISOString(), checks: [{ code: "paperclip_runner_runtime_unavailable", level: "error", message: "Upload unavailable" }] });
+    const result = await requireServerAdapter("paperclip_runner").testEnvironment!(context);
+    expect(result.status).toBe("fail");
+    expect(probeRunner).not.toHaveBeenCalled();
+    expect(probeAuthentication).not.toHaveBeenCalled();
+    expect(nativeAuthentication).not.toHaveBeenCalled();
+  });
+
   const sshTarget = {
     kind: "remote" as const, transport: "ssh" as const, remoteCwd: "/workspace",
     spec: {
@@ -192,14 +223,24 @@ describe("native ACPX environment checks", () => {
     const selected = { ...context, executionTarget: sshTarget, config: { provider: "codex", model: "gpt-6.1-sol" } };
     const result = await requireServerAdapter("paperclip_runner").testEnvironment!(selected);
     expect(result.status).toBe(status);
-    expect(nativeAuthentication).toHaveBeenCalledWith(selected, "codex", "gpt-6.1-sol");
+    expect(nativeAuthentication).toHaveBeenCalledWith(selected, "codex", "gpt-6.1-sol", undefined);
     expect(probeRunner).not.toHaveBeenCalled();
     expect(probeInstallation).not.toHaveBeenCalled();
   });
-  it("retains the preinstalled runner check for other SSH providers", async () => {
+  it("fails when the selected SSH runtime cannot be verified", async () => {
     probeRunner.mockRejectedValue(new Error("SSH has no preinstalled runner"));
     const result = await requireServerAdapter("paperclip_runner").testEnvironment!({ ...context, executionTarget: sshTarget, config: { provider: "opencode", model: "openrouter/example/model" } });
     expect(result.status).toBe("fail"); expect(probeRunner).toHaveBeenCalledOnce(); expect(nativeAuthentication).not.toHaveBeenCalled();
+  });
+  it.each(["opencode", "acpx"] as const)("uses prepared private paths for qualified SSH %s", async provider => {
+    const artifacts = { runnerBinary: "/workspace/owned/bin/paperclip-runnerd", providerPackRoot: "/workspace/owned/provider-pack" };
+    prepareRemoteSetup.mockImplementationOnce(async (_context, _provider, _model, probe) => probe(artifacts));
+    const selected = { ...context, executionTarget: sshTarget, config: provider === "opencode" ? { provider, model: "openrouter/example/model" } : { provider, acpxAgent: "claude", model: "claude-sonnet-5" } };
+    vi.spyOn(executionTarget, "runAdapterExecutionTargetShellCommand").mockResolvedValue({ exitCode: 0, timedOut: false, stdout: "Linux\nx86_64\n", stderr: "", signal: null, pid: null, startedAt: new Date(0).toISOString() });
+    expect((await requireServerAdapter("paperclip_runner").testEnvironment!(selected)).status).toBe("pass");
+    expect(probeRunner).toHaveBeenCalledWith(selected, artifacts);
+    if (provider === "acpx") expect(probeRemoteProvider).toHaveBeenCalledWith(selected, "claude", selected.config.model, artifacts);
+    else expect(nativeAuthentication).toHaveBeenCalledWith(selected, "opencode", selected.config.model, artifacts);
   });
   it.each([
     ["Linux\nx86_64\n", "pass"],
