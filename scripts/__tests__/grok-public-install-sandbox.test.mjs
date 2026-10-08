@@ -8,7 +8,7 @@ import { once } from 'node:events';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { GROK_PUBLIC_INSTALL_IMAGE, GROK_PUBLIC_INSTALL_LIFECYCLE, grokConsumerDockerArgs, macPublicInstallLifecyclePolicy } from '../grok-public-install-sandbox.mjs';
+import { GROK_PUBLIC_INSTALL_IMAGE, GROK_PUBLIC_INSTALL_LIFECYCLE, assertMacDeveloperRoot, discoverMacPublicInstallToolchain, grokConsumerDockerArgs, macPublicInstallLifecyclePolicy, prepareMacPublicInstallNodeHeaders, runMacPublicInstallPhase } from '../grok-public-install-sandbox.mjs';
 import { assertStandardImageIdentity, inspectInstalledDaemon, inspectInstalledProviderReadiness, inspectInstalledUi, inspectManagedServiceInstall, installedProbeMode, installedProbePaths, standardImageDockerArgs, standardImageRequest } from '../../tests/release-smoke/installed-cli-probe.mjs';
 
 const paths = { assets: '/private/staging/assets', consumer: '/private/staging/consumer', cache: '/private/staging/cache', uid: 1001, gid: 1001 };
@@ -89,12 +89,68 @@ test('hosted Mac lifecycle denies OS networking and writes only owned temporary 
     assert.throws(() => macPublicInstallLifecyclePolicy({ ownedRoot, npmRoot: '/Users/runner/node/npm' }), /absolute owned/);
   }
   const source = readFileSync(new URL('../verify-grok-npm-install.mjs', import.meta.url), 'utf8');
-  const sandbox = source.indexOf("execFileSync('/usr/bin/sandbox-exec'");
-  assert.ok(sandbox > source.indexOf("npm(['install', '--ignore-scripts'"));
+  const sandbox = source.indexOf("stage: 'offline-lifecycle', command: '/usr/bin/sandbox-exec'");
+  assert.ok(sandbox > source.indexOf("stage: 'scripts-disabled-install'"));
   assert.ok(sandbox < source.indexOf('const listener = createServer()'));
-  assert.match(source, /sandbox-exec.*\[.*'-f', policy,[\s\S]*?GROK_PUBLIC_INSTALL_LIFECYCLE\.slice\(1\)/);
+  assert.match(source, /command: '\/usr\/bin\/sandbox-exec',[\s\S]*?args: \['-f', policy,[\s\S]*?GROK_PUBLIC_INSTALL_LIFECYCLE\.slice\(1\)/);
   assert.match(source, /Hosted Mac lifecycle qualification requires OS network isolation/);
   assert.doesNotMatch(source, /no OS egress assertion/);
+});
+
+test('hosted Mac lifecycle reads only the selected Apple developer root', () => {
+  for (const developerRoot of ['/Applications/Xcode_16.4.app/Contents/Developer', '/Library/Developer/CommandLineTools']) {
+    const policy = macPublicInstallLifecyclePolicy({ ownedRoot: '/private/tmp/owned', npmRoot: '/Users/runner/node/npm', developerRoot });
+    assert.ok(policy.includes(`(subpath ${JSON.stringify(developerRoot)})`));
+    assert.match(policy, /\(deny network\*\)/);
+    assert.equal(policy.match(/\(allow file-write\*/g).length, 1);
+    assert.doesNotMatch(policy, /\(subpath "\/Applications"\)|\(subpath "\/Library"\)|\(subpath "\/Users"\)/);
+  }
+  for (const developerRoot of ['/', '/Applications', '/Applications/../Users/qa.app/Contents/Developer', '/Users/qa/Xcode.app/Contents/Developer', '/Library/Developer', '/Applications/Xcode.app/Contents/Developer\n(allow default)']) {
+    assert.throws(() => assertMacDeveloperRoot(developerRoot), /exact selected Apple/);
+  }
+});
+
+test('offline Node headers must come from the selected distribution and match its exact version', async () => {
+  const root = realpathSync(await mkdtemp(join(tmpdir(), 'paperclip-mac-headers-test-')));
+  const distribution = join(root, 'node'), headers = join(distribution, 'include/node'), executable = join(distribution, 'bin/node');
+  try {
+    await mkdir(headers, { recursive: true }); await mkdir(join(distribution, 'bin'));
+    await writeFile(executable, 'node fixture');
+    await writeFile(join(headers, 'node_version.h'), '#define NODE_MAJOR_VERSION 24\n#define NODE_MINOR_VERSION 20\n#define NODE_PATCH_VERSION 0\n');
+    await writeFile(join(headers, 'config.gypi'), '{}'); await writeFile(join(headers, 'common.gypi'), '{}');
+    const options = { nodeExecutable: executable, nodeVersion: 'v24.20.0', destination: join(root, 'owned-headers') };
+    const receipt = prepareMacPublicInstallNodeHeaders(options);
+    assert.equal(receipt.source, headers); assert.equal(receipt.version, 'v24.20.0');
+    assert.equal(readFileSync(join(receipt.destination, 'include/node/node_version.h'), 'utf8'), readFileSync(join(headers, 'node_version.h'), 'utf8'));
+    assert.throws(() => prepareMacPublicInstallNodeHeaders(options), /new owned directory/);
+    assert.throws(() => prepareMacPublicInstallNodeHeaders({ ...options, nodeVersion: 'v24.19.0', destination: join(root, 'wrong-version') }), /must match v24.19.0/);
+    await rm(join(headers, 'common.gypi'));
+    assert.throws(() => prepareMacPublicInstallNodeHeaders({ ...options, destination: join(root, 'missing-config') }), /Missing offline Node build header/);
+    await rm(join(headers, 'node_version.h'));
+    assert.throws(() => prepareMacPublicInstallNodeHeaders({ ...options, destination: join(root, 'missing-headers') }), /missing offline headers/);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('failed Mac install phases retain bounded npm debug tails before owned cache cleanup', async () => {
+  const root = realpathSync(await mkdtemp(join(tmpdir(), 'paperclip-mac-phase-test-'))), logs = join(root, '_logs');
+  const events = [], options = { stage: 'scripts-disabled-install', command: process.execPath, cwd: root, env: { PATH: '/usr/bin:/bin' }, cache: root, log: value => events.push(JSON.parse(value)) };
+  try {
+    await mkdir(logs);
+    await writeFile(join(logs, '2026-debug-0.log'), `${'a'.repeat(20_000)}last completed public fetch`);
+    await symlink(join(root, 'outside.log'), join(logs, '2027-debug-0.log'));
+    assert.throws(() => runMacPublicInstallPhase({ ...options, args: ['-e', 'console.error("observed stderr"); process.exit(7)'] }), error => error.status === 7);
+    assert.equal(events[1].status, 'failed'); assert.equal(events[1].exitCode, 7); assert.match(events[1].stderr, /observed stderr/);
+    assert.equal(events[2].status, 'npm-diagnostic'); assert.equal(events[2].name, '2026-debug-0.log');
+    assert.equal(Buffer.byteLength(events[2].tail), 16 * 1024); assert.match(events[2].tail, /last completed public fetch$/);
+    assert.equal(events.length, 3, 'A substituted symlink cannot read an outside diagnostic');
+    events.length = 0;
+    assert.throws(() => runMacPublicInstallPhase({ ...options, args: ['-e', 'setTimeout(() => {}, 60_000)'], timeout: 100 }), error => error.code === 'ETIMEDOUT');
+    assert.equal(events[1].code, 'ETIMEDOUT'); assert.equal(events[2].status, 'npm-diagnostic');
+    assert.throws(() => runMacPublicInstallPhase({ ...options, args: [], timeout: 180_001 }), /bounded timeout/);
+    events.length = 0;
+    assert.equal(runMacPublicInstallPhase({ ...options, args: ['-e', 'console.log("done")'] }).toString().trim(), 'done');
+    assert.deepEqual(events.map(event => event.status), ['started', 'passed']);
+  } finally { await rm(root, { recursive: true, force: true }); }
 });
 
 test('hosted Mac lifecycle starts standalone Node 24 while denying other homes and loopback networking', {
@@ -104,15 +160,33 @@ test('hosted Mac lifecycle starts standalone Node 24 while denying other homes a
   const root = realpathSync(await mkdtemp(join(tmpdir(), 'paperclip-mac-lifecycle-test-')));
   const outside = realpathSync(await mkdtemp(join(tmpdir(), 'paperclip-mac-other-home-test-')));
   try {
-    const bin = join(root, 'bin'), node = join(bin, 'node'), policy = join(root, 'lifecycle.sb');
+    const bin = join(root, 'bin'), node = join(bin, 'node'), policy = join(root, 'lifecycle.sb'), oldPolicy = join(root, 'old-lifecycle.sb');
     await mkdir(bin);
     await cp(process.execPath, node);
     await chmod(node, 0o755);
     await writeFile(join(outside, 'fixture.txt'), 'harmless other-home control');
-    await writeFile(policy, macPublicInstallLifecyclePolicy({ ownedRoot: root, npmRoot: join(root, 'npm') }));
+    const toolchain = discoverMacPublicInstallToolchain(), { developerRoot, compiler } = toolchain;
+    const compilerOptions = { cwd: root, timeout: 10_000, encoding: 'utf8', maxBuffer: 16 * 1024,
+      env: { HOME: root, TMPDIR: root, PATH: `${bin}:/usr/bin:/bin`, DEVELOPER_DIR: developerRoot },
+      input: '__clang__ __GNUC__ __GNUC_MINOR__ __GNUC_PATCHLEVEL__ __clang_major__ __clang_minor__ __clang_patchlevel__\n', stdio: 'pipe' };
+    await writeFile(oldPolicy, macPublicInstallLifecyclePolicy({ ownedRoot: root, npmRoot: join(root, 'npm') }));
+    const oldCompilerOptions = { ...compilerOptions, env: { HOME: root, TMPDIR: root, PATH: `${bin}:/usr/bin:/bin` } };
+    assert.throws(() => execFileSync('/usr/bin/sandbox-exec', ['-f', oldPolicy, '/usr/bin/cc', '-E', '-P', '-x', 'c', '-'], oldCompilerOptions));
+    await writeFile(policy, macPublicInstallLifecyclePolicy({ ownedRoot: root, npmRoot: join(root, 'npm'), developerRoot }));
+    const compilerIdentity = execFileSync('/usr/bin/sandbox-exec', ['-f', policy, compiler, '-E', '-P', '-x', 'c', '-'], compilerOptions).trim();
+    assert.match(compilerIdentity, /^1(?:\s+\d+){6}$/, 'The exact buildcheck compiler probe must work with only the selected toolchain read grant');
+    assert.match(execFileSync('/usr/bin/sandbox-exec', ['-f', policy, toolchain.cxx, '-E', '-P', '-x', 'c++', '-'], compilerOptions).trim(), /^1(?:\s+\d+){6}$/);
+    const pythonVersion = execFileSync('/usr/bin/sandbox-exec', ['-f', policy, toolchain.python, '-c', 'import sys; print("%s.%s.%s" % sys.version_info[:3])'], {
+      ...compilerOptions, input: undefined, env: { ...compilerOptions.env, SDKROOT: toolchain.sdk, PYTHONDONTWRITEBYTECODE: '1' } }).trim();
+    assert.match(pythonVersion, /^3\.\d+\.\d+$/);
+    const readCompiler = `const fs=require('node:fs');try{fs.closeSync(fs.openSync(${JSON.stringify(compiler)},'r'));console.log('ALLOWED')}catch(e){console.log(e.code)}`;
+    assert.equal(execFileSync('/usr/bin/sandbox-exec', ['-f', oldPolicy, node, '-e', readCompiler], {
+      ...compilerOptions, input: undefined }).trim(), 'EPERM', 'The old policy denies selected toolchain file reads');
     const code = `const fs=require('node:fs'),net=require('node:net');
       const r={node:process.version};
       fs.writeFileSync(${JSON.stringify(join(root, 'owned-write'))},'ok');r.ownedWrite='ok';
+      fs.closeSync(fs.openSync(${JSON.stringify(compiler)},'r'));r.selectedToolchainRead='ok';
+      r.selectedSdkVersion=JSON.parse(fs.readFileSync(${JSON.stringify(join(toolchain.sdk, 'SDKSettings.json'))},'utf8')).Version;
       try{fs.readFileSync(${JSON.stringify(join(outside, 'fixture.txt'))});r.outsideRead='ALLOWED'}catch(e){r.outsideRead=e.code}
       try{fs.writeFileSync(${JSON.stringify(join(outside, 'output.txt'))},'control');r.outsideWrite='ALLOWED'}catch(e){r.outsideWrite=e.code}
       const s=net.connect({host:'127.0.0.1',port:9});
@@ -124,7 +198,7 @@ test('hosted Mac lifecycle starts standalone Node 24 while denying other homes a
       stdio: 'pipe',
     }).toString().trim();
     assert.deepEqual(JSON.parse(output), { node: process.version, ownedWrite: 'ok',
-      outsideRead: 'EPERM', outsideWrite: 'EPERM', network: 'EPERM' });
+      selectedToolchainRead: 'ok', selectedSdkVersion: toolchain.sdkVersion, outsideRead: 'EPERM', outsideWrite: 'EPERM', network: 'EPERM' });
     assert.equal(readFileSync(join(root, 'owned-write'), 'utf8'), 'ok');
     assert.equal(readFileSync(join(outside, 'fixture.txt'), 'utf8'), 'harmless other-home control');
   } finally {

@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { materializePublishManifest, prepareBundledPackage } from './prepare-bundled-package.mjs';
-import { GROK_PUBLIC_INSTALL_IMAGE, GROK_PUBLIC_INSTALL_LIFECYCLE, grokConsumerDockerArgs, macPublicInstallLifecyclePolicy } from './grok-public-install-sandbox.mjs';
+import { GROK_PUBLIC_INSTALL_IMAGE, GROK_PUBLIC_INSTALL_LIFECYCLE, discoverMacPublicInstallToolchain, grokConsumerDockerArgs, macPublicInstallLifecyclePolicy, prepareMacPublicInstallNodeHeaders, runMacPublicInstallPhase } from './grok-public-install-sandbox.mjs';
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const [mode, requestedOutput, ...extraArguments] = process.argv.slice(2);
 assert.ok(mode === undefined || ['--pack-only', '--consume-pack'].includes(mode) && requestedOutput && !extraArguments.length,
@@ -72,27 +72,45 @@ try {
     const npmCli = join(dirname(process.execPath), '../lib/node_modules/npm/bin/npm-cli.js');
     assert.ok(existsSync(npmCli), 'The selected hosted Node distribution must include npm');
     const npmRoot = realpathSync(dirname(dirname(npmCli)));
+    const toolchain = discoverMacPublicInstallToolchain(), { developerRoot, compiler } = toolchain;
+    const nodeHeaders = prepareMacPublicInstallNodeHeaders({ nodeExecutable: process.execPath, nodeVersion: process.version, destination: join(root, 'node-headers') });
     const nodeIdentity = path => ({ path, realpath: realpathSync(path), symlink: lstatSync(path).isSymbolicLink() });
     console.error(JSON.stringify({ schema: 'paperclip.hosted-macos.public-npm-prerequisites.v1',
       sourceRevision, consumerPlatform: `${process.platform}-${process.arch}`, nodeVersion: process.version,
-      sourceNode: nodeIdentity(process.execPath), copiedNode: nodeIdentity(join(bin, 'node')), npmRoot }));
+      sourceNode: nodeIdentity(process.execPath), copiedNode: nodeIdentity(join(bin, 'node')), npmRoot, toolchain, nodeHeaders }));
     const isolatedEnv = { PATH: `${bin}:/usr/bin:/bin`, HOME: home, TMPDIR: temporary,
       NODE_PATH: '', npm_config_cache: cache, npm_config_audit: 'false', npm_config_fund: 'false',
+      npm_config_loglevel: 'verbose', npm_config_timing: 'true', npm_config_logs_max: '3',
+      npm_config_nodedir: nodeHeaders.destination, DEVELOPER_DIR: developerRoot, CC: compiler,
+      CXX: toolchain.cxx, SDKROOT: toolchain.sdk, PYTHON: toolchain.python, NODE_GYP_FORCE_PYTHON: toolchain.python, PYTHONDONTWRITEBYTECODE: '1',
       PAPERCLIP_TELEMETRY_DISABLED: '1', PAPERCLIP_UPDATE_CHECK: '0', PAPERCLIP_OPEN_ON_LISTEN: 'false' };
-    const npm = args => execFileSync(join(bin, 'node'), [npmCli, ...args], { cwd: consumer, env: isolatedEnv,
-      stdio: 'pipe', maxBuffer: 32 * 1024 * 1024, timeout: 180_000 });
     writeFileSync(join(consumer, 'package.json'), JSON.stringify({ private: true, type: 'module' }));
-    console.error(JSON.stringify({ stage: 'scripts-disabled-install', status: 'started' }));
-    npm(['install', '--ignore-scripts', '--omit=dev', ...inputs.map(input => join(consumePack, input.name))]);
+    runMacPublicInstallPhase({ stage: 'scripts-disabled-install', command: join(bin, 'node'),
+      args: [npmCli, 'install', '--ignore-scripts', '--omit=dev', ...inputs.map(input => join(consumePack, input.name))],
+      cwd: consumer, env: isolatedEnv, cache });
     const sentinel = join(consumer, 'node_modules/paperclip-verification-lifecycle-sentinel/lifecycle-ran');
     assert.equal(existsSync(sentinel), false, 'Transfer download must not run dependency hooks');
     const lock = readFileSync(join(consumer, 'package-lock.json'));
     assert.ok(existsSync('/usr/bin/sandbox-exec'), 'Hosted Mac lifecycle qualification requires OS network isolation; npm offline alone is insufficient');
     const policy = join(root, 'lifecycle.sb');
-    writeFileSync(policy, macPublicInstallLifecyclePolicy({ ownedRoot: root, npmRoot }), { mode: 0o600 });
-    console.error(JSON.stringify({ stage: 'offline-lifecycle', status: 'started' }));
-    execFileSync('/usr/bin/sandbox-exec', ['-f', policy, join(bin, 'node'), npmCli, ...GROK_PUBLIC_INSTALL_LIFECYCLE.slice(1)],
-      { cwd: consumer, env: isolatedEnv, stdio: 'pipe', maxBuffer: 32 * 1024 * 1024, timeout: 180_000 });
+    writeFileSync(policy, macPublicInstallLifecyclePolicy({ ownedRoot: root, npmRoot, developerRoot }), { mode: 0o600 });
+    // Match buildcheck's compiler detection before running any dependency hook.
+    // This preprocesses macros only; it creates no compiled object or binary.
+    const compilerIdentity = execFileSync('/usr/bin/sandbox-exec', ['-f', policy, compiler, '-E', '-P', '-x', 'c', '-'], {
+      cwd: consumer, env: isolatedEnv, input: '__clang__ __GNUC__ __GNUC_MINOR__ __GNUC_PATCHLEVEL__ __clang_major__ __clang_minor__ __clang_patchlevel__\n',
+      encoding: 'utf8', timeout: 10_000, maxBuffer: 16 * 1024 }).trim();
+    assert.match(compilerIdentity, /^1(?:\s+\d+){6}$/, 'Offline Apple compiler detection must return buildcheck’s seven numeric clang tokens');
+    const cxxIdentity = execFileSync('/usr/bin/sandbox-exec', ['-f', policy, toolchain.cxx, '-E', '-P', '-x', 'c++', '-'], {
+      cwd: consumer, env: isolatedEnv, input: '__clang__ __GNUC__ __GNUC_MINOR__ __GNUC_PATCHLEVEL__ __clang_major__ __clang_minor__ __clang_patchlevel__\n',
+      encoding: 'utf8', timeout: 10_000, maxBuffer: 16 * 1024 }).trim();
+    assert.match(cxxIdentity, /^1(?:\s+\d+){6}$/, 'Offline C++ compiler detection must return buildcheck’s seven numeric clang tokens');
+    const pythonVersion = execFileSync('/usr/bin/sandbox-exec', ['-f', policy, toolchain.python, '-c', 'import sys; print("%s.%s.%s" % sys.version_info[:3])'], {
+      cwd: consumer, env: isolatedEnv, encoding: 'utf8', timeout: 10_000, maxBuffer: 16 * 1024 }).trim();
+    assert.ok(/^3\.\d+\.\d+$/.test(pythonVersion) && Number(pythonVersion.split('.')[1]) >= 6, `Selected Python must support node-gyp (3.6+): ${toolchain.python} returned ${pythonVersion}`);
+    console.error(JSON.stringify({ stage: 'offline-toolchain-preflight', status: 'passed', toolchain, compilerIdentity, cxxIdentity, pythonVersion }));
+    runMacPublicInstallPhase({ stage: 'offline-lifecycle', command: '/usr/bin/sandbox-exec',
+      args: ['-f', policy, join(bin, 'node'), npmCli, ...GROK_PUBLIC_INSTALL_LIFECYCLE.slice(1)],
+      cwd: consumer, env: isolatedEnv, cache });
     assert.equal(readFileSync(sentinel, 'utf8'), 'ok');
     assert.ok(readFileSync(join(consumer, 'package-lock.json')).equals(lock), 'Host lifecycle must preserve the resolved graph');
     const listener = createServer(); listener.listen(0, '127.0.0.1'); await once(listener, 'listening');
