@@ -55,7 +55,7 @@ test("missing credentials reject before resolving a pack or launching anything",
 });
 
 test("full credential-free protocol fixture preserves numeric-zero denial and reaps its process", async () => {
-  const { mkdtemp, mkdir, writeFile, readFile, rm } = await import("node:fs/promises");
+  const { mkdtemp, mkdir, writeFile, readFile, rm, access } = await import("node:fs/promises");
   const { tmpdir } = await import("node:os");
   const { join } = await import("node:path");
   const { runProbe } = await import("./qualify-copilot-acp.mjs");
@@ -81,7 +81,7 @@ createInterface({input:process.stdin}).on('line', line => {
  if(m.method==='session/prompt'){promptId=m.id;send({id:0,method:'session/request_permission',params:{sessionId:'fixture-session',toolCall:{kind:'edit',rawInput:{fileName:process.cwd()+'/qualification-marker.txt'}},options:${JSON.stringify(options)}}});return;}
  send({id:m.id,result});
 }).on('close',()=>process.exit(0));`);
-    await writeFile(join(moduleRoot, "profile-installation.js"), `import { spawn } from 'node:child_process'; export const assertAcpxProfileEnvironment=()=>{}; export const verifyAcpxProfileInstallation=async()=>({commandDigest:'fixture-only',openCommand:async()=>({spawn:(_args,options)=>spawn(options.env.COPILOT_GITHUB_TOKEN === "fixture-spawn-failure" ? "/paperclip-fixture-missing-executable" : ${JSON.stringify(process.execPath)},[${JSON.stringify(childScript)}],options),close:async()=>{}})});`);
+    await writeFile(join(moduleRoot, "profile-installation.js"), `import { spawn } from 'node:child_process'; import { writeFileSync } from 'node:fs'; let token; export const assertAcpxProfileEnvironment=()=>{}; export const verifyAcpxProfileInstallation=async()=>({commandDigest:'fixture-only',openCommand:async()=>({spawn:(_args,options)=>{token=options.env.COPILOT_GITHUB_TOKEN;writeFileSync(${JSON.stringify(join(root, "last-probe-root"))},options.cwd);return spawn(token === "fixture-spawn-failure" ? "/paperclip-fixture-missing-executable" : ${JSON.stringify(process.execPath)},[${JSON.stringify(childScript)}],options);},close:async()=>{if(token==="fixture-close-failure")throw new Error("fixture lease cleanup failed");}})});`);
     const output = join(root, "output.json");
     const result = await runProbe(root, output, "deny-write", "fixture-token-never-used-for-network");
     const evidence = JSON.parse(await readFile(output, "utf8"));
@@ -98,5 +98,11 @@ createInterface({input:process.stdin}).on('line', line => {
     assert.equal(failedEvidence.promptRequestsSent, 0);
     assert.equal(failedEvidence.cleanupComplete, true);
     assert.match(failedEvidence.failureCode, /provider_(spawn|stdin)_failure/);
+    const lastRoot = async () => await readFile(join(root, "last-probe-root"), "utf8");
+    await assert.rejects(access(await lastRoot()), { code: "ENOENT" });
+    await assert.rejects(runProbe(root, join(root, "missing/report.json"), "deny-write", "fixture-token-never-used-for-network"), { code: "ENOENT" });
+    await assert.rejects(access(await lastRoot()), { code: "ENOENT" });
+    await assert.rejects(runProbe(root, join(root, "close-failure.json"), "deny-write", "fixture-close-failure"), /fixture lease cleanup failed/);
+    await assert.rejects(access(await lastRoot()), { code: "ENOENT" });
   } finally { await rm(root, { recursive: true, force: true }); }
 });
