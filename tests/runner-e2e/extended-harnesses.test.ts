@@ -19,7 +19,7 @@ describe("extended ACP harness qualification", () => {
   });
   it("uses exact discovered models, encrypted credential references and current qualification metadata", () => {
     expect(extendedHarnessProfiles.map(profile => profile.model)).toEqual([
-      "gpt-5.6-luna[context=272k,reasoning=medium,fast=false]", "gpt-5.6-luna", "openrouter/deepseek/deepseek-v4-flash-0731",
+      "gpt-5.6-luna[context=272k,reasoning=medium,fast=false]", "gpt-5.6-luna", "openrouter/anthropic/claude-sonnet-4.6",
     ]);
     for (const profile of extendedHarnessProfiles) {
       expect(profile.modelQualification.source).toBe(profile.qualificationCandidate === "cursor" ? "qualified_runner_profile" : "candidate_runner_profile");
