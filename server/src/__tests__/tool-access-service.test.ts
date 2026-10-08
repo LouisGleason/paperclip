@@ -2464,6 +2464,43 @@ describeEmbeddedPostgres("tool access service", () => {
     expect(reconnected.connection.agentInstructions).toEqual(settings);
   });
 
+  it.each(["https://www.googleapis.com/auth/documents.readonly", undefined, "", "https://www.googleapis.com/auth/gmail.send"])(
+    "requires explicit reviewed partial consent for customer Workspace OAuth (%s)", async (scope) => {
+      const company = await createCompany(db);
+      const userId = `workspace-customer-${randomUUID()}`;
+      await grantBoardUser(db, company.id, userId, [], "owner");
+      const actor = { actorType: "user" as const, actorId: userId };
+      const service = createTestToolAccessService(db);
+      const connected = await service.connectGalleryApp(company.id, {
+        galleryKey: "google-workspace", connectionMethodKey: "customer-workspace-oauth", grantKind: "user",
+        oauthClient: { clientId: "test-workspace-client", clientSecret: "test-workspace-secret" },
+      }, actor);
+      const redirectUri = "https://paperclip.example.test/api/tools/oauth/callback";
+      const started = await service.startOAuth(company.id, connected.connectionId, { redirectUri, actor });
+      const authorization = new URL(started.authorizationUrl);
+      expect(authorization.searchParams.get("scope")?.split(" ")).toEqual([...GOOGLE_WORKSPACE_CONNECTOR_PROFILES["workspace.all"].scopes]);
+      expect(authorization.searchParams.get("enable_granular_consent")).toBe("true");
+      const provider = vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+        if (String(url) === "https://oauth2.googleapis.com/token") return Response.json({
+          access_token: "fixture-workspace-access", refresh_token: "fixture-workspace-refresh", expires_in: 3600, token_type: "Bearer", scope,
+        });
+        expect(String(url)).toBe("https://docsmcp.googleapis.com/mcp/v1");
+        return mcpHttpResponse({ jsonrpc: "2.0", id: "paperclip-catalog-refresh", result: { tools: [
+          { name: "read_doc", annotations: { readOnlyHint: true } }, { name: "update_doc" },
+        ] } });
+      });
+      const completing = service.completeOAuthCallback({ state: authorization.searchParams.get("state")!, code: "fixture-code", redirectUri, actor });
+      if (scope?.endsWith("documents.readonly")) {
+        const completed = await completing;
+        expect(completed.connection.status).toBe("active");
+        expect(completed.catalog.map((entry) => entry.toolName)).toEqual(["docs__read_doc"]);
+      } else {
+        await expect(completing).rejects.toMatchObject({ details: { code: "oauth_scope_grant_invalid" } });
+        expect(provider).toHaveBeenCalledTimes(1);
+      }
+    },
+  );
+
   it.each(["read", "write"])("requests only reduced Chat scopes for customer-owned %s OAuth, including reconnect", async (capability) => {
     const company = await createCompany(db);
     const service = createTestToolAccessService(db);
@@ -5184,7 +5221,7 @@ describeEmbeddedPostgres("tool access service", () => {
         "telem",
       ]),
     );
-    expect(res.body.apps).toHaveLength(68);
+    expect(res.body.apps).toHaveLength(69);
     for (const slug of ["openrouter", "bedrock", "responses-api", "messages-api", "chat-completions-api", "local"]) {
       expect(res.body.apps.find((app: { slug: string }) => app.slug === slug).tags).toContain("model-provider");
     }
@@ -8025,6 +8062,43 @@ describeEmbeddedPostgres("tool access service", () => {
     } finally {
       githubDefinition.ownershipAvailability = previousOwnershipAvailability;
     }
+  });
+
+  it.each(["user", "organization"] as const)("builds one Workspace catalog from actual partial consent for a %s grant", async (grantKind) => {
+    const company = await createCompany(db);
+    const userId = `workspace-member-${randomUUID()}`;
+    await grantBoardUser(db, company.id, userId, [], "owner");
+    const connector = fakeGoogleWorkspaceConnector(company.id, userId, "workspace.all");
+    const fullClaim = connector.claim;
+    connector.claim = vi.fn(async (input) => ({ ...await fullClaim(input), scopes: ["https://www.googleapis.com/auth/documents"] }));
+    const service = createTestToolAccessService(db, { paperclipCloudConnector: connector });
+    const actor = { actorType: "user" as const, actorId: userId };
+    const provider = mockToolsList([
+      { name: "read_doc", annotations: { readOnlyHint: true } },
+      { name: "update_doc", annotations: { readOnlyHint: true } },
+      { name: "delete_doc" },
+    ]);
+    const connected = await service.connectGalleryApp(company.id, {
+      galleryKey: "google-workspace", connectionMethodKey: "paperclip-workspace", grantKind,
+    }, actor);
+    const started = await service.startOAuth(company.id, connected.connectionId, {
+      redirectUri: "https://paperclip.example/api/tools/oauth/cloud-connector/callback", actor,
+    });
+    const completed = await service.completePaperclipCloudConnectorCallback({
+      state: new URL(started.authorizationUrl).searchParams.get("state")!, claimId: "workspace-claim", actor,
+    });
+    expect(completed.connection.status).toBe("active");
+    expect(completed.catalog.map((tool) => tool.toolName).sort()).toEqual(["docs__read_doc", "docs__update_doc"]);
+    expect(completed.catalog.find((tool) => tool.toolName === "docs__update_doc")?.riskLevel).toBe("write");
+    expect(provider.mock.calls.length).toBeGreaterThan(0);
+    expect(new Set(provider.mock.calls.map(([url]) => String(url)))).toEqual(new Set(["https://docsmcp.googleapis.com/mcp/v1"]));
+    const saved = await db.select().from(toolConnections).where(eq(toolConnections.companyId, company.id));
+    expect(saved).toHaveLength(1);
+    const grants = await db.select().from(connectionGrants).where(eq(connectionGrants.connectionId, connected.connectionId));
+    expect(grants.find((grant) => grant.status === "active")?.providerTenant?.oauth?.scopes).toEqual(["https://www.googleapis.com/auth/documents"]);
+    const profiles = await db.select().from(toolProfiles).where(eq(toolProfiles.profileKey, `app:${connected.connectionId}`));
+    expect(profiles).toHaveLength(1);
+    expect(JSON.stringify(completed)).not.toContain("workspace-access-token");
   });
 
   it("routes a managed Drive callback into the personal vault, filtered catalog, and provider-specific activity", async () => {

@@ -6,6 +6,7 @@ import type { ComposioAppAccount, ComposioAppAccountInput, ComposioAppSetupInput
 import { composioAppAccounts, composioAppSetupResult } from "./composio-app-setup.js";
 import { honchoManagedArguments } from "./honcho-connection.js";
 import { defaultConnectionAgentInstructions } from "@paperclipai/shared";
+import { GOOGLE_WORKSPACE_SERVICES, googleWorkspaceServiceGranted, googleWorkspaceToolName, googleWorkspaceToolTarget, googleWorkspaceGrantedScopes, isGoogleWorkspaceToolGranted, isGoogleWorkspaceScopeGrant, type GoogleWorkspaceService } from "@paperclipai/shared";
 import { isInsufficientConnectionScope, INSUFFICIENT_CONNECTION_SCOPE_MESSAGE } from "./connection-permission-errors.js";
 import { ASANA_CONNECTOR_SCOPES, isAsanaConnectorProfileId, type AsanaConnectorProfileId } from "@paperclipai/shared";
 import { BROWSER_USE_TOOLS } from "@paperclipai/shared";
@@ -2368,6 +2369,14 @@ export function classifyRisk(
   tool: McpToolDescriptor,
   sourceTemplateKey?: string | null,
 ): ToolRiskLevel {
+  if (sourceTemplateKey === "google-workspace") {
+    const target = googleWorkspaceToolTarget(tool.name);
+    if (!target) return "destructive";
+    const risk = classifyRisk({ ...tool, name: target.upstreamName }, target.appSlug);
+    if (risk === "destructive" || target.leaf === "delete_event" || target.leaf === "send_message") return "destructive";
+    if (target.write) return "write";
+    return risk;
+  }
   const annotations = tool.annotations ?? {};
   if (annotations.destructiveHint === true || annotations.destructive === true)
     return "destructive";
@@ -2519,6 +2528,7 @@ export function isGoogleWorkspaceToolAllowed(
   profileId: GoogleWorkspaceConnectorProfileId,
   tool: McpToolDescriptor,
 ): boolean {
+  if (profileId === "workspace.all") return googleWorkspaceToolTarget(tool.name) !== null;
   const profile = GOOGLE_WORKSPACE_CONNECTOR_PROFILES[profileId];
   const toolName = googleWorkspaceToolLeafName(tool.name);
   const readTools =
@@ -7111,13 +7121,31 @@ export function toolAccessService(
     connection: typeof toolConnections.$inferSelect,
     credentialHeaders?: Record<string, string>,
     actor?: ActorInfo,
+    workspaceEndpoint?: string,
   ): Promise<McpToolDescriptor[]> {
     assertSupportedConnection(connection);
     let headers = credentialHeaders ?? {
       ...projectedConnectionHeaders(connection),
       ...(await resolveCredentialHeaders(connection, actor)),
     };
-    const endpoint = await resolvedRemoteEndpoint(connection, actor);
+    if (connection.config.sourceTemplateKey === "google-workspace" && !workspaceEndpoint) {
+      const grant = await vaultGrantForConnection(connection, actor);
+      const scopes = googleWorkspaceGrantedScopes(grant);
+      const services = (Object.keys(GOOGLE_WORKSPACE_SERVICES) as GoogleWorkspaceService[])
+        .filter((service) => googleWorkspaceServiceGranted(service, scopes));
+      // One credential authority, no child connections or implied service grants.
+      const catalogs = await Promise.all(services.map(async (service) => {
+        const profile = GOOGLE_WORKSPACE_CONNECTOR_PROFILES[GOOGLE_WORKSPACE_SERVICES[service]];
+        const tools = await remoteTools(connection, headers, actor, profile.serverUrl);
+        return tools.map((tool) => ({ ...tool, name: googleWorkspaceToolName(service, tool.name) }))
+          .filter((tool) => isGoogleWorkspaceToolGranted(tool.name, scopes));
+      }));
+      // A service's authentication retry may have refreshed into a narrower
+      // grant. Never publish actions using the pre-refresh permission snapshot.
+      const currentScopes = googleWorkspaceGrantedScopes(await vaultGrantForConnection(connection, actor));
+      return catalogs.flat().filter((tool) => isGoogleWorkspaceToolGranted(tool.name, currentScopes));
+    }
+    const endpoint = workspaceEndpoint ?? await resolvedRemoteEndpoint(connection, actor);
     // Pinned to the address the guard approved: `config.url` is operator-supplied,
     // so a second DNS resolution here would reopen the rebinding window that
     // PAP-17098 closed for the OAuth endpoints.
@@ -11730,6 +11758,12 @@ export function toolAccessService(
           throw error;
         }
 
+        if (connection.config.sourceTemplateKey === "google-workspace"
+          && !isGoogleWorkspaceScopeGrant(normalizeOauthScopes(token.scope))) {
+          await db.update(connectionGrants).set({ status: "needs_reauthorization", updatedAt: now() })
+            .where(and(eq(connectionGrants.id, grant.id), eq(connectionGrants.companyId, connection.companyId)));
+          throw unprocessable("Google did not return verifiable permissions. Reconnect Google Workspace.", { code: "oauth_reauthorization_required" });
+        }
         let nextRefreshRef: ToolCredentialSecretRef | null = null;
         if (token.refreshToken) {
           nextRefreshRef = await createOrRotateOAuthSecret({
@@ -14913,6 +14947,8 @@ export function toolAccessService(
     // against which it could safely judge the caller's requested scope.
     if (authorizationScopes.length > 0)
       authorizationUrl.searchParams.set("scope", authorizationScopes.join(" "));
+    if (galleryMethod && connection.config.sourceTemplateKey === "google-workspace")
+      authorizationUrl.searchParams.set("enable_granular_consent", "true");
     const reviewedAuthorizationParams =
       galleryMethod?.defaults?.oauthAuthorizationParams;
     if (reviewedAuthorizationParams?.access_type)
@@ -16153,6 +16189,9 @@ export function toolAccessService(
       code: input.code,
       resource: endpoints.resource,
     });
+    if (sourceTemplateKey === "google-workspace" && !isGoogleWorkspaceScopeGrant(normalizeOauthScopes(token.scope))) {
+      throw unprocessable("Google did not return a supported permission grant. Reconnect and choose the Google services you want to use.", { code: "oauth_scope_grant_invalid" });
+    }
     const connectedAt = now();
     const expiresAt = token.expiresIn
       ? new Date(connectedAt.getTime() + token.expiresIn * 1000).toISOString()
