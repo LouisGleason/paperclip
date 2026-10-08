@@ -2921,7 +2921,7 @@ function sanitizeHttpFailure(error: unknown): {
     if (code === "grant_credential_invalid" || code === "oauth_insufficient_scope") {
       return { status: code === "grant_credential_invalid" ? "missing_secret" : "degraded", message: error.message, code };
     }
-    if (code === "slack_mcp_access_disabled") {
+    if (code === "slack_mcp_access_disabled" || code === "google_workspace_services_unavailable") {
       return { status: "error", message: error.message, code };
     }
     if (code === "user_authorization_required") {
@@ -7122,6 +7122,7 @@ export function toolAccessService(
     credentialHeaders?: Record<string, string>,
     actor?: ActorInfo,
     workspaceEndpoint?: string,
+    unavailableServices: string[] = [],
   ): Promise<McpToolDescriptor[]> {
     assertSupportedConnection(connection);
     let headers = credentialHeaders ?? {
@@ -7134,16 +7135,31 @@ export function toolAccessService(
       const services = (Object.keys(GOOGLE_WORKSPACE_SERVICES) as GoogleWorkspaceService[])
         .filter((service) => googleWorkspaceServiceGranted(service, scopes));
       // One credential authority, no child connections or implied service grants.
-      const catalogs = await Promise.all(services.map(async (service) => {
+      const catalogs = await Promise.allSettled(services.map(async (service) => {
         const profile = GOOGLE_WORKSPACE_CONNECTOR_PROFILES[GOOGLE_WORKSPACE_SERVICES[service]];
         const tools = await remoteTools(connection, headers, actor, profile.serverUrl);
         return tools.map((tool) => ({ ...tool, name: googleWorkspaceToolName(service, tool.name) }))
           .filter((tool) => isGoogleWorkspaceToolGranted(tool.name, scopes));
       }));
+      for (const [index, catalog] of catalogs.entries()) {
+        if (catalog.status === "fulfilled") continue;
+        const service = services[index]!;
+        unavailableServices.push(service);
+        await audit({ companyId: connection.companyId, connectionId: connection.id,
+          action: "tool_connection.catalog_refresh", outcome: "failure", actor,
+          reasonCode: "google_workspace_service_unavailable", details: { service } });
+      }
+      const currentGrant = await vaultGrantForConnection(connection, actor);
+      if (!currentGrant) throw unprocessable("OAuth authorization must be reconnected", { code: "oauth_reauthorization_required" });
+      if (catalogs.length > 0 && catalogs.every((catalog) => catalog.status === "rejected")) {
+        throw new HttpError(502, `Google services unavailable: ${unavailableServices.join(", ")}. Retry refreshing actions.`,
+          { code: "google_workspace_services_unavailable" });
+      }
       // A service's authentication retry may have refreshed into a narrower
       // grant. Never publish actions using the pre-refresh permission snapshot.
-      const currentScopes = googleWorkspaceGrantedScopes(await vaultGrantForConnection(connection, actor));
-      return catalogs.flat().filter((tool) => isGoogleWorkspaceToolGranted(tool.name, currentScopes));
+      const currentScopes = googleWorkspaceGrantedScopes(currentGrant);
+      return catalogs.flatMap((catalog) => catalog.status === "fulfilled" ? catalog.value : [])
+        .filter((tool) => isGoogleWorkspaceToolGranted(tool.name, currentScopes));
     }
     const endpoint = workspaceEndpoint ?? await resolvedRemoteEndpoint(connection, actor);
     // Pinned to the address the guard approved: `config.url` is operator-supplied,
@@ -7474,6 +7490,7 @@ export function toolAccessService(
     connection: typeof toolConnections.$inferSelect,
     credentialHeaders?: Record<string, string>,
     actor?: ActorInfo,
+    unavailableServices: string[] = [],
   ): Promise<McpToolDescriptor[]> {
     assertSupportedConnection(connection);
     if (connection.connectionPurpose === "ai") throw unprocessable("AI connections provide runtime authentication, not tool actions");
@@ -7487,7 +7504,7 @@ export function toolAccessService(
       return [];
     }
     if (connection.transport === "mcp_remote")
-      return remoteTools(connection, credentialHeaders, actor);
+      return remoteTools(connection, credentialHeaders, actor, undefined, unavailableServices);
     if (connection.transport !== "local_stdio") {
       throw unsupportedToolConnectionTransport();
     }
@@ -7591,6 +7608,7 @@ export function toolAccessService(
   ): Promise<ToolConnectionHealthCheckResult> {
     const connection = await getConnectionRow(connectionId);
     if (connection.connectionPurpose === "ai") return { connection: toConnection(connection), runtimeSlot: null };
+    const unavailableServices: string[] = [];
     try {
       assertSupportedConnection(connection);
       const config = asRecord(connection.config);
@@ -7652,7 +7670,7 @@ export function toolAccessService(
             : canProbeWithoutAuthorization
               ? {}
               : undefined;
-        await remoteTools(connection, credentialHeaders, actor);
+        await remoteTools(connection, credentialHeaders, actor, undefined, unavailableServices);
       } else if (connection.transport === "local_stdio") {
         await resolveCredentialHeaders(connection);
         await stdioTemplateId(connection.companyId, connection.config);
@@ -7663,7 +7681,9 @@ export function toolAccessService(
       const updated = await updateConnectionHealth(
         connection,
         "ok",
-        config.sourceTemplateKey === "github" &&
+        unavailableServices.length > 0
+          ? `Connected. Google services unavailable: ${unavailableServices.join(", ")}. Other services remain available; retry refreshing actions.`
+          : config.sourceTemplateKey === "github" &&
           oauth.connectorProfile === "github.code"
           ? "GitHub account, installation, and repository access are available."
           : isBrowserUseConnection(connection)
@@ -7734,12 +7754,14 @@ export function toolAccessService(
     const connection = await getConnectionRow(connectionId);
     if (connection.connectionPurpose === "ai") throw unprocessable("AI connections do not have a tool catalog");
     const refreshedAt = now();
+    const unavailableServices: string[] = [];
     let descriptors: McpToolDescriptor[];
     try {
       descriptors = await discoverTools(
         connection,
         refreshOptions.credentialHeaders,
         actor,
+        unavailableServices,
       );
     } catch (error) {
       if (
@@ -7776,7 +7798,8 @@ export function toolAccessService(
     const existingByName = new Map(
       existingRows.map((entry) => [entry.toolName, entry]),
     );
-    if (isRemoteMcpConnectorMethod(connection.config.sourceTemplateKey, connection.config.connectionMethodKey)) {
+    if (connection.config.sourceTemplateKey === "google-workspace"
+      || isRemoteMcpConnectorMethod(connection.config.sourceTemplateKey, connection.config.connectionMethodKey)) {
       const discoveredNames = new Set(descriptors.map((descriptor) => descriptor.name));
       const removedIds = existingRows.filter((entry) => !discoveredNames.has(entry.toolName) && entry.status !== "disabled").map((entry) => entry.id);
       if (removedIds.length) await db.update(toolCatalogEntries)
@@ -7938,7 +7961,9 @@ export function toolAccessService(
         config: normalizedConfig,
         transportConfig: normalizedTransportConfig,
         healthStatus: "ok",
-        healthMessage: isAgentMailConnection(connection)
+        healthMessage: unavailableServices.length > 0
+          ? `Actions refreshed. Google services unavailable: ${unavailableServices.join(", ")}. Other services remain available; retry refreshing actions.`
+          : isAgentMailConnection(connection)
           ? "AgentMail API key is connected."
           : "Tool catalog refreshed.",
         healthCheckedAt: refreshedAt,
@@ -11463,6 +11488,9 @@ export function toolAccessService(
                 profile: profile.id,
                 refreshToken: refreshSecret.value,
               });
+              if (profile.id === "workspace.all" && !isGoogleWorkspaceScopeGrant(credentials.scopes)) {
+                throw new PaperclipCloudConnectorError("Google did not return verifiable permissions", "REAUTHORIZATION_REQUIRED");
+              }
             } catch (error) {
               if (
                 error instanceof PaperclipCloudConnectorError &&

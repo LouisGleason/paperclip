@@ -20,6 +20,12 @@ permissions; discovery skips services without grants and excludes unsupported
 actions. The gateway checks actual grant scopes again before each call, including
 after refresh. Requested scopes alone never authorize an action.
 
+Discovery isolates service outages. Healthy services remain usable while the
+connection's health message identifies unavailable services and recommends a
+catalog refresh. Failed services' cached actions are disabled until rediscovered;
+an outage affecting every requested service still fails the refresh. Loss of the
+shared OAuth grant never degrades into a successful partial discovery.
+
 Existing individual product connections and their direct setup routes remain
 supported. They are not automatically merged, upgraded or reauthorized. The Sheets
 robot-account method remains separate because it uses explicitly shared files,

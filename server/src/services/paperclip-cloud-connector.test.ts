@@ -64,11 +64,17 @@ describe("Paperclip Cloud connector", () => {
     const connector = createPaperclipCloudConnector({ config: keys.config,
       request: vi.fn(async () => Response.json({ sealed })) as typeof fetch });
     await expect(connector.claim({ subject, companyId, profile: "workspace.all", claimId: "test-claim", redemptionId: "test-state" })).resolves.toEqual(credentials);
+    sealed = seal(credentials, keys.sealPublicKey, "access", keys.config, "workspace.all");
+    await expect(connector.refresh({ subject, companyId, profile: "workspace.all", refreshToken: "test-refresh" })).resolves.toEqual(credentials);
     for (const invalid of [[], [...scopes, "https://www.googleapis.com/auth/gmail.send"]]) {
       credentials.scopes = invalid;
       sealed = seal(credentials, keys.sealPublicKey, "initial", keys.config, "workspace.all");
       await expect(connector.claim({ subject, companyId, profile: "workspace.all", claimId: "test-claim", redemptionId: "test-state" })).rejects.toMatchObject({ code: "REAUTHORIZATION_REQUIRED" });
+      sealed = seal(credentials, keys.sealPublicKey, "access", keys.config, "workspace.all");
+      await expect(connector.refresh({ subject, companyId, profile: "workspace.all", refreshToken: "test-refresh" })).rejects.toMatchObject({ code: "REAUTHORIZATION_REQUIRED" });
     }
+    sealed = seal({ ...credentials, scopes: undefined }, keys.sealPublicKey, "access", keys.config, "workspace.all");
+    await expect(connector.refresh({ subject, companyId, profile: "workspace.all", refreshToken: "test-refresh" })).rejects.toBeInstanceOf(PaperclipCloudConnectorError);
   });
   async function rejection(response: Response) {
     const connector = createPaperclipCloudConnector({

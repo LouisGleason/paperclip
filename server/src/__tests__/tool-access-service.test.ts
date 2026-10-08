@@ -8101,6 +8101,127 @@ describeEmbeddedPostgres("tool access service", () => {
     expect(JSON.stringify(completed)).not.toContain("workspace-access-token");
   });
 
+  describe("combined Workspace service isolation and refresh consent", () => {
+    async function connectWorkspace(mode: "managed" | "customer") {
+      const company = await createCompany(db);
+      const userId = `workspace-refresh-${randomUUID()}`;
+      await grantBoardUser(db, company.id, userId, [], "owner");
+      const actor = { actorType: "user" as const, actorId: userId };
+      const initialScopes = ["documents.readonly", "gmail.readonly"].map((scope) => `https://www.googleapis.com/auth/${scope}`);
+      let refreshScopes: string[] | undefined = initialScopes;
+      const connector = fakeGoogleWorkspaceConnector(company.id, userId, "workspace.all");
+      const originalClaim = connector.claim;
+      connector.claim = vi.fn(async (input) => ({ ...await originalClaim(input), scopes: initialScopes,
+        accessTokenExpiresAt: new Date(Date.now() + 86_400_000).toISOString() }));
+      connector.refresh = vi.fn(async () => ({ ...await connector.claim({ subject: userId, companyId: company.id,
+        profile: "workspace.all", claimId: "fixture", redemptionId: "fixture" }), scopes: refreshScopes ?? [] }));
+      const service = createTestToolAccessService(db, { paperclipCloudConnector: connector });
+      const calls: string[] = [];
+      const unavailable = new Set<string>();
+      let unauthorizedNextCall = false;
+      const tokenRefreshes: string[] = [];
+      vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+        const href = String(url);
+        if (href === "https://oauth2.googleapis.com/token") {
+          const refreshing = new URLSearchParams(String(init?.body)).get("grant_type") === "refresh_token";
+          if (refreshing) tokenRefreshes.push(href);
+          return Response.json({ access_token: "workspace-refresh-access", refresh_token: "workspace-refresh-token",
+            token_type: "Bearer", expires_in: 86_400, scope: (refreshing ? refreshScopes : initialScopes)?.join(" ") });
+        }
+        const host = new URL(href).hostname;
+        if (unavailable.has(host)) return new Response("unavailable", { status: 503 });
+        const body = JSON.parse(String(init?.body));
+        if (body.method === "tools/call") {
+          calls.push(body.params.name);
+          if (unauthorizedNextCall) { unauthorizedNextCall = false; return new Response("expired", { status: 401 }); }
+          return Response.json({ jsonrpc: "2.0", id: body.id, result: { content: [{ type: "text", text: "ok" }] } });
+        }
+        return mcpHttpResponse({ jsonrpc: "2.0", id: body.id, result: { tools: [{
+          name: host === "docsmcp.googleapis.com" ? "read_doc" : "get_message", annotations: { readOnlyHint: true },
+          inputSchema: { type: "object", properties: {} },
+        }] } });
+      });
+      const connected = await service.connectGalleryApp(company.id, {
+        galleryKey: "google-workspace", grantKind: "organization",
+        connectionMethodKey: mode === "managed" ? "paperclip-workspace" : "customer-workspace-oauth",
+        ...(mode === "customer" ? { oauthClient: { clientId: "workspace-client", clientSecret: "workspace-client-secret" } } : {}),
+      }, actor);
+      const redirectUri = mode === "managed" ? "https://paperclip.example/api/tools/oauth/cloud-connector/callback" : "https://paperclip.example/api/tools/oauth/callback";
+      const started = await service.startOAuth(company.id, connected.connectionId, { redirectUri, actor });
+      const state = new URL(started.authorizationUrl).searchParams.get("state")!;
+      const completed = mode === "managed"
+        ? await service.completePaperclipCloudConnectorCallback({ state, claimId: "fixture", actor })
+        : await service.completeOAuthCallback({ state, code: "fixture", redirectUri, actor });
+      const agent = await createAgent(db, company.id);
+      await service.finishGalleryAppConnection(company.id, connected.connectionId, {
+        enabledCatalogEntryIds: completed.catalog.map((entry) => entry.id), askFirstCatalogEntryIds: [], access: { agentIds: [agent.id] },
+      }, actor);
+      const [run] = await db.insert(heartbeatRuns).values({ companyId: company.id, agentId: agent.id,
+        invocationSource: "on_demand", status: "running", contextSnapshot: {} }).returning();
+      const gateway = createToolGatewayService(db, { toolActionSigningSecret: "test-secret",
+        oauthGrantRefresher: service.refreshOAuthGrantCredentials });
+      const session = await gateway.createSession({ companyId: company.id, agentId: agent.id, runId: run.id });
+      return { company, actor, service, connected, gateway, session, calls, unavailable, connector, tokenRefreshes,
+        expireNextCall: (scopes: string[] | undefined) => { refreshScopes = scopes; unauthorizedNextCall = true; } };
+    }
+
+    it("keeps healthy service tools visible during a partial outage and restores recovered services", async () => {
+      const fixture = await connectWorkspace("managed");
+      fixture.unavailable.add("gmailmcp.googleapis.com");
+      const refreshed = await fixture.service.refreshCatalog(fixture.connected.connectionId, fixture.actor);
+      expect(refreshed.connection).toMatchObject({ healthStatus: "ok", healthMessage: expect.stringContaining("gmail") });
+      expect(refreshed.catalog.map((entry) => entry.toolName)).toEqual(["docs__read_doc"]);
+      const tools = await fixture.gateway.listToolsForSession(fixture.session.token);
+      const doc = tools.find((tool) => tool.upstreamToolName === "docs__read_doc")!;
+      expect(doc).toBeTruthy();
+      expect(tools.some((tool) => tool.upstreamToolName === "gmail__get_message")).toBe(false);
+      await expect(fixture.gateway.executeTool({ sessionToken: fixture.session.token, tool: doc.name, parameters: {} })).resolves.toMatchObject({ status: "completed" });
+      const health = await fixture.service.checkHealth(fixture.connected.connectionId, fixture.actor);
+      expect(health.connection).toMatchObject({ healthStatus: "ok", healthMessage: expect.stringContaining("gmail") });
+      const events = await db.select().from(toolAccessAuditEvents).where(eq(toolAccessAuditEvents.connectionId, fixture.connected.connectionId));
+      expect(events).toContainEqual(expect.objectContaining({ reasonCode: "google_workspace_service_unavailable", details: { service: "gmail" } }));
+      fixture.unavailable.clear();
+      const recovered = await fixture.service.refreshCatalog(fixture.connected.connectionId, fixture.actor);
+      expect(recovered.catalog.map((entry) => entry.toolName).sort()).toEqual(["docs__read_doc", "gmail__get_message"]);
+      expect(recovered.connection.healthMessage).not.toContain("unavailable");
+      fixture.unavailable.add("gmailmcp.googleapis.com");
+      fixture.unavailable.add("docsmcp.googleapis.com");
+      await expect(fixture.service.refreshCatalog(fixture.connected.connectionId, fixture.actor)).rejects.toMatchObject({ details: { code: "google_workspace_services_unavailable" } });
+    });
+
+    it.each(["managed", "customer"] as const)("blocks the auth retry and updates listing after %s refresh narrows consent", async (mode) => {
+      const fixture = await connectWorkspace(mode);
+      const tool = (await fixture.gateway.listToolsForSession(fixture.session.token)).find((item) => item.upstreamToolName === "docs__read_doc")!;
+      expect(tool).toBeTruthy();
+      const scopes = ["https://www.googleapis.com/auth/gmail.readonly"];
+      fixture.expireNextCall(scopes);
+      await expect(fixture.gateway.executeTool({ sessionToken: fixture.session.token, tool: tool.name, parameters: {} })).rejects.toMatchObject({ reasonCode: "oauth_insufficient_scope" });
+      expect(fixture.calls).toEqual(["read_doc"]); // No second tools/call after the 401 refresh removed Docs permission.
+      const [grant] = await db.select().from(connectionGrants).where(and(eq(connectionGrants.connectionId, fixture.connected.connectionId), eq(connectionGrants.status, "active")));
+      expect(grant.providerTenant?.oauth?.scopes).toEqual(scopes);
+      if (mode === "managed") expect(fixture.connector.refresh).toHaveBeenCalled();
+      else expect(fixture.tokenRefreshes).toHaveLength(1);
+      const tools = await fixture.gateway.listToolsForSession(fixture.session.token);
+      expect(tools.some((item) => item.upstreamToolName === "docs__read_doc")).toBe(false);
+      const gmail = tools.find((item) => item.upstreamToolName === "gmail__get_message")!;
+      expect(gmail).toBeTruthy();
+      await expect(fixture.gateway.executeTool({ sessionToken: fixture.session.token, tool: gmail.name, parameters: {} })).resolves.toMatchObject({ status: "completed" });
+    });
+
+    it.each((["managed", "customer"] as const).flatMap((mode) => [undefined, [], ["https://www.googleapis.com/auth/gmail.send"]].map((scopes) => ({ mode, scopes }))))(
+      "fails closed on invalid refreshed permissions ($mode, $scopes)", async ({ mode, scopes }) => {
+        const fixture = await connectWorkspace(mode);
+        const tool = (await fixture.gateway.listToolsForSession(fixture.session.token)).find((item) => item.upstreamToolName === "docs__read_doc")!;
+        fixture.expireNextCall(scopes);
+        await expect(fixture.gateway.executeTool({ sessionToken: fixture.session.token, tool: tool.name, parameters: {} })).rejects.toMatchObject({ reasonCode: "oauth_reauthorization_required" });
+        expect(fixture.calls).toEqual(["read_doc"]);
+        const [grant] = await db.select().from(connectionGrants).where(eq(connectionGrants.connectionId, fixture.connected.connectionId));
+        expect(grant.status).toBe("needs_reauthorization");
+        expect((await fixture.gateway.listToolsForSession(fixture.session.token)).some((item) => item.connectionId === fixture.connected.connectionId)).toBe(false);
+      },
+    );
+  });
+
   it("routes a managed Drive callback into the personal vault, filtered catalog, and provider-specific activity", async () => {
     const company = await createCompany(db);
     const userId = `drive-member-${randomUUID()}`;
