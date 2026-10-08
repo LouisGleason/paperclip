@@ -12,7 +12,7 @@
   "branding": {
     "logoUrl": "/brands/apps/google-people.svg"
   },
-  "urlPatterns": [],
+  "urlPatterns": ["https://workspace.google.com/*"],
   "docsUrl": "https://developers.google.com/workspace/guides/configure-mcp-servers",
   "setupPrerequisite": {
     "title": "Google Developer Preview access required",
