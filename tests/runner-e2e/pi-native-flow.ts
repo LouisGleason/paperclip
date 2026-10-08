@@ -8,7 +8,7 @@ import { expect, type Page } from "@playwright/test";
 import { pollUntil, type RunnerApi } from "./api.js";
 import { collectRunEvents } from "./run-observations.js";
 import { createTaskThroughUi } from "./user-actions.js";
-import { gradePiNativeAnswers, hasFailedPiWrite, hasPiCrossRootDenial, PI_NATIVE_MEMORY_PATH, PI_NATIVE_MEMORY_PARENT_SEED_PATH, PI_NATIVE_MEMORY_PARENT_SEED_CONTENT, piNativeFinish, piNativeMemoryPrompt } from "./pi-native-cases.js";
+import { gradePiNativeAnswers, gradePiNativeMemory, hasFailedPiWrite, hasPiCrossRootDenial, PI_NATIVE_MEMORY_PATH, PI_NATIVE_MEMORY_PARENT_SEED_PATH, PI_NATIVE_MEMORY_PARENT_SEED_CONTENT, piNativeFinish, piNativeMemoryPrompt } from "./pi-native-cases.js";
 import type { LiveFixtureValues } from "./live-fixtures.js";
 import type { MatrixExecution } from "./types.js";
 
@@ -183,7 +183,7 @@ export async function runPiNativeFlow(input: {
       const personal = await api.get<Row>(`/api/agents/${fixtures.agent.id}/instructions-bundle/file?path=${encodeURIComponent(PI_NATIVE_MEMORY_PATH)}`);
       const firstEvents = await events(runs[0]!.id);
       await input.evidence("pi-agent-files-first-save.json", { personal, run: runs[0], events: firstEvents });
-      check("registered-file-saved", personal.content === `${retained}\n`, "Public managed-file API contains the exact native-write bytes");
+      check("registered-file-saved", gradePiNativeMemory(personal.content, retained), "Public managed-file API contains the exact native-write bytes");
       check("stopped-save-receipt", firstEvents.some(row => row.eventType === "instruction_save" && row.payload?.state === "saved"), "Provider stop produced a durable file-save receipt");
       const crossRootIntact = remote ? hasUnchangedPiRemoteTarget(currentBaseline, await finishRemote("cross-root-final"), "@cross-root") : await absent(outside);
       check("cross-root-denied", crossRootIntact && hasPiCrossRootDenial(firstEvents), "A single native write recorded the exact cross-root denial reason and the isolated target remains unchanged");
@@ -195,7 +195,7 @@ export async function runPiNativeFlow(input: {
       ].join("\n"), { targets: ["pi-agent-memory-proof.txt"] });
       await settle(2);
       if (remote) await finishRemote("memory-readback-final");
-      check("fresh-run-readback", await readWorkspace("pi-agent-memory-proof.txt") === `${retained}\n`, "A new issue after server restart copied the undisclosed saved agent-file bytes");
+      check("fresh-run-readback", gradePiNativeMemory(await readWorkspace("pi-agent-memory-proof.txt"), retained), "A new issue after server restart copied the undisclosed saved agent-file bytes");
       const current = await api.get<Row>(`/api/agents/${fixtures.agent.id}/instructions-bundle/file?path=${encodeURIComponent(PI_NATIVE_MEMORY_PATH)}`);
       check("persistent-bytes-unchanged", current.content === personal.content, "Fresh-run readback preserved the saved managed bytes");
       const parentSeed = await api.get<Row>(`/api/agents/${fixtures.agent.id}/instructions-bundle/file?path=${encodeURIComponent(PI_NATIVE_MEMORY_PARENT_SEED_PATH)}`);

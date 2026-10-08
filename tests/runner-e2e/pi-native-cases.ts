@@ -24,24 +24,23 @@ export function piNativeFinish(marker: string): string {
   return `After verifying the requested outcome, call paperclip_finish once with reportedWorkDisposition done, summary ${marker}, the current completion contract revision, satisfied objective criterion with evidenceRefs [], no remaining work, evidence [], and verification []. Wait for acceptance, then reply exactly ${marker}. Do not create unrelated work.`;
 }
 
+/** Exact saved bytes; neither missing evidence nor newline normalization passes. */
+export function gradePiNativeMemory(actual: unknown, nonce: string): boolean {
+  return typeof actual === "string" && actual === `${nonce}\n`;
+}
+
 export function piNativeMemoryPrompt(nonce: string, outsidePath?: string): string {
-  // A Unicode JSON escape makes the required final byte explicit while keeping
-  // the decoded write content identical to the original LF fixture.
-  const writeArguments = JSON.stringify({ path: `<AGENT_HOME>/${PI_NATIVE_MEMORY_PATH}`, content: `${nonce}\n` })
-    .replace(/\\n"}$/, '\\u000a"}');
+  const writeArguments = JSON.stringify({ path: `<AGENT_HOME>/${PI_NATIVE_MEMORY_PATH}`, content: `${nonce}\n` });
   return [
-    "Follow these steps in order. Use native file tools; do not use bash or the instructions API.",
-    "1. Copy the exact canonical absolute AGENT_HOME path from this turn's runtime instructions. Native file paths do not expand $AGENT_HOME. Do not use a remembered path or reconstruct any directory name.",
-    `2. Call native write exactly once with the JSON arguments below. Replace only the <AGENT_HOME> prefix in path with the exact absolute directory copied in step 1. Copy the content string directly into the native write arguments, including its final \\u000a escape. This is the only content specification: the JSON string decodes to ${Buffer.byteLength(nonce, "utf8") + 1} UTF-8 bytes, ending with exactly one line-feed byte (U+000A). The Unicode escape is part of content, not a closing delimiter. Do not reconstruct content from the visible nonce, omit the escape, or double-escape it into literal backslash-and-u characters. This is personal memory, not a task deliverable. Do not edit AGENTS.md or a project file.`,
-    "Native write stores exactly the content argument; it never adds a newline. Include the final JSON newline escape in the write argument itself. Native read without offset or limit returns exact file text, including any final newline; a read result without that newline means verification failed.",
+    "Save this personal memory using native write once. Replace <AGENT_HOME> with the canonical absolute AGENT_HOME directory from this turn's runtime instructions:",
     "```json",
     writeArguments,
     "```",
-    "3. Use native read once, without offset or limit, to verify that complete file, including its final line feed. Do not trim or repeat the memory write. If either memory operation fails or the content differs from step 2, report the failure and end your turn without claiming success.",
+    `The file must contain exactly ${Buffer.byteLength(nonce, "utf8") + 1} UTF-8 bytes: the supplied text followed by one LF byte. The JSON \\n denotes that LF, not literal backslash-and-n characters. Native write does not add it for you.`,
+    "Use native read once, without offset or limit, to verify the complete file. If writing or verification fails, report the failure without claiming success. Leave other agent files unchanged; use neither bash nor the instructions API.",
     ...(outsidePath === undefined ? [] : [
-      `4. After successful memory verification, attempt native write exactly once to ${JSON.stringify(outsidePath)} with content forbidden. This unassigned root must be denied. That denial is the expected result of this step, not a memory-operation failure. Do not retry or work around it.`,
+      `Then attempt native write once to ${JSON.stringify(outsidePath)} with content forbidden. This unassigned path must be denied; that denial is expected. Do not retry or work around it.`,
     ]),
-    "Paperclip collects the memory file after the provider stops. Do not claim it is already saved to managed storage.",
     piNativeFinish("PI-NATIVE-MEMORY-STAGED"),
   ].join("\n");
 }

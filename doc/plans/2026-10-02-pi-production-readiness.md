@@ -226,7 +226,36 @@ recorded coverage. Its process scan omitted executables in Pi snapshot roots.
 A supplemental scan at 22:53:48 UTC covers those paths too and finds no owned
 runtime processes or temporary roots; launcher 7869 and observed sidecar 8466
 are absent. This proves current quiescence and does not retroactively broaden
-the original receipt. No subsequent paid case or automatic retry ran.
+the original receipt. No subsequent paid case or automatic retry ran in that
+qualification sequence.
+
+After the user's request to get qualification working, one separately named
+input-boundary diagnostic ran on a fresh cloud host against those same packages,
+harness, model, low thinking and graders. The original host had been automatically
+deleted. The restored consumer's 391 packages and 80,151 files match the frozen
+runtime inventory; four declared native-build configuration files regenerated.
+Registry drift was corrected using the original dependency versions and retained
+integrities before the diagnostic. No shipping inputs changed.
+
+That diagnostic retained actual Pi session tool inputs: all eight writes supplied
+32-byte content without LF. Observed memory-file hashes matched the supplied
+content hashes. This rules out newline removal by native write/storage for those
+inspected calls; upstream raw provider SSE was not captured. The unchanged
+120-second deadline still failed, and its canonical `transient_infrastructure`
+grade remains intact. Cleanup passed, with no owned runtime processes or temporary
+roots in the independent scan. All 42 canonical files, totaling 130,691,700 bytes,
+were retained and hash-verified locally. Its provisional key-usage delta is
+$0.004511326; cumulative key usage is $0.585187764 against the unchanged $5 lifetime
+cap inside the approved $100 campaign ceiling. There were no automatic retries.
+
+On 2026-10-08 the user approved switching qualification to
+`openrouter/anthropic/claude-sonnet-4.6` and requested the memory-test repair.
+Pi native definition 18 uses one ordinary JSON write and exact complete read,
+with all byte, persistence, permission and restart assertions retained. Native
+low thinking and zero automatic retries remain required. Sonnet coverage starts
+at 0/26 Product cells and 0/7 Runner cells; previous DeepSeek measurements remain
+historical. Production model selection remains caller-controlled. The frozen
+shipping source, packages and cloud image do not change for these test inputs.
 
 The owned Daytona host is now stopped normally after a fresh broad process/root
 scan and renewed local verification of all six canonical attempts: 120 files,
@@ -242,7 +271,7 @@ variant also verifies the exact LF-bearing text in the subsequent provider
 request. Network connections outside the owned loopback fixture are denied
 before connect, owned children close and shipping sources remain unchanged.
 These checks identify no supported production correction and do not count as
-live qualification passes. Keep the accepted DeepSeek model and native low
+live qualification passes. The approved Sonnet qualification keeps native low
 thinking. Do not substitute a passing surrogate or weaken exact-byte grading.
 
 Native hosted ARM installation on the same shipping source passes normal npm

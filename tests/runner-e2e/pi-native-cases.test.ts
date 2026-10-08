@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { gradePiNativeAnswers, hasFailedPiWrite, hasPiCrossRootDenial, piNativeMemoryPrompt, piNativeTasks } from "./pi-native-cases.js";
+import { gradePiNativeAnswers, gradePiNativeMemory, hasFailedPiWrite, hasPiCrossRootDenial, piNativeMemoryPrompt, piNativeTasks } from "./pi-native-cases.js";
 import { runnerMatrix, runnerSuites } from "./catalog.js";
 import { buildRunnerE2EProcessEnvironment } from "./harness-env.js";
 import { parseRunnerSelectors, selectRunnerExecutions } from "./selectors.js";
@@ -13,16 +13,19 @@ describe("Pi native Product qualification", () => {
     const args = JSON.parse(encoded);
     expect(Object.keys(args)).toEqual(["path", "content"]);
     expect(args.path).toBe("<AGENT_HOME>/memory/pi-native.txt");
-    expect(encoded).toContain('\\u000a"}');
-    expect(encoded).not.toContain('\\\\u000a');
-    const content = args.content;
-    expect(content).toBe(`${nonce}\n`);
-    expect(Buffer.byteLength(content)).toBe(33);
-    expect(Buffer.from(content).at(-1)).toBe(10);
-    expect(prompt).toContain("Do not trim or repeat the memory write");
-    expect(prompt).toContain("Replace only the <AGENT_HOME> prefix in path");
-    expect(prompt).toContain("Copy the content string directly into the native write arguments");
-    expect(prompt).toContain("including its final line feed");
+    expect(args.content).toBe(`${nonce}\n`);
+    expect(Buffer.byteLength(args.content)).toBe(33);
+    expect(Buffer.from(args.content).at(-1)).toBe(10);
+    expect(prompt).toContain("Use native read once, without offset or limit");
+    expect(prompt).toContain("Do not retry or work around it");
+  });
+
+  it("requires the current nonce and exactly one LF at every memory readback", () => {
+    const nonce = "0123456789abcdef0123456789abcdef";
+    expect(gradePiNativeMemory(`${nonce}\n`, nonce)).toBe(true);
+    for (const wrong of [undefined, null, {}, nonce, `${nonce}\n\n`, `${nonce}\r\n`, `${nonce}\\n`, `${nonce}\\u000a`, `${"f".repeat(32)}\n`]) {
+      expect(gradePiNativeMemory(wrong, nonce)).toBe(false);
+    }
   });
   it("selects five local and five remote Pi cases without changing the basic extended matrix", () => {
     const suite = runnerSuites.find(row => row.id === "pi-native")!;

@@ -31,16 +31,16 @@ profile, model qualification, environment, task, or ranking-snapshot change
 must change that fingerprint automatically so the dashboard can annotate the
 boundary instead of silently joining unlike totals.
 
-Pi native definition 17 keeps the memory outcome at exactly the nonce plus one
-final LF. Its authoritative native-write JSON spells that byte as `\u000a`
-instead of `\n`; both decode to identical content. The installed Pi tools
-preserve the 33-byte Unicode-escaped payload and the 32-byte negative control
-exactly. The strict managed-file and fresh-task byte comparisons, single native
-write/read, cross-root denial, model, low thinking, permissions and deadlines are
-unchanged. Retain both previous missing-LF failures and their original catalog
-fingerprints. This encoding correction permits one recorded changed memory
-attempt, with zero automatic retries. Free byte preservation is diagnostic
-evidence, not a live qualification pass.
+Pi native definition 18 supplies one ordinary JSON write with the nonce followed
+by exactly one LF, then asks for a complete native read. The independently
+checked outcome remains 33 bytes, saved through the public managed-file API
+and copied into a fresh task after controller restart. Missing LF, extra LF,
+literal escapes, CRLF and stale values all fail. The cross-root denial, protected
+parent seed, permissions, deadlines and zero automatic retries remain required.
+The user approved Sonnet 4.6 through OpenRouter as the explicit Pi qualification
+model; production model selection stays caller-controlled. Earlier DeepSeek
+attempts and their fingerprints remain historical evidence and do not qualify
+this new model/fixture combination.
 
 The explicit [stock-harness suite](STOCK-HARNESS.md) wraps existing profiles with
 `productionDefaultHireProfile`: omit only `instructionsBundle` so the public
@@ -450,7 +450,7 @@ final line feed; both write and read retain the exact supplied bytes.
 The prompt orders one memory write, one complete native read, a separate expected
 cross-root write denial, and then completion. Native paths use the exact current
 absolute agent directory; shell-variable expansion is not assumed. An incorrect
-memory result must be reported without a repeated rewrite loop. Native readback and the
+memory result must be reported without claiming success. Native readback and the
 managed-file API must retain the exact bytes across a new task and controller
 restart. The byte graders remain unchanged.
 

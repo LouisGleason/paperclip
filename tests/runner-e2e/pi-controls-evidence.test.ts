@@ -189,7 +189,7 @@ describe("Pi controls catalog admission", () => {
     // Extended v3 states the strict file oracle's task-wide Bash limit.
     const pi = runnerMatrix.find(c => c.profile.qualificationCandidate === "pi")!.profile;
     expect(pi.modelQualification?.qualificationId).toBe("pi:0.0.33:1.0.0:openrouter");
-    expect(runnerSuites.find(s => s.id === "pi-native")!.definitionMetadata).toMatchObject({ version: 17, taskCreation: "explicit-title-and-creation-response-id", agentMemoryParent: "public-managed-file-seed-before-admission", incompleteTerminalCleanup: "retirement-retained-with-failed-watch", profileVersion: 18, agentMemoryContent: "utf8-nonce-plus-final-lf", agentMemoryPrompt: "ordered-native-write-arguments-with-json-unicode-lf", taskPromptTransport: "fenced-markdown-paste-and-multiline-literal-escapes", nativeFinish: "current-contract-objective-evidence-refs", providerFaultExecutable: "stable-preinstalled-runner-link-and-snapshot-node-inode-with-held-bootstrap-fd-3-or-7" });
+    expect(runnerSuites.find(s => s.id === "pi-native")!.definitionMetadata).toMatchObject({ version: 18, taskCreation: "explicit-title-and-creation-response-id", agentMemoryParent: "public-managed-file-seed-before-admission", incompleteTerminalCleanup: "retirement-retained-with-failed-watch", profileVersion: 18, agentMemoryContent: "utf8-nonce-plus-final-lf", agentMemoryPrompt: "single-json-write-and-exact-native-read", taskPromptTransport: "fenced-markdown-paste-and-multiline-literal-escapes", nativeFinish: "current-contract-objective-evidence-refs", providerFaultExecutable: "stable-preinstalled-runner-link-and-snapshot-node-inode-with-held-bootstrap-fd-3-or-7" });
     expect(runnerSuites.find(s => s.id === "pi-controls")!.definitionMetadata).toMatchObject({ version: 9, taskCreation: "explicit-title-and-creation-response-id", profileVersion: 18,
       remoteProcessIdentity: "observer-pid-startTicks-bootId",
       controlPlaneSettlement: "required-scoped-result-and-terminal-after-runner" });
@@ -200,10 +200,10 @@ describe("Pi controls catalog admission", () => {
     }
     const hashes = Object.fromEntries(runnerSuites.filter(s => ["pi-native", "native-active-stop", "extended-harnesses", "rich-acp-warm-continuity"].includes(s.id)).map(s => [s.id, suiteDefinitionHash(s)]));
     expect(hashes).toEqual({
-      "pi-native": "e60021e6959cb2ed9b50b3d5b734b6ad5a78bafc7aca1ea1fca456fb3191f318",
+      "pi-native": "b31f8ab684568b56b1a8386fdac8793bc7e06a92372355d059642b3abb704b1a",
       "native-active-stop": "2d4fdeeb75bd531b309bd1b35cfa5680ceefdeee6b7155b068dd011ce9901980",
-      "rich-acp-warm-continuity": "45d0f6a824b061464fa18cb24b1414502b52959d5f47646cfc5079cbb8f2d98b",
-      "extended-harnesses": "77cc19a12c07411bca5f29f48162467bb291d0f47fd567cc1993151cf5c6c989",
+      "rich-acp-warm-continuity": "331b88d9538a132670789fb7864df7df5f4bf294ae19b62f53d8a02f901774f0",
+      "extended-harnesses": "c66ce8165c5a0aac7b03851307bb76637eecfed0c78a50606fb3f6e7dbcefcb4",
     });
     expect(runnerMatrix.filter(c => c.profile.qualificationCandidate === "pi" && c.suite.id !== "pi-controls")).toHaveLength(22);
   });
