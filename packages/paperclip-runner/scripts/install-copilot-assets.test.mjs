@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { build } from "esbuild";
 import { COPILOT_DISTRIBUTIONS } from "./materialize-copilot-binary.mjs";
 
 const runnerRoot = fileURLToPath(new URL("../", import.meta.url));
@@ -41,7 +42,15 @@ for (const owner of ["runner", "server"]) {
         name: owner === "server" ? "@paperclipai/server" : "@paperclipai/paperclip-runner", type: "module",
       }));
       const runtimeRoot = owner === "server" ? join(root, "dist/vendor/paperclip-runner") : join(root, "dist");
-      await cp(join(runnerRoot, "dist"), runtimeRoot, { recursive: true });
+      // Compile the actual installation closure into a published package layout.
+      // A clean static-check checkout has no prebuilt dist directory.
+      await build({
+        entryPoints: [join(runnerRoot, "src/drivers/acpx/copilot-installation.ts"),
+          join(runnerRoot, "src/drivers/acpx/qualified-profiles.ts")],
+        outbase: join(runnerRoot, "src"), outdir: runtimeRoot,
+        bundle: true, platform: "node", format: "esm", target: "node24",
+        logLevel: "silent",
+      });
       const scriptRoot = owner === "server" ? join(root, "dist") : join(root, "scripts");
       await mkdir(scriptRoot, { recursive: true });
       for (const name of helpers) await cp(join(runnerRoot, "scripts", name), join(scriptRoot, name));
