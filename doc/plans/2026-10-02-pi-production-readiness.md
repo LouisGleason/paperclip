@@ -224,13 +224,13 @@ bytes. The source must be rebuilt and admitted before another paid attempt. All
 | --- | --- |
 | Offline cancellation proof | Profile 18 passes all 49 Pi ACP protocol checks. Historical profile 17 remains decodable; exact launch requires profile 18. |
 | Snapshot retirement proof | Shipping source `06a3d9739` passes 271 focused TypeScript tests, one existing skip, 16 Rust transport tests and Runner typecheck. Actual installed native copy, cancellation and deletion probes pass. All six actual live attempts have independent zero-snapshot cleanup. Installed real Pi RPC recovery and pending cancellation also pass with exact-child retirement. |
-| Normal Linux build and public installation | Source `06a3d9739` passes normal workspace/public builds, npm installation and lifecycle hooks, full graph audits, Pi setup and real server/UI admission. All 20 archives and exact installed daemon bytes are retained and verified. |
+| Normal Linux build and public installation | Source `b696e131ae32a82418e570b32f4727b5adb14e49` passes the normal hosted Linux build, clean 18-package npm install, lifecycle isolation and 20-archive retention in job `37777555436`. A fresh cloud consumer passes full public/plugin graph audits, normal Pi setup and companion import, the actual installed pack reader and server/UI startup before the definition-22 memory pass. |
 | Normal ARM Mac installation | [Native hosted ARM check](https://github.com/paperclipai/paperclip/actions/runs/37694650556) passes on shipping `06a3d9739`: normal workspace/public builds, npm lifecycle, graph audits, Pi setup and packaged admission. All 18 archives and logs are retained and hash-verified; no provider prompts. |
 | Normal Intel Mac installation | [Native Intel continuation](https://github.com/paperclipai/paperclip/actions/runs/37700732418) passes normal npm lifecycle, Pi setup, signed native daemon, graph audits and closed admission in 24,770 ms using the exact 18 retained archives. The original cancelled attempt remains retained; no Rosetta or provider prompts. |
-| Final Product acceptance | Sonnet 4.6 qualification uses native definition 21. Coverage is 1/26 on frozen installed source `06a3d9739`: the local memory case passes. The cloud memory case fails before its provider turn because of the qualified-Pi manifest reader mismatch; 24 other cells remain unexecuted. Changed production reader bytes require fresh packaged qualification. Earlier definition-18 and definition-19 Sonnet memory measurements remain canonical passes for their recorded fixtures; definition 19 proves exact LF, both native reads, restart persistence, denial and cleanup. The content-bound native-read guard in definitions 20 and 21 also passes calibration on those retained receipts. DeepSeek passes/failures remain historical and are not counted toward Sonnet. |
-| Final Runner acceptance | Sonnet coverage is 0/7 on definitions `bf8c509d`. The first get-task-context attempt passed all semantic assertions but retained canonical `accounting_failure/provider_budget_coverage_unknown`: the installed evaluation SDK has no Sonnet 4.6 price entry. The six remaining cases did not run. Native low, 120-second limits and scoring rules remain required; no automatic retries. |
-| Cloud image | [Hosted Linux build](https://github.com/paperclipai/paperclip/actions/runs/37676853634) passes for source `06a3d9739`. Immutable image `sha256:5e62c8e294cd9d663316ba09b0aae1d7358a8938fe37d17936ef394cf1723ab2` passes anonymous OCI verification and actual credential-free Daytona guest admission; probe deletion is confirmed. No local Docker is used. |
-| PR CI and review | Harness head `3017852e9` passes all 54 applicable checks with two skips and zero unresolved review threads. The production reader correction needs fresh current-head CI, normal Linux packaging and a new cloud image. Prerequisite #14921 retains the valid premature-admission finding. No merge, release or rollout is authorized. |
+| Final Product acceptance | Current-freeze Sonnet 4.6 coverage is 1/26 on installed runtime/image `b696e131ae32a82418e570b32f4727b5adb14e49` and harness `da8d4454ae165b557ff11730e9fe018c9b1cd9b9`: the definition-22 cloud memory cell passes both native reads, exact LF, controller restart, fresh-task readback, cross-root denial and independent cleanup. All 31 canonical files are retained and independently hash-verified. The remaining 25 Product cells need current-freeze qualification. The definition-21 local pass on `06a3d9739` and both historical cloud failures retain their original source and grades. Earlier Sonnet and DeepSeek receipts are historical evidence only. |
+| Final Runner acceptance | Current-freeze coverage remains 0/7. Historical Sonnet coverage is 0/7 on definitions `bf8c509d`. The first get-task-context attempt passed all semantic assertions but retained canonical `accounting_failure/provider_budget_coverage_unknown`: the installed evaluation SDK has no Sonnet 4.6 price entry. The six remaining cases did not run. Native low, 120-second limits and scoring rules remain required; no automatic retries. |
+| Cloud image | [Hosted Linux build and retained packages](https://github.com/paperclipai/paperclip/actions/runs/37777555436) pass for `b696e131ae32a82418e570b32f4727b5adb14e49`. Immutable image `sha256:ce622e03c606cb93eedda824133b791449f7be752d85e220a2e316f825f37226` passes normal companion import and installed pack admission, then the real definition-22 cloud memory case. Guest retirement and owned qualification-host stop are confirmed. Earlier image receipts remain historical. No local Docker is used. |
+| PR CI and review | Frozen runtime source `b696e131ae32a82418e570b32f4727b5adb14e49` passes all 54 applicable checks with two skips. Memory harness `da8d4454ae165b557ff11730e9fe018c9b1cd9b9` passes 173 focused regressions and the live cloud case. Current-head CI and review remain required PR gates; a passing memory case does not qualify the full release. Prerequisite #14921 retains the valid premature-admission finding. No merge, release or rollout is authorized. |
 
 The earlier cancellation defect and all failed attempts remain retained. Pi omits
 service-failure metadata only for its authoritative cancelled terminal, preserving
@@ -240,8 +240,8 @@ remain strict. Task creation binds the explicit public creation-response issue I
 
 The dedicated OpenRouter key retains its $5 lifetime cap inside the approved $100
 total token ceiling, with no reset, BYOK, account-key fallback or unchanged paid
-retry. The pre-Stop key snapshot records $0.491592211 lifetime usage and
-$4.508407789 remaining. Billing snapshots are provisional. Reclaim only inspected,
+retry. The post-Stop key snapshot on 2026-10-08 records $1.59509009 lifetime usage and
+$3.40490991 remaining; this is a key-wide total, not a per-case invoice. Billing snapshots are provisional. Reclaim only inspected,
 quiescent resources from the owned qualification host after retaining their evidence;
 require disk headroom and zero leaked native snapshots before subsequent paid cases.
 
@@ -2411,27 +2411,19 @@ Keep rollout held until every release gate is proven.
 
 ## Remaining work in order
 
-1. Complete cloud memory acceptance after packaging the qualified-Pi reader repair.
-   Definition-21 local memory already passes; its exact source-bound receipt is
-   recorded above. Earlier evidence follows for provenance. Its first
-   Sonnet measurement on harness `0104942b0` passed exact LF, saved memory,
-   controller restart, fresh-task bytes, denied cross-root write and cleanup.
-   Its canonical pass remains preserved: 23 files, 4,180,889 bytes. The fresh
-   task used a shell read. The next measurement on harness `dabe81bef` passed
-   both native reads, exact LF, restart persistence, denial and cleanup:
-   23 retained files, 4,150,531 bytes. Definition 21 binds both read receipts
-   to exact memory contents and rejects shell execution and workspace-file
-   substitution. The observer uses its unchanged bounded native-readiness RPC;
-   a native run can keep the legacy stage at `preparing`. All 172 focused memory,
-   bootstrap and installed CLI/plugin checks pass after this correction. Missing-LF and
-   historical DeepSeek evidence remain unchanged.
-2. Complete all 26 Product and seven Runner cases on Sonnet 4.6 with native low
+1. Cloud memory acceptance is complete for the frozen `b696e131ae32a82418e570b32f4727b5adb14e49`
+   runtime/image and definition-22 harness `da8d4454ae165b557ff11730e9fe018c9b1cd9b9`.
+   Both native reads, exact LF, controller restart, fresh-task bytes, denied
+   cross-root write and cleanup pass. All 31 files are retained and verified.
+   The earlier local pass and cloud failures remain source-bound history.
+   All 173 focused memory, bootstrap and installed CLI/plugin checks pass.
+2. Complete the remaining 25 Product and seven Runner cases on Sonnet 4.6 with native low
    thinking and the frozen profile-18 package/image set. Definition source
    `bf8c509df49a40e72509e8732b77516aea02bbbd` changes only qualification model,
    its matching test declaration and estimated pricing; all seven case bodies,
    scoring rules and 120-second limits remain unchanged. Seven free definitions
-   and 63 eval-program/roster tests pass. Definition-21 coverage on source `06a3d9739` is one local pass and one
-   pre-provider cloud failure. Resolve strict Runner price/counter accounting before
+   and 63 eval-program/roster tests pass. Current-freeze definition-22 Product coverage is one cloud memory pass out of
+   26 cells. Definition-21 local and cloud receipts remain historical. Resolve strict Runner price/counter accounting before
    more Runner calls;
    historical model/fixture passes are not transferred. Preserve spending caps,
    zero automatic retries and independent cleanup. Normal Linux, native ARM and
