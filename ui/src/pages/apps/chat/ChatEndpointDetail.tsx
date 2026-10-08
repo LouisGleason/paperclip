@@ -744,7 +744,7 @@ function Access({
                     <AvatarFallback>{deriveInitials(link.paperclipUserLabel ?? link.externalLabel)}</AvatarFallback>
                   </Avatar>
                   <div className="min-w-0">
-                    <p className="truncate text-sm">{link.paperclipUserLabel ?? link.externalLabel}</p>
+                    <p className="truncate text-sm" title={link.paperclipUserLabel ?? link.externalLabel}>{link.paperclipUserLabel ?? link.externalLabel}</p>
                     {(link.status !== "linked" || link.externalLabel !== link.paperclipUserLabel) && <p className="text-xs text-muted-foreground">
                       {link.status === "revoked" ? "Disconnected" : link.status === "linked"
                         ? link.externalLabel

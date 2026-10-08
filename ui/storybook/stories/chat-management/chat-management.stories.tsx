@@ -108,6 +108,7 @@ export const Access: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     const name = await canvas.findByText("Ada Lovelace");
+    await expect(name).toHaveAttribute("title", "Ada Lovelace");
     const row = name.closest('[role="listitem"]')!;
     const avatar = row.querySelector('[data-slot="avatar"]')!;
     await waitFor(() => expect(avatar.querySelector("img")).toBeVisible());
