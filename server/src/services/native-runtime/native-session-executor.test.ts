@@ -250,6 +250,7 @@ vi.mock("@paperclipai/adapter-codex-local/server", async (importOriginal) => ({
 
 vi.mock("./paperclip-runner-tool-authority.js", () => ({
   PaperclipRunnerToolAuthority: class {
+    close() {}
     readonly binding: Record<string, unknown>;
 
     constructor(_db: unknown, binding: Record<string, unknown>) {

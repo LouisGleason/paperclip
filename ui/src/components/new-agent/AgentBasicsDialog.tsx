@@ -58,7 +58,7 @@ export function AgentBasicsDialog({
   });
   const [name, setName] = useState("");
   const [adapterType, setAdapterType] = useState(initialAdapter);
-  const managedHarness = ["claude_managed", "aws_agentcore"].includes(adapterType);
+  const managedHarness = ["claude_managed", "aws_agentcore", "openai_dot"].includes(adapterType);
   const runnerProvider = managedHarness ? adapterType : "";
   const [step, setStep] = useState<"name" | "adapter">("name");
   const {
@@ -83,7 +83,13 @@ export function AgentBasicsDialog({
       !getAdapterDisplay(adapter.type).comingSoon,
   );
   const managedAvailable = !cloud && adapters?.some(adapter => adapter.type === "paperclip_runner" && adapter.loaded && !adapter.disabled);
-  const validAdapter = choices.some((adapter) => adapter.type === adapterType) || (managedAvailable && managedHarness);
+  const dotAvailable = managedAvailable && isNewAgentAdapterAllowed("openai_dot", {
+    cloud,
+    nativeRunnerEnabled: false,
+    openAiDotEnabled: experimental.data?.enableOpenAiDot === true,
+  });
+  const validAdapter = choices.some((adapter) => adapter.type === adapterType)
+    || (managedAvailable && managedHarness && (adapterType !== "openai_dot" || dotAvailable));
   return (
     <Dialog
       open={open}
@@ -224,10 +230,11 @@ export function AgentBasicsDialog({
                         { value: "", label: "Choose a managed harness…" },
                         { value: "claude_managed", label: "Claude Managed" },
                         { value: "aws_agentcore", label: "AWS AgentCore" },
+                        ...(dotAvailable ? [{ value: "openai_dot", label: "OpenAI Dot (experimental)" }] : []),
                       ]}
                     />
                   </label>
-                  <p className="text-xs text-muted-foreground">Requires a qualified organization profile.</p>
+                  <p className="text-xs text-muted-foreground">{adapterType === "openai_dot" ? "Create the agent, then pair your Dot." : "Requires a qualified organization profile."}</p>
                 </details>}
               </fieldset>
             )}

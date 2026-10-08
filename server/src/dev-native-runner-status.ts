@@ -7,12 +7,14 @@ import {
 } from "@paperclipai/db";
 import { resolveMigrationConnection } from "@paperclipai/db/migration-runtime";
 
+import { instanceSettingsService } from "./services/instance-settings.js";
 
 async function main(): Promise<void> {
   const connection = await resolveMigrationConnection();
   const db = createDb(connection.connectionString, { maxConnections: 1 });
 
   try {
+    const experimental = await instanceSettingsService(db).getExperimental();
     const persistedActiveNativeRun = await db
       .select({ id: heartbeatRuns.id })
       .from(heartbeatRuns)
@@ -48,6 +50,7 @@ async function main(): Promise<void> {
       JSON.stringify({
         nativeRunnerRequired: true,
         rolloutEnabled: true,
+        dotRolloutEnabled: experimental.enableOpenAiDot === true,
         persistedNativeRun,
         persistedActiveNativeRun,
         persistedRetryableFailedNativeRun,

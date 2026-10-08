@@ -105,7 +105,7 @@ const agentInstructionsSvc = {
 
 const instanceSettingsSvc = {
   get: vi.fn(async () => ({ defaultEnvironmentId: null })),
-  getExperimental: vi.fn(async () => ({ enableNativeRunner: false })),
+  getExperimental: vi.fn(async (): Promise<{ enableNativeRunner: boolean; enableOpenAiDot?: boolean }> => ({ enableNativeRunner: false })),
 };
 
 const managedAgentProfileSvc = {
@@ -6114,6 +6114,35 @@ describe("company portability", () => {
     expect(agentSvc.create).not.toHaveBeenCalled();
     expect(agentSvc.update).toHaveBeenCalledWith(existingAgent.id, expect.objectContaining({ adapterType, adapterConfig: expect.objectContaining(adapterConfig) }));
     expect(agentSvc.update.mock.calls.every(([, patch]) => !patch.adapterType || patch.adapterType === adapterType)).toBe(true);
+  });
+
+  it("gates unpaired Dot imports independently while ordinary native imports remain available", async () => {
+    const portability = companyPortabilityService({} as any);
+    const exported = await portability.exportBundle("company-1", { include: { company: false, agents: true, projects: false, issues: false } });
+    agentSvc.list.mockResolvedValue([]);
+    agentSvc.create.mockImplementation(async (_companyId: string, input: Record<string, unknown>) => ({ id: "agent-created", ...input }));
+    const input = {
+      source: { type: "inline" as const, rootPath: exported.rootPath, files: exported.files },
+      include: { company: false, agents: true, projects: false, issues: false },
+      target: { mode: "existing_company" as const, companyId: "company-1" },
+      agents: "all" as const, collisionStrategy: "rename" as const,
+      adapterOverrides: { claudecoder: { adapterType: "paperclip_runner", adapterConfig: { provider: "openai_dot", allowUnmeteredProvider: true, lifecycleMode: "per_turn" } } },
+    };
+    instanceSettingsSvc.getExperimental.mockResolvedValue({ enableNativeRunner: true, enableOpenAiDot: false });
+    await expect(portability.importBundle(input, "user-1")).rejects.toMatchObject({ status: 422, details: { code: "paperclip_runner_dot_disabled" } });
+    expect(agentSvc.create).not.toHaveBeenCalled();
+    instanceSettingsSvc.getExperimental.mockResolvedValue({ enableNativeRunner: false, enableOpenAiDot: true });
+    await portability.importBundle({ ...input, adapterOverrides: { claudecoder: { adapterType: "paperclip_runner", adapterConfig: { provider: "codex" } } } }, "user-1");
+    expect(agentSvc.create).toHaveBeenCalledWith("company-1", expect.objectContaining({
+      adapterType: "paperclip_runner", adapterConfig: expect.objectContaining({ provider: "codex" }),
+    }), { createdByUserId: "user-1" });
+    agentSvc.create.mockClear();
+    await portability.importBundle(input, "user-1");
+    expect(agentSvc.create).toHaveBeenCalledWith("company-1", expect.objectContaining({ adapterType: "paperclip_runner", adapterConfig: expect.objectContaining({ provider: "openai_dot", allowUnmeteredProvider: true }) }), { createdByUserId: "user-1" });
+    const createdConfig = agentSvc.create.mock.calls[0]![1].adapterConfig;
+    expect(createdConfig.dotBindingId).toBeUndefined();
+    const { resolvePaperclipRunnerProviderProfile } = await import("../services/native-runtime/provider-profile.js");
+    expect(() => resolvePaperclipRunnerProviderProfile(createdConfig)).toThrow(expect.objectContaining({ code: "paperclip_runner_dot_config_invalid" }));
   });
 
   it("accepts runner imports independently of the deprecated experimental flag", async () => {

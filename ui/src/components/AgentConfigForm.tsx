@@ -403,7 +403,11 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
     queryFn: () => instanceSettingsApi.getExperimental(),
     retry: false,
   });
-  const adapterPickerDisabledTypes = disabledTypes;
+  const adapterPickerDisabledTypes = useMemo(() => {
+    const next = new Set(disabledTypes);
+    if (experimentalSettings?.enableOpenAiDot !== true || disabledTypes.has("paperclip_runner")) next.add("openai_dot");
+    return next;
+  }, [disabledTypes, experimentalSettings?.enableOpenAiDot]);
   const environmentsEnabled = experimentalSettings?.enableEnvironments === true;
   // Managed-sandbox-only policy: every agent runs in the platform-managed
   // environment, so the form hides each host filesystem path and each
@@ -964,6 +968,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
     // every adapter without a per-adapter edit.
     hideInstructionsFile: hideInstructionsFile || hideHostPaths || isDotRunner,
     managedSandboxOnly: hideHostPaths || isDotRunner,
+    openAiDotEnabled: experimentalSettings?.enableOpenAiDot === true,
   };
 
   // Section toggle state — advanced always starts collapsed
@@ -1668,7 +1673,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                     { value: "", label: "Choose a managed harness…" },
                     { value: "claude_managed", label: "Claude Managed" },
                     { value: "aws_agentcore", label: "AWS AgentCore" },
-                    { value: "openai_dot", label: "OpenAI Dot (experimental)" },
+                    { value: "openai_dot", label: "OpenAI Dot (experimental)", disabled: adapterPickerDisabledTypes.has("openai_dot") },
                   ]}
                 />
               </Field>
@@ -2168,6 +2173,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
 
       {props.compactTestFeedback && showInlineAdapterTestEnvironmentFeedback && showAdapterTestEnvironmentButton && (
         <RuntimeTestCard
+          variant={isDotRunner ? "prerequisites" : "connection"}
           state={testActionPending ? "running" : testActionError || testEnvironment.error ? "fail" : testResult?.status ?? "idle"}
           result={testResult ?? null}
           error={testActionError ?? (testEnvironment.error instanceof Error ? testEnvironment.error.message : null)}
@@ -3678,20 +3684,22 @@ export function AdapterTypeDropdown({
   onChange,
   disabledTypes,
   includeManagedHarnesses = false,
+  openAiDotEnabled = false,
 }: {
   includeManagedHarnesses?: boolean;
   value: string;
   onChange: (type: string) => void;
   disabledTypes: Set<string>;
+  openAiDotEnabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const selectedDisplay = getAdapterDisplay(value);
   const adapterList = useMemo(
     () =>
-      [...listAdapterOptions((type) => adapterLabels[type] ?? getAdapterLabel(type)), ...(includeManagedHarnesses ? ["claude_managed", "aws_agentcore"].map(value => ({ value, label: getAdapterLabel(value), comingSoon: false, hidden: false, experimental: false })) : [])].filter(
+      [...listAdapterOptions((type) => adapterLabels[type] ?? getAdapterLabel(type)), ...(includeManagedHarnesses ? ["claude_managed", "aws_agentcore", ...(openAiDotEnabled ? ["openai_dot"] : [])].map(value => ({ value, label: getAdapterLabel(value), comingSoon: false, hidden: false, experimental: false })) : [])].filter(
         (item) => item.value !== "paperclip_runner" && !disabledTypes.has(item.value),
       ),
-    [disabledTypes, includeManagedHarnesses],
+    [disabledTypes, includeManagedHarnesses, openAiDotEnabled],
   );
 
   return (

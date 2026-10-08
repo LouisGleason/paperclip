@@ -51,7 +51,7 @@ import {
 } from "@/lib/provider-credential";
 import { defaultCreateValues } from "../agent-config-defaults";
 import { ModelDropdown } from "../AgentConfigForm";
-import { Field } from "../agent-config-primitives";
+import { Field, ToggleField } from "../agent-config-primitives";
 import { SecretPicker } from "../environment-variables-editor/SecretPicker";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -121,13 +121,14 @@ function Setup({
     acpxAgent: requestedProvider,
   });
   const managedHarness = ["claude_managed", "aws_agentcore"].includes(brandType);
+  const isDot = brandType === "openai_dot";
   const [managedProfileId, setManagedProfileId] = useState("");
   const [retentionAcknowledged, setRetentionAcknowledged] = useState(false);
   const profile = paperclipRunnerProfileForHarness(brandType);
   const registryRunner = adapters.data?.find(adapter => adapter.type === brandType)?.defaultRunner;
-  const isRunner = runner === "paperclip" || (runner === "auto" && Boolean(profile) && registryRunner !== "legacy");
+  const isRunner = isDot || runner === "paperclip" || (runner === "auto" && Boolean(profile) && registryRunner !== "legacy");
   const adapterType = isRunner ? "paperclip_runner" : brandType;
-  const runnerProvider = profile?.acpxAgent ?? profile?.provider ?? requestedProvider;
+  const runnerProvider = isDot ? "openai_dot" : profile?.acpxAgent ?? profile?.provider ?? requestedProvider;
   const connectionAdapter =
     brandType === "claude_local" || brandType === "codex_local" || brandType === "grok_local"
       ? brandType
@@ -138,7 +139,8 @@ function Setup({
   const chooseProvider = multiProvider || brandType === "hermes_local";
   const hasCredentialField =
     chooseProvider || Boolean(SETUP_CREDENTIAL_KEYS[brandType]);
-  const showModel = !["cursor_cloud", "hermes_gateway"].includes(adapterType);
+  const showModel = !isDot && !["cursor_cloud", "hermes_gateway"].includes(adapterType);
+  const [allowUnmeteredProvider, setAllowUnmeteredProvider] = useState(false);
   const [gatewayUrl, setGatewayUrl] = useState("");
   const [kimiModel, setKimiModel] = useState("");
   const [kimiBaseUrl, setKimiBaseUrl] = useState("");
@@ -312,10 +314,12 @@ function Setup({
     (managedHarness ? !cloud : isNewAgentAdapterAllowed(brandType, {
       cloud,
       nativeRunnerEnabled: experimental.data?.enableNativeRunner === true,
+      openAiDotEnabled: experimental.data?.enableOpenAiDot === true,
+      runnerProvider,
     })) &&
     adapters.data?.some(
       (adapter) =>
-        adapter.type === (managedHarness ? "paperclip_runner" : brandType) &&
+        adapter.type === (managedHarness || isDot ? "paperclip_runner" : brandType) &&
         adapter.loaded &&
         !adapter.disabled &&
         !getAdapterDisplay(adapterType).comingSoon,
@@ -355,6 +359,7 @@ function Setup({
         ? {
             adapterSchemaValues: {
               provider: (["claude", "grok", "cursor"].includes(runnerProvider)) ? "acpx" : runnerProvider,
+              ...(isDot ? { allowUnmeteredProvider } : {}),
               ...((["claude", "grok", "cursor"].includes(runnerProvider)) ? { acpxAgent: runnerProvider } : {}),
             },
           }
@@ -398,6 +403,7 @@ function Setup({
     return config;
   }
   function preparedConfig(nextConnection = connection) {
+    if (isDot && !allowUnmeteredProvider) throw new Error("Acknowledge external provider billing before creating your Dot agent.");
     if (multiProvider && (!model.trim() || !model.includes("/")))
       throw new Error("Choose or enter a model in provider/model format.");
     if (
@@ -449,7 +455,7 @@ function Setup({
         companyId,
         adapterType,
         providerAdapter: brandType,
-        runner,
+        runner: isDot ? "paperclip" : runner,
         adapterConfig: config,
         testCredentials: pendingCredentials(nextConnection),
         aiConnection: runtimeAiBinding ?? nextConnection?.aiConnection,
@@ -790,7 +796,7 @@ function Setup({
                         <Check className="size-5" />
                         {created.status === "pending_approval"
                           ? "Agent submitted for approval"
-                          : "Your agent is ready"}
+                          : isDot ? "Your Dot agent has been created" : "Your agent is ready"}
                       </h2>
                       <dl className="grid grid-cols-2 gap-4 text-sm">
                         <dt className="text-muted-foreground">Adapter</dt>
@@ -809,27 +815,25 @@ function Setup({
                       <p className="text-sm text-muted-foreground">
                         {created.status === "pending_approval"
                           ? "An organization administrator must approve this agent before it can work."
-                          : "Assign a task when you’re ready for this agent to work."}
+                          : isDot ? "Pair your Dot and test event delivery in configuration before assigning work." : "Assign a task when you’re ready for this agent to work."}
                       </p>
                     </div>
                     <div className="flex flex-wrap justify-between gap-3">
                       <Button
                         variant="outline"
-                        onClick={() => navigate(`${agentUrl(created)}/runtime`)}
+                        onClick={() => navigate(isDot ? "/agents/all" : `${agentUrl(created)}/runtime`)}
                       >
                         <Settings2 className="size-4" />
-                        Edit configuration
+                        {isDot ? "Back to Agents" : "Edit configuration"}
                       </Button>
                       <Button
                         disabled={created.status === "pending_approval"}
-                        onClick={() =>
-                          openNewIssue({
-                            assigneeAgentId: created.id,
-                            status: "todo",
-                          })
+                        onClick={() => isDot
+                          ? navigate(`${agentUrl(created)}/runtime`)
+                          : openNewIssue({ assigneeAgentId: created.id, status: "todo" })
                         }
                       >
-                        Assign {created.name} a Task
+                        {isDot ? "Pair Dot" : `Assign ${created.name} a Task`}
                         <ArrowRight className="size-4" />
                       </Button>
                     </div>
@@ -869,6 +873,12 @@ function Setup({
                         </label>
                       </section>}
                       <section className="space-y-5">
+                        {isDot && <>
+                          <p className="text-sm text-muted-foreground">Create this agent, then copy its pairing prompt to your Dot.</p>
+                          {experimental.data?.enablePublicMcp !== true && <p className="text-sm text-muted-foreground">Enable Assistant connections (MCP) in Experimental settings before pairing.</p>}
+                          <ToggleField label="Allow externally billed provider" hint="Dot does not report token usage or cost. Paperclip cannot enforce a provider spend ceiling; known company and agent budget limits still apply."
+                            checked={allowUnmeteredProvider} onChange={value => { setAllowUnmeteredProvider(value); resetTest(); }} />
+                        </>}
                         {!connectionAdapter && aiProviderForAdapter(brandType) && (
                           <AiConnectionField companyId={companyId} agentName={name} adapterType={brandType} model={model} environmentId={environmentId ?? undefined} value={aiBinding}
                             onChange={binding => { binding.mode !== "router" && setRuntimeAiBinding(binding); resetTest(); }} />
@@ -1115,6 +1125,7 @@ function Setup({
                       )}
                     </fieldset>
                     <RuntimeTestCard
+                      variant={isDot ? "prerequisites" : "connection"}
                       state={testState}
                       result={result}
                       error={error}

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import authorize from "../../.github/scripts/authorize-storybook-deploy.cjs";
 
 const ownerFile = ".github/** @cryppadotta @devinfoley @nickyleach @forgottendev\n";
@@ -120,6 +120,50 @@ test("workflow keeps branch build read-only and reauthorizes the protected deplo
   assert.match(deploy, /authorize-storybook-deploy.cjs/);
   assert.match(deploy, /name: \$\{\{ needs.build.outputs.artifact_name \}\}/);
   assert.doesNotMatch(workflow.split("permissions:")[0], /push:|pull_request:/);
+});
+
+test("visual workflow preserves ordinary coverage and resolves feature manifests before the frozen install", () => {
+  const workflow = readFileSync(new URL("../../.github/workflows/storybook-visual.yml", import.meta.url), "utf8");
+  const visual = workflow.split("  visual:\n")[1].split("  preview:\n")[0];
+  assert.match(workflow, /test_grep:\n[\s\S]*?type: string\n\s+default: ""/);
+  assert.match(visual, /STORYBOOK_VISUAL_GREP: \$\{\{ github.event_name == 'workflow_dispatch' && inputs.test_grep \|\| '' \}\}/);
+  assert.match(visual, /runs-on: ubuntu-latest/);
+  assert.doesNotMatch(visual, /runs-on\/|secrets\.|id-token: write|packages: write/);
+  const resolution = visual.split("      - name: Resolve feature branch dependency lock\n")[1].split("      - name:")[0];
+  assert.match(resolution, /if: github.ref != format\('refs\/heads\/\{0\}', github.event.repository.default_branch\)/);
+  assert.match(resolution, /pnpm install --resolution-only --ignore-scripts --no-frozen-lockfile/);
+  assert.ok(visual.indexOf("--resolution-only") < visual.indexOf("pnpm install --frozen-lockfile"));
+  assert.doesNotMatch(resolution, /git (?:add|commit|push)/);
+});
+
+test("visual manual filter passes one literal argument and empty input retains the full existing suite", () => {
+  const workflow = readFileSync(new URL("../../.github/workflows/storybook-visual.yml", import.meta.url), "utf8");
+  const dir = mkdtempSync(path.join(tmpdir(), "storybook-visual-arguments-test-"));
+  try {
+    const bin = path.join(dir, "bin"), capture = path.join(dir, "arguments.json");
+    mkdirSync(bin);
+    const stub = path.join(bin, "npx");
+    writeFileSync(stub, `#!${process.execPath}\nrequire('node:fs').writeFileSync(process.env.ARGUMENT_CAPTURE, JSON.stringify(process.argv.slice(2)));\n`);
+    chmodSync(stub, 0o755);
+    for (const [name, extra] of [
+      ["Run Storybook visual tests", []],
+      ["Generate updated snapshots for review", ["--update-snapshots"]],
+    ]) {
+      const step = workflow.split(`      - name: ${name}\n`)[1].split("      - name:")[0];
+      const script = step.split("        run: |\n")[1].split("\n")
+        .filter(line => line.startsWith("          ")).map(line => line.slice(10)).join("\n");
+      assert.ok(script.includes('"$STORYBOOK_VISUAL_GREP"'));
+      assert.doesNotMatch(script, /\$\{\{.*inputs\.test_grep/);
+      for (const grep of ["", "runner UI qualification:", "runner UI qualification:; touch unexpected-filter-command"]) {
+        const result = spawnSync("/bin/bash", ["-e", "-c", script], { cwd: dir, encoding: "utf8", timeout: 5_000,
+          env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, STORYBOOK_VISUAL_GREP: grep, ARGUMENT_CAPTURE: capture } });
+        assert.equal(result.status, 0, result.stderr);
+        assert.deepEqual(JSON.parse(readFileSync(capture, "utf8")), ["playwright", "test", "--config",
+          "tests/storybook-visual/playwright.config.ts", ...(grep ? ["--grep", grep] : []), ...extra]);
+        assert.equal(existsSync(path.join(dir, "unexpected-filter-command")), false);
+      }
+    }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 import { storybookDestination, branchIndex } from '../../.github/scripts/storybook-destination.cjs';

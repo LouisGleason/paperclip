@@ -111,6 +111,7 @@ import type {
 import {
   PaperclipRunnerProviderProfileError,
   resolvePaperclipRunnerProviderProfile,
+  validatePaperclipRunnerDotConfig,
 } from "./native-runtime/provider-profile.js";
 import { managedAgentProfileService } from "./managed-agent-profiles.js";
 import { remoteAgentProfileService } from "./remote-agent-profiles.js";
@@ -3603,6 +3604,10 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
     if (adapterType === "paperclip_runner") {
       let profile;
       try {
+        if (adapterConfig.provider === "openai_dot") {
+          validatePaperclipRunnerDotConfig(adapterConfig, false);
+          return;
+        }
         profile = resolvePaperclipRunnerProviderProfile(adapterConfig);
       } catch (error) {
         if (error instanceof PaperclipRunnerProviderProfileError) {
@@ -5248,6 +5253,27 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
     const importedAutomationPausedAt = pauseAutomations ? new Date() : null;
     const warnings = [...plan.preview.warnings];
     const include = plan.include;
+
+    if (include.agents) {
+      const importedAgentSlugs = new Set(
+        plan.preview.plan.agentPlans
+          .filter((entry) => entry.action !== "skip")
+          .map((entry) => entry.slug),
+      );
+      const dotSelections = sourceManifest.agents.filter((agent) =>
+        importedAgentSlugs.has(agent.slug)
+        && (input.adapterOverrides?.[agent.slug]?.adapterType ?? agent.adapterType)
+          === "paperclip_runner"
+        && (input.adapterOverrides?.[agent.slug]?.adapterConfig ?? agent.adapterConfig).provider === "openai_dot",
+      );
+      if (dotSelections.length > 0) {
+        const experimental = await instanceSettingsService(db).getExperimental();
+        if (experimental.enableOpenAiDot !== true) throw unprocessable(
+          "OpenAI Dot is experimental and disabled on this instance.",
+          { code: "paperclip_runner_dot_disabled" },
+        );
+      }
+    }
 
     // Content-addressed blobs double as the bundle's tamper seal. Verify every
     // blob before any row is written so a corrupted package cannot leave a

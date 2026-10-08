@@ -880,18 +880,25 @@ describe("AgentConfigForm environment selector", () => {
     }
   });
 
-  it("keeps experimental Dot in Advanced without the ordinary provider picker", async () => {
+  it.each([false, true])("keeps experimental Dot in Advanced with its independent opt-in=%s", async (enabled) => {
+    mockInstanceSettingsApi.getExperimental.mockResolvedValue({ enableEnvironments: true, enableOpenAiDot: enabled, enableNativeRunner: false });
     const result = await renderStatefulCreateClaudeSandbox([], {
       adapterType: "paperclip_runner", model: "gpt-6", defaultEnvironmentId: "",
       adapterSchemaValues: { provider: "codex", modelReasoningEffort: "high" },
     }, true);
     roots.push(result.root);
     const menu = await openPicker(result.container, "Managed harness");
-    await act(async () => menu.querySelector<HTMLButtonElement>('[data-value="openai_dot"]')!.click());
+    const dotOption = menu.querySelector<HTMLButtonElement>('[data-value="openai_dot"]')!;
+    expect(dotOption.disabled).toBe(!enabled);
+    await act(async () => dotOption.click());
     await flushReact();
+    if (!enabled) {
+      expect(buildPaperclipRunnerConfig(result.valuesRef.current).provider).toBe("codex");
+      return;
+    }
     expect(result.valuesRef.current.adapterType).toBe("paperclip_runner");
     expect(buildPaperclipRunnerConfig(result.valuesRef.current)).toEqual({
-      provider: "openai_dot", lifecycleMode: "per_turn", allowUnmeteredProvider: false,
+      provider: "openai_dot", lifecycleMode: "per_turn", allowUnmeteredProvider: false, dotWorkspaceAccess: false, dotAttachmentAccess: false,
     });
     expect(result.container.textContent).toContain("Save the agent, then return here to pair your Dot.");
     for (const label of ["Model", "Runner", "Runner lifecycle", "ACP agent", "Thinking effort"]) {

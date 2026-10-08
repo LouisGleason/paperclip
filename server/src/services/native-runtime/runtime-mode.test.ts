@@ -52,6 +52,24 @@ describe("resolveNativeRuntimeMode", () => {
     }));
   });
 
+  it("retains Dot's separate admission gate while ordinary native execution is available", () => {
+    const dot = {
+      ...eligible,
+      adapterConfig: {
+        provider: "openai_dot", dotBindingId: "11111111-1111-4111-8111-111111111111", allowUnmeteredProvider: true,
+      },
+    };
+    expect(() => resolveNativeRuntimeMode({ ...dot, dotEnabled: false })).toThrow(expect.objectContaining({
+      code: "paperclip_runner_dot_disabled",
+    }));
+    expect(resolveNativeRuntimeMode({ ...dot, enabled: false, dotEnabled: true })).toMatchObject({
+      kind: "native", profile: { backend: "openai_dot_mcp" },
+    });
+    expect(resolveNativeRuntimeMode({ ...eligible, enabled: false, dotEnabled: false })).toMatchObject({
+      kind: "native", profile: { backend: "codex_app_server" },
+    });
+  });
+
   it("rejects unknown Paperclip Runner providers", () => {
     expect(() => resolveNativeRuntimeMode({
       ...eligible,

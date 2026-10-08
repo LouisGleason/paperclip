@@ -164,6 +164,30 @@ it.each([true, false, undefined])("shows Cloud harnesses regardless of the obsol
   expect(query.get("name")).toBe("Ada & Co");
 });
 
+it("offers gated Dot through Advanced with the general Runner flag off", async () => {
+  await act(async () => cache.setQueryData(queryKeys.instance.experimentalSettings, { enableNativeRunner: false, enableOpenAiDot: true }));
+  await name();
+  expect(document.querySelector('input[value="paperclip_runner"]')).toBeNull();
+  expect(document.querySelector('input[value="openai_dot"]')).toBeNull();
+  await act(async () => document.querySelector<HTMLButtonElement>('button[aria-label="Managed harness"]')!.click());
+  const dot = document.querySelector<HTMLButtonElement>('[role="option"][data-value="openai_dot"]');
+  expect(dot).not.toBeNull();
+  await act(async () => dot!.click());
+  expect(document.querySelector("select")).toBeNull();
+  await click("Configure agent");
+  const query = new URL(state.navigate.mock.calls[0][0], "http://local").searchParams;
+  expect(query.get("adapterType")).toBe("paperclip_runner");
+  expect(query.get("runnerProvider")).toBe("openai_dot");
+});
+
+it.each([false, undefined])("keeps Dot out of Advanced without its own opt-in (%s)", async enableOpenAiDot => {
+  await act(async () => cache.setQueryData(queryKeys.instance.experimentalSettings, { enableNativeRunner: true, enableOpenAiDot }));
+  await name();
+  expect(document.querySelector('input[value="openai_dot"]')).toBeNull();
+  await act(async () => document.querySelector<HTMLButtonElement>('button[aria-label="Managed harness"]')!.click());
+  expect(document.querySelector('[role="option"][data-value="openai_dot"]')).toBeNull();
+});
+
 it("keeps agent-only invitations reachable from the new-agent flow", async () => {
   await click("Invite an external agent");
   const message = document.querySelector("textarea")!;

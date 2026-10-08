@@ -10,7 +10,7 @@ One owner carries implementation, verification and relevant review fixes through
 
 - Worktree: `/Users/dotta/.codex/worktrees/e492/paperclip`
 - Branch: `codex/default-agent-runner`
-- Base: `fc6304dfe5f2e446e09bd052a7b45f51e930f250` (observed master, integrated 2026-10-07); existing-agent staging baseline remains `b31558064093564fb937cf046596d1d497f5be27`.
+- Base: `dd777f4b7343305c4e6f44c422f44a1d78e12e4f` (observed master, integrated 2026-10-07); existing-agent staging baseline remains `b31558064093564fb937cf046596d1d497f5be27`.
 - PR: https://github.com/paperclipai/paperclip/pull/15422
 - Preview: http://127.0.0.1:3114/RUN/agents (owned checkout process; final compiled serving revision remains unqualified).
 - Evidence task: http://127.0.0.1:3114/RUN/issues/RUN-2
@@ -26,7 +26,7 @@ Live testing and regression review fixed historical-adapter SQL projection, buil
 
 ## Historical verification state (2026-10-07)
 
-The active state is the [qualification repair checkpoint](#qualification-repair-checkpoint-2026-10-07-1957-cdt). Historical results below remain supporting evidence; they do not close its failed or blocked gates.
+The active state is the [master integration checkpoint](#master-integration-checkpoint-2026-10-07-2010-cdt). Historical results below remain supporting evidence; they do not close its failed or blocked gates.
 
 - Workspace typecheck, production build, Storybook build and token gates passed after the functional review fixes. Server typecheck passed after the credential-routing guard fix.
 - Focused review regressions: 422 passed, then 66 passed after correcting the AgentCore test's step label. Credential inheritance, connection pools and permission suites: 183 passed after the security fix. Session/revision tests: 9 passed. Pinned Grok setup probes: 6 passed.
@@ -404,3 +404,16 @@ The production admin browser has no existing authenticated session. The staging 
 Rust daemon metadata now uses canonical durable protocol constants and its existing Rust metadata test asserts the complete range. All14 existing protocol-contract checks pass; substituting the stale daemon fails the new drift assertion. Rust formatting passes; native compilation and the metadata unit execution remain hosted checks. The actual installed oracle remains unchanged. The macOS helper suite passes18 cases; removing its literal-root allowance reproduces the actual Node SIGABRT while two controls pass.
 
 All three narrow repairs and focused controls are complete. Next: commit one candidate, run its normal CI/review, publish its immutable pair and execute the existing release-smoke cases. Restore owned3114 only after exact-source installed readiness. Then resolve managed native setup with bounded diagnostics and complete the live matrix within unchanged reservations. Human review, actual private composition, production rollback and rollout gates remain open. No merge, production deployment or provisioning-default promotion has occurred.
+
+
+### Master integration checkpoint (2026-10-07, 20:10 CDT)
+
+Repairs are committed and pushed at04480d4b06135812e605f2465f3cd1b8ebcee953. Before final dispatch, new masterdd777f4b7343305c4e6f44c422f44a1d78e12e4f merged Dot onboarding and governed capabilities across94 files. It conflicts with the branch and suppresses ordinary PR CI. Integrate it once, preserve the five automatic defaults and explicit legacy choices, and freeze the reconciled revision. The trusted public release workflow is byte-equal to the previously reviewed workflow. No new preview or release-smoke dispatch occurred on04480. The superseded af626 preview was canceled; its completed migrator remains supporting evidence.
+
+UI reconciliation preserves Dot in Advanced, its independent opt-in, create-to-pair flow, and attachment/workspace permissions off by default. Existing agent form/experimental/settings fields pass165 cases; creation/dialog/import pass105 distinct cases. UI typecheck and token gates pass. The import fixture's duplicated settings mock was consolidated, and only its affected suite was rerun. Server reconciliation removes reintroduced deprecated native-flag gates at inventory, fresh-run admission and heartbeat, while preserving independent Dot gates and governance. All230 distinct focused server cases pass. One unchanged adapterType patch expectation was narrowed to its contract and only that route suite was rerun. Full Dot DB/Cargo integration and OAuth onboarding remain Linux CI checks; no local release compilation or broad DB run is performed.
+
+The coverage inventory confirms frozen approval/restart, import/export choices, ordinary edits, claims and company boundaries already have maintained CI coverage. Legacy/default visual cases exist but do not run in ordinary PR browser CI. Extend the existing manual Storybook Visual workflow only with a safe optional selector and its standard feature-manifest prerequisite; retain full default coverage, readonly permissions, no deployment and no snapshot updates. Run its existing12 light/dark desktop/mobile keyboard/edit cases on the frozen candidate. The four onboarding draft/login/failure cases remain in normal PR browser coverage.
+
+The existing Storybook workflow/helper suite passes27 cases; an unquoted-argument negative control fails while two unrelated controls pass. YAML and Bash syntax pass. No permissions, deployment or baseline-update changes are added. All merge conflicts are resolved and staged.
+
+Next: commit the reconciled master, publish one immutable candidate pair, and overlap its normal CI/review, release-smoke and existing visual cases. No provider expansion, qualified-image bake, production action, merge or default promotion is authorized by this checkpoint. Owned3114 remains offline until exact-source installed readiness.

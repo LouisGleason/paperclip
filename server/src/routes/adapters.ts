@@ -260,8 +260,10 @@ function registerWithSessionManagement(adapter: ServerAdapterModule): void {
 // Router
 // ---------------------------------------------------------------------------
 
-export function adapterRoutes(options: {
+export function adapterRoutes(_options: {
+  /** @deprecated Ordinary native runner availability is no longer experimental. */
   getNativeRunnerEnabled?: () => Promise<boolean>;
+  getOpenAiDotEnabled?: () => Promise<boolean>;
 } = {}) {
   const router = Router();
 
@@ -283,8 +285,8 @@ export function adapterRoutes(options: {
       listAdapterPlugins().map((r) => [r.type, r]),
     );
     const disabledSet = new Set(getDisabledAdapterTypes());
-    const nativeRunnerEnabled = await options.getNativeRunnerEnabled?.().catch(() => false) ?? false;
-    if (!nativeRunnerEnabled) disabledSet.add("paperclip_runner");
+    // The common native adapter is always available. Dot's provider admission
+    // has its own feature gate; explicit adapter-admin disabling still applies.
 
     const result: AdapterInfo[] = registeredAdapters.map((adapter) =>
       buildAdapterInfo(adapter, externalRecords.get(adapter.type), disabledSet),

@@ -139,6 +139,7 @@ import { remoteAgentProfileRoutes } from "./routes/remote-agent-profiles.js";
 import { pluginUiStaticRoutes } from "./routes/plugin-ui-static.js";
 import { readBrandedStaticIndexHtml } from "./static-index-html.js";
 import { staticUiCacheControl } from "./static-ui-cache.js";
+import { staticUiCompression } from "./middleware/static-ui-compression.js";
 import { applyUiBranding } from "./ui-branding.js";
 import { logger } from "./middleware/logger.js";
 import {
@@ -978,6 +979,9 @@ export async function createApp(
   api.use(
     adapterRoutes({
       getNativeRunnerEnabled: async () => true,
+      getOpenAiDotEnabled: async () =>
+        (await instanceSettingsService(db).getExperimental())
+          .enableOpenAiDot === true,
     }),
   );
   api.use(
@@ -1029,6 +1033,7 @@ export async function createApp(
       fs.existsSync(path.join(p, "index.html")),
     );
     if (uiDist) {
+      staticUi.use(staticUiCompression());
       // Hashed asset files (Vite emits them under /assets/<name>.<hash>.<ext>)
       // never change once built, so they can be cached aggressively.
       staticUi.use(
