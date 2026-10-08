@@ -127,6 +127,11 @@ function ownedProcessCommand(pid: number): readonly string[] {
  * Native onSpawn publishes the runnerd child. Bind its current argv to this run
  * and per_turn lifecycle before treating its retirement as run cleanup.
  */
+/** Losing a captured process identity cannot be repaired by a later empty sample. */
+export function retainRunProcessIdentity<T extends { captured: boolean; live: number[]; identityChanged?: boolean }>(previous: T, current: T): T {
+  return { ...current, identityChanged: previous.identityChanged === true || current.identityChanged === true };
+}
+
 export function observeRunProcesses() {
   const owned = new Map<number, ProcessIdentity>(); let root: ProcessIdentity | undefined; let providerDeathDispatched = false;
   let authorityCheck: { authority: RunProcessAuthority; observed: ProcessIdentity; commandSha256: string; accepted: boolean } | undefined;

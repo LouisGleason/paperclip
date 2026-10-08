@@ -9,7 +9,7 @@ import { createTaskThroughUi } from "./user-actions.js";
 import { approveCopilotContextThroughUi, prepareCopilotContext } from "./copilot-context-permission.js";
 import { onlyCopilotAttachedOperations, readCopilotSemanticCompletion } from "./copilot-semantic-evidence.js";
 import { copilotOrigin, readCopilotToolEvidence, type CopilotToolNotice } from "./copilot-evidence.js";
-import { createAttachedCommandFixture, createDeniedTargetFixture, bindDeniedTargetPrompt, exists, observeRunProcesses } from "./copilot-local-fixtures.js";
+import { createAttachedCommandFixture, createDeniedTargetFixture, bindDeniedTargetPrompt, exists, observeRunProcesses, retainRunProcessIdentity } from "./copilot-local-fixtures.js";
 import { gradeCopilotAttachedSettlement, gradeCopilotDeniedWrite, type CopilotDeniedWriteEvidence } from "./copilot-protection-cases.js";
 import { observeCopilotPreStop, type CopilotPreStopObservation, readCopilotDeniedEdit, copilotDenialSampleCursor, readCopilotDenialSettlement, observeCopilotFixtureCommand, readCopilotRemoteMarkerAfterRetirement, prepareCopilotRemoteAction, assertCopilotRemoteRetirement, assertCopilotRemoteAttached, copilotRemoteDeniedSample, copilotActionNotices, type CopilotRemoteBootstrap, type CopilotRemoteFixture, type CopilotRemoteSnapshot, countCopilotToolOrigins, countCopilotEditOriginsForTarget } from "./copilot-protection-evidence.js";
 import type { LiveFixtureValues } from "./live-fixtures.js";
@@ -99,7 +99,7 @@ export async function runCopilotProtectionFlow(input: {
   const checks: Check[] = []; let issue: Row = {}, runs: Row[] = [], runEvents: Row[] = [];
   let notices: CopilotToolNotice[] = [];
   const processObserver = remote ? undefined : observeRunProcesses();
-  let processes: { captured: boolean; live: number[] } = processObserver?.sample() ?? { captured: false, live: [] };
+  let processes: { captured: boolean; live: number[]; identityChanged?: boolean } = processObserver?.sample() ?? { captured: false, live: [] };
   let remoteFixture: CopilotRemoteFixture | undefined, baseline: CopilotRemoteSnapshot | undefined, sealed: CopilotRemoteSnapshot | undefined;
   let remoteCommand: { command: string; commandSha256: string } | undefined;
   const remoteMarker = `${randomBytes(24).toString("hex")}\n`;
@@ -138,7 +138,10 @@ export async function runCopilotProtectionFlow(input: {
     runEvents = runs[0] ? await collectRunEvents<Row>((afterSeq, limit) => api.get(`/api/heartbeat-runs/${runs[0]!.id}/events?afterSeq=${afterSeq}&limit=${limit}`)) : [];
     notices = runs[0] ? readCopilotToolEvidence(runEvents, runs[0].id) : [];
     const run = runs[0];
-    if (processObserver) processes = processObserver.sample(run?.processPid ? { pid: run.processPid, groupId: run.processGroupId, startedAt: run.processStartedAt, runId: run.id } : undefined);
+    if (processObserver) {
+      processes = retainRunProcessIdentity(processes, processObserver.sample(run?.processPid ? { pid: run.processPid, groupId: run.processGroupId, startedAt: run.processStartedAt, runId: run.id } : undefined));
+      if (processes.identityChanged) check("owned-process-identity", false, "A captured process identity changed; cleanup cannot be qualified");
+    }
     return { issue, runs, runEvents, notices, processes };
   }
   const wait = (label: string, accept: (state: Awaited<ReturnType<typeof load>>) => boolean) => pollUntil({ label, deadlineAt: input.deadlineAt, load, accept, intervalMs: 200,

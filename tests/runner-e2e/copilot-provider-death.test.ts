@@ -46,6 +46,17 @@ describe("provider-death independent evidence", () => {
   it("accepts callback expiry and an unfinished failed task with no replay", () => {
     expect(assertCopilotProviderDeath(facts())).toMatchObject({ expired: true, mutationReplay: false });
   });
+  it.each(["execute", "read", "edit"])("refuses an additional %s operation after provider death", operation => {
+    const replay = facts();
+    const extra = row(4, "provider.notice.recorded", { schema: "paperclip.provider.notice.v1", scope: "turn", category: "copilot_tool_evidence_v1", provenance: { sessionId: "native-session", turnId: "turn", eventType: "tool", method: "session/update" }, details: Object.entries({ stage: "tool", toolCallId: "extra-tool", operation, status: "completed" }).map(([name, value]) => ({ name, value })) });
+    replay.events.push(extra);
+    expect(() => assertCopilotProviderDeath(replay)).toThrow(/replayed or completed an operation/);
+  });
+  it("refuses an additional semantic operation without a file mutation", () => {
+    const replay = facts();
+    replay.events.push(row(4, "provider.notice.recorded", { schema: "paperclip.provider.notice.v1", scope: "turn", category: "copilot_tool_evidence_v1", provenance: { sessionId: "native-session", turnId: "turn", eventType: "tool", method: "session/update" }, details: Object.entries({ stage: "tool", toolCallId: "semantic-extra", status: "completed", semanticOperationId: "issue.get", semanticCallIdentitySha256: "a".repeat(64), semanticInputSha256: "b".repeat(64), semanticNormalizedInputSha256: "null", semanticResultSha256: "c".repeat(64), semanticOutcome: "returned" }).map(([name, value]) => ({ name, value })) }));
+    expect(() => assertCopilotProviderDeath(replay)).toThrow(/replayed or completed an operation/);
+  });
   it("refuses missing expiry, stale resolution, success and foreign evidence", () => {
     const missing = facts(); missing.events.splice(1, 1); expect(() => assertCopilotProviderDeath(missing)).toThrow();
     const resolved = facts(); resolved.events.push(row(4, "runtime_request.resolved", { requestId: "request" })); expect(() => assertCopilotProviderDeath(resolved)).toThrow();

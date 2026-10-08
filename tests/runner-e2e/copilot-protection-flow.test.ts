@@ -8,7 +8,7 @@ import { createCopilotToolEvidence } from "../../packages/paperclip-runner/src/d
 import { validateAcpxRichEvent } from "../../packages/paperclip-runner/src/drivers/acpx/profile-extensions.js";
 import { copilotOrigin, readCopilotToolEvidence } from "./copilot-evidence.js";
 import { copilotProtectionCases, gradeCopilotAttachedSettlement, gradeCopilotDeniedWrite } from "./copilot-protection-cases.js";
-import { createAttachedCommandFixture, createDeniedTargetFixture, bindDeniedTargetPrompt, watchDeniedTarget, exists, isPerTurnRunProcess } from "./copilot-local-fixtures.js";
+import { createAttachedCommandFixture, createDeniedTargetFixture, bindDeniedTargetPrompt, watchDeniedTarget, exists, isPerTurnRunProcess, retainRunProcessIdentity } from "./copilot-local-fixtures.js";
 import { runnerMatrix, suiteDefinitionHash } from "./catalog.js";
 import { selectRunnerExecutions, parseRunnerSelectors } from "./selectors.js";
 
@@ -137,6 +137,13 @@ describe("Copilot Product protection integration", () => {
     for (const bad of [args.replace("per_turn", "warm"), args.replace("run-id run-id", "run-id other"), args + " --run-id run-id", "/server"]) expect(isPerTurnRunProcess(authority, observed, bad)).toBe(false);
     expect(isPerTurnRunProcess({ ...authority, groupId: 101 }, observed, args)).toBe(false);
     expect(isPerTurnRunProcess(authority, { ...observed, start: new Date(1_700_000_001_000).toString() }, args)).toBe(false);
+  });
+  it("retains lost process identity after a later empty retirement sample", () => {
+    let sample = { captured: true, live: [100], identityChanged: false };
+    sample = retainRunProcessIdentity(sample, { captured: true, live: [], identityChanged: true });
+    sample = retainRunProcessIdentity(sample, { captured: true, live: [], identityChanged: false });
+    expect(sample).toEqual({ captured: true, live: [], identityChanged: true });
+    expect(retainRunProcessIdentity({ captured: true, live: [100] }, { captured: true, live: [] }).identityChanged).toBe(false);
   });
   it("reaps a real finite child before its provider-style client can exit", async () => {
     const root = await mkdtemp("/tmp/pc-copilot-command-"); const fixture = await createAttachedCommandFixture(join(root, "marker"), 150);

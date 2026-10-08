@@ -61,7 +61,9 @@ export function assertCopilotProviderDeath(input: { pending: ActiveStopPending; 
   if (pending.scope.requireContextRead && !target) throw new Error("Provider death lacks the exact mutation origin");
   const context = target ? readCopilotContextRead(input.events, target, pending.scope.requireContextRead) : undefined;
   const notices = context ? allNotices.filter(n => ![context.toolCallId, ...context.discoveries.map(d => d.toolCallId)].includes(n.toolCallId)) : allNotices;
-  if (notices.filter(n => n.stage === "permission_requested").length !== 1 || notices.some(n => n.stage === "permission_delivered" && ["allow_once", "allow_always"].includes(n.outcome ?? "")) || notices.some(n => n.stage === "tool" && n.operation === "edit" && (n.toolCallId !== pending.toolCallId || n.status === "completed"))) throw new Error("Provider death replayed or completed the mutation");
+  if (notices.filter(n => n.stage === "permission_requested").length !== 1 || notices.some(n => n.stage === "permission_delivered" && ["allow_once", "allow_always"].includes(n.outcome ?? "")) || notices.some(n => n.stage === "tool" && (n.toolCallId !== pending.toolCallId || n.operation !== "edit" || n.status === "completed"))) throw new Error("Provider death replayed or completed an operation");
+  const expirySeq = rows.find(row => row.payload.prpEvent === expiry[0])!.seq;
+  if (allNotices.some(n => n.stage === "tool" && n.seq >= expirySeq && !(n.toolCallId === pending.toolCallId && n.operation === "edit" && n.status === "failed"))) throw new Error("Provider death executed an operation after callback expiry");
   if (!events.some(event => ["turn.failed", "turn.interrupted"].includes(event.eventType) && event.turnId === pending.turnId)) throw new Error("Provider death lacks a failed provider turn");
   return { schema: "paperclip.e2e.copilot-provider-death.v1", runId: run.id, requestId: pending.requestId, expired: true, mutationReplay: false };
 }
