@@ -31,8 +31,10 @@ the GitHub Code Review Bot connector. This default-off setting is independent of
    authorize the dedicated App and confirm the observed account once. Bot work
    uses installation credentials, never your personal GitHub token.
 5. Connection verification and completion happen automatically. The connected
-   page shows the actual App identity and repositories; a mention test is
-   optional. Runtime and isolation readiness remain separate prerequisites.
+   page shows the actual App identity and enabled repository count, with a
+   copyable optional review mention. Open **Bot settings** to manage the
+   bot; normal connection navigation is already available. Runtime and isolation
+   readiness remain separate prerequisites.
 
 Installation may return before GitHub's separately delivered signed webhook
 ping. Paperclip keeps the same draft and credentials, shows a waiting state,
@@ -88,8 +90,10 @@ selected environment.
 ## Manage a connected bot
 
 - **Settings:** edit instructions, choose when the bot runs, and set review output.
-  Event-specific instructions, filters, formal approvals, and repository overrides
-  are available in disclosures.
+  Event-specific instructions, filters, and formal approvals are available in
+  disclosures. Repository-override editing is temporarily hidden in the UI;
+  existing overrides and the configuration API remain supported. Changing
+  defaults preserves saved overrides.
 - **Access:** choose enabled repositories, allowed people, and each person's
   **Run automatically** setting. Repository switches save immediately. Other
   changes use **Save changes**. A linked account alone does not grant selected-member

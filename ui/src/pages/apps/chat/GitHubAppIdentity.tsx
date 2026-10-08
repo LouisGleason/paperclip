@@ -1,7 +1,8 @@
-import { ExternalLink } from "lucide-react";
+import { ChevronRight, ExternalLink } from "lucide-react";
 import type { ChatEndpoint } from "@/api/chatEndpoints";
 import { AgentAvatarDownload } from "@/components/AgentAvatarDownload";
 import { CopyText } from "@/components/CopyText";
+import { Button } from "@/components/ui/button";
 import { Link } from "@/lib/router";
 
 export function gitHubBotMention(endpoint: Pick<ChatEndpoint, "botUsername">) {
@@ -44,61 +45,42 @@ export function GitHubAppBranding({
   avatarUrl?: string;
 }) {
   return (
-    <details className="text-sm">
-      <summary className="cursor-pointer text-muted-foreground">
+    <details className="group text-sm">
+      <summary className="flex cursor-pointer list-none items-center gap-2 text-muted-foreground hover:text-foreground">
+        <ChevronRight className="size-4 shrink-0 transition-transform group-open:rotate-90" />
         GitHub App name and logo
       </summary>
       <div className="mt-4 space-y-4">
-        <p>
-          This is your custom GitHub App
-          {endpoint.botLabel ? (
-            <>
-              : <strong>{endpoint.botLabel}</strong>.
-            </>
-          ) : (
-            "."
-          )}
-          {endpoint.providerAccountLabel && (
-            <>
-              {" "}
-              Owned by <strong>{endpoint.providerAccountLabel}</strong>.
-            </>
-          )}
+        <p className="text-sm text-muted-foreground">
+          Change the name or upload a logo in the App’s Display information settings on GitHub.
         </p>
-        <p className="text-xs text-muted-foreground">
-          GitHub derives the @mention from the App name. Upload your logo in the
-          App’s Display information settings.
-        </p>
-        {avatarUrl && (
-          <div className="flex flex-wrap items-center gap-4">
+        <div className="flex flex-wrap items-center gap-3">
+          {avatarUrl && <>
             <img
               src={avatarUrl}
               alt={`${endpoint.assignedAgentName}’s avatar for download`}
-              className="size-20 rounded-lg bg-muted object-contain"
+              className="size-12 shrink-0 object-contain"
             />
             <AgentAvatarDownload
               avatarUrl={avatarUrl}
               name={endpoint.botLabel ?? endpoint.assignedAgentName}
             />
-          </div>
-        )}
-        <a
-          href={gitHubAppSettingsUrl(endpoint)}
-          target="_blank"
-          rel="noreferrer"
-          className="inline-flex items-center gap-2 underline underline-offset-4"
-        >
-          Edit App name and logo on GitHub <ExternalLink className="size-3" />
-        </a>
+          </>}
+          <Button variant="outline" asChild>
+            <a href={gitHubAppSettingsUrl(endpoint)} target="_blank" rel="noreferrer"
+              aria-label="Edit App name and logo on GitHub">
+              Edit on GitHub <ExternalLink className="size-4" />
+            </a>
+          </Button>
+        </div>
         <p className="text-xs text-muted-foreground">
-          After renaming the App,{" "}
+          Renaming also changes its @mention.{" "}
           <Link
             className="underline underline-offset-4"
             to={`/apps/chat/connect?provider=github&resume=${endpoint.id}&reconnect=1`}
           >
-            reconnect this App
-          </Link>{" "}
-          to refresh its mention in Paperclip.
+            Reconnect afterward
+          </Link>{" "}to update it here.
         </p>
       </div>
     </details>

@@ -35,7 +35,6 @@ import {
   GitHubAccessEditor,
   GitHubPolicyEditor,
   GitHubToggle,
-  githubSelectClass,
 } from "./GitHubBotConfiguration";
 import { GitHubAppBranding } from "./GitHubAppIdentity";
 
@@ -179,13 +178,7 @@ export function GitHubBotManagement({
     queryKey: ["github-bot-configuration", endpoint.id],
     queryFn: () => githubChatApi.configuration(endpoint.id),
   });
-  const resources = useQuery({
-    queryKey: ["github-bot-repositories", endpoint.id],
-    queryFn: () => chatEndpointsApi.listResources(endpoint.id),
-    enabled: view === "settings",
-  });
   const [draft, setDraft] = useState<GitHubConfigurationRecord | null>(null);
-  const [repository, setRepository] = useState("");
   const [pending, setPending] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
@@ -210,7 +203,7 @@ export function GitHubBotManagement({
       setPending(false);
     }
   };
-  if (query.isError || (view === "settings" && resources.isError))
+  if (query.isError)
     return (
       <p role="alert" className="text-sm text-destructive">
         Could not load the bot configuration.{" "}
@@ -218,24 +211,19 @@ export function GitHubBotManagement({
           variant="link"
           onClick={() => {
             void query.refetch();
-            void resources.refetch();
           }}
         >
           Try again
         </Button>
       </p>
     );
-  if (!record || (view === "settings" && resources.isPending))
+  if (!record)
     return (
       <p role="status" className="text-sm text-muted-foreground">
         Loading configuration…
       </p>
     );
   const config = record.configuration;
-  const repositories = (resources.data ?? []).filter(
-    (resource) => resource.type === "repository",
-  );
-  const override = repository ? config.repositories[repository] : undefined;
   return (
     <section className="max-w-3xl space-y-8">
       <fieldset disabled={pending} className="min-w-0 space-y-8">
@@ -309,74 +297,6 @@ export function GitHubBotManagement({
               policy={config.defaults}
               onChange={(defaults) => edit({ ...config, defaults })}
             />
-            <details className="text-sm">
-              <summary className="cursor-pointer text-muted-foreground">
-                Repository overrides
-                {Object.keys(config.repositories).length > 0
-                  ? ` (${Object.keys(config.repositories).length})`
-                  : ""}
-              </summary>
-              <div className="mt-4 space-y-5">
-                <label
-                  htmlFor="github-policy-repository"
-                  className="block text-sm font-medium"
-                >
-                  Repository
-                </label>
-                <select
-                  id="github-policy-repository"
-                  className={githubSelectClass}
-                  value={repository}
-                  onChange={(e) => setRepository(e.target.value)}
-                >
-                  <option value="">Choose a repository</option>
-                  {repositories
-                    .filter(
-                      (r) => r.enabled && r.metadata?.providerRepositoryId,
-                    )
-                    .map((r) => (
-                      <option
-                        key={r.id}
-                        value={String(r.metadata?.providerRepositoryId)}
-                      >
-                        {r.label ?? r.providerResourceId}
-                      </option>
-                    ))}
-                </select>
-                {repository && (
-                  <GitHubToggle
-                    label="Use custom settings for this repository"
-                    checked={!!override}
-                    onChange={(enabled) => {
-                      const overrides = { ...config.repositories };
-                      if (enabled)
-                        overrides[repository] = { ...config.defaults };
-                      else delete overrides[repository];
-                      edit({ ...config, repositories: overrides });
-                    }}
-                  />
-                )}
-                {repository && override && (
-                  <GitHubPolicyEditor
-                    policy={{ ...config.defaults, ...override }}
-                    onChange={(policy) =>
-                      edit({
-                        ...config,
-                        repositories: {
-                          ...config.repositories,
-                          [repository]: policy,
-                        },
-                      })
-                    }
-                  />
-                )}
-                {repository && !override && (
-                  <p className="text-xs text-muted-foreground">
-                    Uses the settings above.
-                  </p>
-                )}
-              </div>
-            </details>
             <GitHubAppBranding endpoint={endpoint} avatarUrl={avatarUrl} />
           </>
         )}

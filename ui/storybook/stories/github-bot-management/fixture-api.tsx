@@ -27,6 +27,8 @@ export function FixtureApi({
     });
     client.setQueryData(queryKeys.chatEndpoints.detail(endpoint.id), endpoint);
     client.setQueryData(queryKeys.agents.detail(agent.id), agent);
+    client.setQueryData(["github-setup", endpoint.id], endpoint);
+    client.setQueryData(["github-wizard", endpoint.id], { endpointId: endpoint.id, state: "connected" });
     client.setQueryData(["github-members", endpoint.companyId], members);
     return client;
   });
@@ -65,6 +67,7 @@ export function FixtureApi({
         );
       }
       const body = init?.body ? JSON.parse(String(init.body)) : {};
+      if (path.endsWith("/github/setup")) return Response.json({ endpointId: endpoint.id, state: "connected" });
       if (path.endsWith("/repositories/access")) {
         repos = repos.map((r) => (!body.enabled || r.availability === "available") ? { ...r, enabled: body.enabled } : r);
         return Response.json({ success: true });

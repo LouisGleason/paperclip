@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, ExternalLink, Loader2 } from "lucide-react";
+import { ExternalLink, Loader2 } from "lucide-react";
 import type { GitHubAppWizardState } from "@paperclipai/shared";
 import { agentsApi } from "@/api/agents";
 import { chatEndpointsApi } from "@/api/chatEndpoints";
@@ -21,10 +21,7 @@ import { useCompany } from "@/context/CompanyContext";
 import { useBreadcrumbs } from "@/context/BreadcrumbContext";
 import { useNavigate, useSearchParams, Link } from "@/lib/router";
 import { buildPermissionsForTrustPreset } from "@/lib/trust-policy-ui";
-import { copyTextToClipboard } from "@/lib/clipboard";
-import { resolveAgentAppearance } from "@paperclipai/shared";
-import { agentAvatarUrl } from "@/lib/agent-avatar-url";
-import { GitHubAppBranding, gitHubBotMention } from "./GitHubAppIdentity";
+import { GitHubConnectionComplete } from "./GitHubConnectionComplete";
 
 /** Restrict native manifest submission to GitHub registration endpoints. */
 export function gitHubAppManifestAction(
@@ -98,7 +95,6 @@ export function GitHubChatSetup() {
     webhookSecret: "",
   });
   const [appNotCreated, setAppNotCreated] = useState(false);
-  const [copied, setCopied] = useState(false);
   const [legacyAccount, setLegacyAccount] = useState("");
   const [identityLinked, setIdentityLinked] = useState(false);
   const [legacyIdentity, setLegacyIdentity] = useState<Awaited<
@@ -242,9 +238,10 @@ export function GitHubChatSetup() {
         })}
       </div>
     );
-  const mention = `${(bot && gitHubBotMention(bot)) || "@your-bot"} review this pull request`;
   return (
-    <div className="mx-auto w-full max-w-3xl space-y-6 px-4 py-6 sm:px-6">
+    <div className={connected
+      ? "mx-auto w-full max-w-3xl space-y-6 py-6"
+      : "mx-auto w-full max-w-3xl space-y-6 px-4 py-6 sm:px-6"}>
       {!identityOnly && !connected && (
         <SetupWizardNavigation
           labels={["Choose agent", "Connect GitHub"]}
@@ -255,15 +252,13 @@ export function GitHubChatSetup() {
           takeover
         />
       )}
-      <h1 className="text-2xl font-semibold">
+      {!connected && <h1 className="text-2xl font-semibold">
         {!bot
           ? "Choose agent"
-          : connected
-            ? "GitHub connected"
-            : identityOnly || state?.state === "identity"
+          : identityOnly || state?.state === "identity"
               ? "Connect your account"
               : "Connect GitHub"}
-      </h1>
+      </h1>}
       {(error || (!identityOnly && progress.error) || accounts.error) && (
         <p role="alert" className="text-sm text-destructive">
           {error ||
@@ -329,52 +324,21 @@ export function GitHubChatSetup() {
             !agentId || !selectedCompanyId,
           )}
         </>
-      ) : connected ? (
+      ) : !identityOnly && !existing && progress.isPending ? (
         <>
-          <div className="flex items-center gap-2 text-sm">
-            <CheckCircle2 className="size-4 text-(--status-task-done)" />
-            <span>
-              {bot.botLabel ?? bot.botUsername} · {bot.assignedAgentName}
-            </span>
-          </div>
-          <p className="text-sm">
-            {bot.resources
-              ?.filter((resource) => resource.enabled)
-              .map((resource) => resource.label)
-              .join(", ")}
+          <p role="status" className="text-sm text-muted-foreground">
+            Checking your GitHub connection…
           </p>
-          {state.runtimeChecks
-            ?.filter((check) => !check.ok)
-            .map((check) => (
-              <p key={check.key} className="text-sm text-muted-foreground">
-                {check.detail}
-              </p>
-            ))}
-          <p className="text-sm">Try a mention on a pull request:</p>
-          <div className="flex flex-wrap items-center gap-2">
-            <code className="text-sm">{mention}</code>
-            <Button
-              variant="outline"
-              onClick={() =>
-                void run(async () => {
-                  await copyTextToClipboard(mention);
-                  setCopied(true);
-                })
-              }
-            >
-              {copied ? "Copied" : "Copy mention"}
-            </Button>
-          </div>
-          <GitHubAppBranding endpoint={bot}
-            avatarUrl={selectedAgent ? agentAvatarUrl(resolveAgentAppearance(selectedAgent.appearance, bot.assignedAgentId), 512, 1, "rest") : undefined} />
-          <Link
-            className="text-sm underline"
-            to={`/apps/chat/${bot.id}/settings`}
-          >
-            Connection settings
-          </Link>
           {footer()}
         </>
+      ) : connected ? (
+        <GitHubConnectionComplete
+          endpoint={bot}
+          agent={selectedAgent}
+          runtimeChecks={state.runtimeChecks}
+          onExit={exit}
+          pending={busy}
+        />
       ) : existing ? (
         <>
           <p className="text-sm text-muted-foreground">

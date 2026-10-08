@@ -6,6 +6,8 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import { Routes, Route } from "@/lib/router";
 import { PluginLauncherProvider } from "@/plugins/launchers";
 import { Layout } from "@/components/Layout";
+import { GitHubChatSetup } from "@/pages/apps/chat/GitHubChatSetup";
+import { GitHubConnectionComplete } from "@/pages/apps/chat/GitHubConnectionComplete";
 import { ChatEndpointDetail } from "@/pages/apps/chat/ChatEndpointDetail";
 import {
   GitHubPolicyEditor,
@@ -40,7 +42,7 @@ const meta = {
     docs: {
       description: {
         component:
-          "Production pages and components. Start with **01 Journey / Settings**, then use the actual contextual sidebar to visit Access, Reviews, and Conversations. Try editing instructions, switch tabs, and save or discard the shared draft. **02 States** covers empty, loading, recoverable error, long content, and mobile. **03 Components** isolates the policy editor, people access, repository access, review rows and detail, pending review, and conversations. Provider operations use isolated fixture APIs; these stories are not live GitHub evidence.",
+          "Production pages and components. Start with **01 Journey / Settings**, then use the actual contextual sidebar to visit Access, Reviews, and Conversations. Try editing instructions, switch tabs, and save or discard the shared draft. **01 Journey / Connected** uses the production completion page, then opens the same bot Settings. **02 States** covers empty, loading, recoverable error, long content, and mobile. **03 Components** isolates the policy editor, people access, repository access, review rows and detail, pending review, and conversations. Provider operations use isolated fixture APIs; these stories are not live GitHub evidence.",
       },
     },
   },
@@ -56,6 +58,7 @@ const meta = {
       <PluginLauncherProvider>
         <Routes>
           <Route path="/:companyPrefix" element={<Layout />}>
+            <Route path="apps/chat/connect" element={<GitHubChatSetup />} />
             <Route
               path="apps/chat/:endpointId/reviews/:reviewId"
               element={<ChatEndpointDetail />}
@@ -75,6 +78,20 @@ type Story = StoryObj<typeof meta>;
 const route = (tab: string) => ({
   initialEntries: [`/PAP/apps/chat/${endpoint.id}/${tab}`],
 });
+export const ConnectedJourney: Story = {
+  name: "01 Journey / Connected — copy a mention or open settings",
+  parameters: { initialEntries: [`/PAP/apps/chat/connect?provider=github&resume=${endpoint.id}`] },
+};
+export const ConnectedMobile: Story = {
+  ...ConnectedJourney,
+  name: "02 States / Mobile connected",
+  globals: { viewport: { value: "mobile1", isRotated: false } },
+};
+export const ConnectedNoRepositories: Story = {
+  ...ConnectedJourney,
+  name: "02 States / Connected without enabled repositories",
+  args: { state: "empty" },
+};
 export const SettingsJourney: Story = { name: "01 Journey / Settings" };
 export const AccessJourney: Story = {
   name: "01 Journey / Access",
@@ -187,6 +204,21 @@ export const PeopleAccess: Story = {
 export const RepositoryAccess: Story = {
   name: "03 Components / Repository access",
   render: () => component(<Repositories />),
+};
+export const ConnectedSummary: Story = {
+  name: "03 Components / Connected summary",
+  render: () => component(<FixtureApi><GitHubConnectionComplete endpoint={endpoint} agent={agent} onExit={() => {}} /></FixtureApi>),
+};
+export const ConnectedRuntimeNotReady: Story = {
+  name: "03 Components / Connected — runtime needs setup",
+  render: () => component(<FixtureApi><GitHubConnectionComplete endpoint={endpoint} agent={agent} onExit={() => {}}
+    runtimeChecks={[{ key: "runtime", label: "Runtime", ok: false, detail: "Configure an isolated runtime before the first review." }]} /></FixtureApi>),
+};
+export const ConnectedLongName: Story = {
+  name: "03 Components / Connected — long App name",
+  render: () => component(<FixtureApi><GitHubConnectionComplete endpoint={{ ...endpoint,
+    botLabel: "Maya Platform Accessibility Reviews", botUsername: "maya-platform-accessibility-reviews[bot]",
+    providerAccountLabel: "acme-platform-engineering" }} agent={agent} onExit={() => {}} /></FixtureApi>),
 };
 export const AppIdentityAndLogo: Story = {
   name: "03 Components / App identity and logo",

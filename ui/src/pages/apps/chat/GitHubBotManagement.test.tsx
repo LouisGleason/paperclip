@@ -314,9 +314,9 @@ describe("GitHub bot management", () => {
       container.querySelector('button[aria-label="Copy GitHub mention"]')
         ?.textContent,
     ).toBe("@maya-reviews");
-    expect(container.textContent).toContain("This is your custom GitHub App");
+    expect(container.textContent).toContain("Maya Reviews");
     const branding = [...container.querySelectorAll("a")].find((a) =>
-      a.textContent?.includes("Edit App name and logo"),
+      a.getAttribute("aria-label") === "Edit App name and logo on GitHub",
     );
     expect(branding?.href).toBe(
       "https://github.com/organizations/acme/settings/apps/maya-reviews",
@@ -404,27 +404,22 @@ describe("GitHub bot management", () => {
     await render("settings");
     expect(container.querySelector("textarea")?.value).toBe("Unsaved behavior");
   });
-  it("creates repository overrides without overwriting defaults or duplicating field IDs", async () => {
+  it("hides repository overrides while preserving saved overrides when other settings change", async () => {
+    const overrides = { "100": { instructions: "Retain repository guidance", events: ["opened"] } };
+    mocks.config.mockResolvedValue({
+      revision: 4,
+      configuration: { ...base, repositories: overrides },
+    });
     await render();
-    await input(
-      container.querySelector<HTMLSelectElement>("#github-policy-repository")!,
-      "100",
-    );
-    await click("Use custom settings for this repository");
-    const areas = [
-      ...container.querySelectorAll<HTMLTextAreaElement>(
-        'textarea[placeholder="What should this agent do on GitHub?"]',
-      ),
-    ];
-    expect(areas).toHaveLength(2);
-    await input(areas[1], "Repository guidance");
-    const ids = [...container.querySelectorAll("[id]")].map((e) => e.id);
-    expect(new Set(ids).size).toBe(ids.length);
+    expect(container.textContent).not.toContain("Repository overrides");
+    expect(container.querySelector("#github-policy-repository")).toBeNull();
+    expect(mocks.resources).not.toHaveBeenCalled();
+    await input(container.querySelector("textarea")!, "Updated default instructions");
     await click("Save changes");
     await vi.waitFor(() => expect(mocks.save).toHaveBeenCalled());
     const saved = mocks.save.mock.calls[0][2];
-    expect(saved.defaults).toEqual(base.defaults);
-    expect(saved.repositories["100"].instructions).toBe("Repository guidance");
+    expect(saved.defaults.instructions).toBe("Updated default instructions");
+    expect(saved.repositories).toEqual(overrides);
   });
   it("configures implicit linked-member events without switching to a narrower selected-member list", async () => {
     mocks.config.mockResolvedValue({

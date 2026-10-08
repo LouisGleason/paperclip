@@ -72,6 +72,7 @@ vi.mock("@/api/chatEndpoints", () => ({
 vi.mock("@/api/githubChat", () => ({
   githubChatApi: {
     advance: vi.fn(),
+    repositories: vi.fn(),
     registration: vi.fn(),
     restartRegistration: vi.fn(),
     saveDraft: vi.fn(),
@@ -159,6 +160,9 @@ describe("GitHub App wizard", () => {
     vi.mocked(githubChatApi.advance).mockResolvedValue({
       endpointId: "draft-1",
       state: "create",
+    });
+    vi.mocked(githubChatApi.repositories).mockResolvedValue({
+      items: [], nextOffset: null, totalCount: 1, enabledCount: 1, availableCount: 1,
     });
     vi.mocked(githubChatApi.saveDraft).mockResolvedValue({ saved: true });
     vi.mocked(githubChatApi.personalConnections).mockResolvedValue([]);
@@ -586,7 +590,10 @@ describe("GitHub App wizard", () => {
     expect(container.querySelector("h1")?.textContent).toBe("GitHub connected");
     expect(container.textContent).toContain("Actual GitHub Name");
     expect(container.textContent).toContain("GitHub App name and logo");
-    expect(container.textContent).toContain("acme/repo");
+    expect(container.textContent).toContain("1 repository enabled");
+    expect(container.querySelector("footer a")?.getAttribute("href")).toBe("/apps/chat/draft-1/settings");
+    expect(container.querySelector("details")?.hasAttribute("open")).toBe(false);
+    expect(container.textContent).toContain("Before your first review");
     expect(container.textContent).toContain("Configure a runtime");
     expect(container.textContent).not.toContain("Finish");
     await click("Copy mention");
@@ -594,4 +601,35 @@ describe("GitHub App wizard", () => {
       "@actual-agent review this pull request",
     );
   });
+  it("reports copy failure without undoing the completed connection", async () => {
+    fixture.endpoint = { ...fixture.endpoint, status: "active", botUsername: "actual-agent[bot]" };
+    vi.mocked(githubChatApi.advance).mockResolvedValue({ endpointId: "draft-1", state: "connected" });
+    vi.mocked(copyTextToClipboard).mockRejectedValueOnce(new Error("Clipboard unavailable"));
+    await render("resume=draft-1");
+    await click("Copy mention");
+    expect(container.textContent).toContain("Copy failed");
+    expect(container.querySelector("h1")?.textContent).toBe("GitHub connected");
+    expect(githubChatApi.registration).not.toHaveBeenCalled();
+  });
+  it("shows a useful next step when a connected bot has no enabled repositories", async () => {
+    vi.mocked(githubChatApi.advance).mockResolvedValue({ endpointId: "draft-1", state: "connected" });
+    vi.mocked(githubChatApi.repositories).mockResolvedValue({
+      items: [], nextOffset: null, totalCount: 2, enabledCount: 0, availableCount: 2,
+    });
+    await render("resume=draft-1");
+    expect(container.textContent).toContain("No repositories enabled");
+    expect(container.textContent).toContain("Enable a repository in Access to try your bot");
+    expect(container.querySelector('a[href="/apps/chat/draft-1/access"]')).not.toBeNull();
+  });
+
+  it("does not flash App creation controls while checking a resumed connection", async () => {
+    fixture.endpoint = { ...fixture.endpoint, status: "active", botUsername: "actual-agent[bot]" };
+    vi.mocked(githubChatApi.advance).mockReturnValue(new Promise(() => {}));
+    await render("resume=draft-1");
+    expect(container.textContent).toContain("Checking your GitHub connection");
+    expect(container.querySelector("#github-app-name")).toBeNull();
+    expect(container.textContent).not.toContain("I already have an App");
+    expect(container.textContent).not.toContain("GitHub connected");
+  });
+
 });
