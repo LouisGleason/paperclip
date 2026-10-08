@@ -29,6 +29,7 @@ import {
   materializePublishManifest,
   mergeBundledProviderGraph,
   selectBundledDependencyPatches,
+  stageBundledEsbuildOptionalDependencies,
   stageBundledProviderOptionalDependencies,
 } from "./prepare-bundled-package.mjs";
 
@@ -36,6 +37,28 @@ const rootPackage = JSON.parse(await readFile(new URL("../package.json", import.
 const profileData = JSON.parse(await readFile(new URL("../packages/paperclip-runner/acpx-profiles.json", import.meta.url), "utf8"));
 const runtimeData = JSON.parse(await readFile(new URL("../packages/paperclip-runner/src/drivers/acpx/qualified-runtime-artifacts.json", import.meta.url), "utf8"));
 const nativeTargets = ["linux-x64", "darwin-arm64", "darwin-x64"];
+function esbuildFixture(t) {
+  const directory = realpathSync(mkdtempSync(join(tmpdir(), "paperclip-bundled-esbuild-")));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const graph = join(directory, "node_modules");
+  const writePackage = (location, metadata) => {
+    mkdirSync(location, { recursive: true });
+    writeFileSync(join(location, "package.json"), JSON.stringify(metadata));
+    return location;
+  };
+  const acpx = writePackage(join(graph, "acpx"), { name: "acpx", version: "0.13.1" });
+  const esbuild = writePackage(join(acpx, "node_modules/esbuild"), {
+    name: "esbuild", version: "0.28.2", scripts: { postinstall: "node install.js" },
+    optionalDependencies: Object.fromEntries([...nativeTargets, "win32-x64"].map(target => [`@esbuild/${target}`, "0.28.2"])),
+  });
+  const producerBinary = writePackage(join(graph, "@esbuild/linux-x64"), {
+    name: "@esbuild/linux-x64", version: "0.28.2", os: ["linux"], cpu: ["x64"],
+  });
+  writePackage(join(graph, "unrelated-linux-x64"), { name: "unrelated-linux-x64", version: "1.0.0" });
+  const publish = { name: "@paperclipai/adapter-utils", version: "0.3.1", bundleDependencies: ["acpx"],
+    dependencies: { acpx: "0.13.1" }, optionalDependencies: { unrelated: "1.0.0" } };
+  return { directory, graph, esbuild, producerBinary, publish, writePackage };
+}
 function nativeFixture(directory, profile, target, data) {
   const [os, cpu] = target.split("-");
   const name = `${profile.agentRuntimePackage}-${target}`;
@@ -237,6 +260,67 @@ test("Linux-produced native bridge tarballs retain all six contained artifacts a
   assert.equal(inspectBundledNativeArtifact(artifact, codex, "linux-x64", data).target, "linux-x64");
   writeFileSync(join(artifact, "package.json"), JSON.stringify({ name: "@openai/codex-linux-x64", version: "0.160.0-linux-x64", os: ["darwin"], cpu: ["x64"] }));
   assert.throws(() => inspectBundledNativeArtifact(artifact, codex, "linux-x64", data), /identity mismatch/);
+});
+
+test("Linux-produced esbuild bundles publish exact consumer platform dependencies and retain their hooks", (t) => {
+  const { directory, graph, esbuild, producerBinary, publish, writePackage } = esbuildFixture(t);
+  const original = readFileSync(join(esbuild, "package.json"), "utf8");
+  const issuer = createRequire(join(esbuild, "package.json"));
+  // The original producer-only topology cannot resolve a Mac binary. The
+  // public optional declaration lets npm obtain it before offline hooks run.
+  assert.throws(() => issuer.resolve("@esbuild/darwin-arm64/bin/esbuild"), /Cannot find module/);
+  const staged = stageBundledEsbuildOptionalDependencies(directory, publish);
+  for (const target of [...nativeTargets, "win32-x64"]) assert.equal(staged.optionalDependencies[`@esbuild/${target}`], "0.28.2");
+  assert.equal(staged.optionalDependencies.unrelated, "1.0.0");
+  assert.deepEqual(staged.bundleDependencies, ["acpx"]);
+  assert.deepEqual(staged.dependencies, publish.dependencies);
+  assert.equal(publish.optionalDependencies["@esbuild/darwin-arm64"], undefined);
+  assert.equal(existsSync(producerBinary), false);
+  assert.equal(existsSync(join(graph, "unrelated-linux-x64")), true);
+  assert.equal(readFileSync(join(esbuild, "package.json"), "utf8"), original);
+  assert.deepEqual(stageBundledEsbuildOptionalDependencies(directory, staged), staged);
+  for (const target of ["darwin-arm64", "darwin-x64"]) {
+    const artifact = writePackage(join(graph, `@esbuild/${target}`), {
+      name: `@esbuild/${target}`, version: staged.optionalDependencies[`@esbuild/${target}`], os: ["darwin"], cpu: [target.slice(7)],
+    });
+    mkdirSync(join(artifact, "bin")); writeFileSync(join(artifact, "bin/esbuild"), "consumer-selected fixture; never executed");
+    assert.equal(issuer.resolve(`@esbuild/${target}/bin/esbuild`), join(artifact, "bin/esbuild"));
+  }
+});
+
+test("bundled esbuild rejects conflicting published or nested platform versions without removing the producer", (t) => {
+  const { directory, graph, producerBinary, publish, writePackage } = esbuildFixture(t);
+  assert.throws(() => stageBundledEsbuildOptionalDependencies(directory, {
+    ...publish, optionalDependencies: { "@esbuild/darwin-arm64": "0.27.0" },
+  }), /platform version conflicts/);
+  assert.equal(existsSync(producerBinary), true);
+  writePackage(join(graph, "esbuild"), { name: "esbuild", version: "0.27.0",
+    optionalDependencies: Object.fromEntries(nativeTargets.map(target => [`@esbuild/${target}`, "0.27.0"])) });
+  assert.throws(() => stageBundledEsbuildOptionalDependencies(directory, publish), /platform version conflicts|installed platform identity mismatch/);
+  assert.equal(existsSync(producerBinary), true);
+});
+
+test("bundled esbuild rejects missing targets, altered declarations and incorrect platform identity", (t) => {
+  const { directory, esbuild, producerBinary, publish } = esbuildFixture(t);
+  const path = join(esbuild, "package.json"), metadata = JSON.parse(readFileSync(path, "utf8"));
+  writeFileSync(path, JSON.stringify({ ...metadata, optionalDependencies: { "@esbuild/linux-x64": "0.28.2" } }));
+  assert.throws(() => stageBundledEsbuildOptionalDependencies(directory, publish), /omitted a supported platform/);
+  writeFileSync(path, JSON.stringify({ ...metadata, optionalDependencies: { ...metadata.optionalDependencies, "@esbuild/win32-x64": "^0.28.2" } }));
+  assert.throws(() => stageBundledEsbuildOptionalDependencies(directory, publish), /exact package version/);
+  writeFileSync(path, JSON.stringify(metadata));
+  writeFileSync(join(producerBinary, "package.json"), JSON.stringify({ name: "@esbuild/linux-x64", version: "0.27.0" }));
+  assert.throws(() => stageBundledEsbuildOptionalDependencies(directory, publish), /installed platform identity mismatch/);
+  assert.equal(existsSync(producerBinary), true);
+});
+
+test("bundled esbuild cannot follow a platform payload or package namespace outside its producer graph", (t) => {
+  const { directory, graph, producerBinary, publish, writePackage } = esbuildFixture(t);
+  const external = writePackage(join(directory, "outside"), { name: "@esbuild/linux-x64", version: "0.28.2" });
+  rmSync(producerBinary, { recursive: true }); symlinkSync(external, producerBinary, "dir");
+  assert.throws(() => stageBundledEsbuildOptionalDependencies(directory, publish), /escapes its producer graph/);
+  assert.equal(readFileSync(join(external, "package.json"), "utf8").includes("0.28.2"), true);
+  rmSync(join(graph, "@esbuild"), { recursive: true }); symlinkSync(external, join(graph, "@esbuild"), "dir");
+  assert.throws(() => stageBundledEsbuildOptionalDependencies(directory, publish), /escapes its producer graph/);
 });
 
 test("runtime artifact data preserves all existing executable and supplemental qualification pins", () => {
@@ -500,6 +584,7 @@ printf 'npm %s\\n' "$*" >> "$FAKE_CALL_LOG"
 node -e 'const fs = require("node:fs"); const path=require("node:path"); const pkg = require("./package.json"); if ("devDependencies" in pkg) process.exit(1); if(pkg.name === "paperclip-native-artifact-staging"){for(const name of Object.keys(pkg.dependencies)){fs.cpSync(path.join(process.env.FAKE_NATIVE_ARTIFACTS,name),path.join("node_modules",name),{recursive:true});}process.exit(0);} for (const [name, version] of Object.entries(pkg.dependencies)) { const dir = "node_modules/" + name; fs.mkdirSync(dir + "/dist", { recursive: true }); fs.writeFileSync(dir + "/package.json", JSON.stringify({ name, version })); } for (const [bridge, runtimes] of Object.entries(pkg.overrides ?? {})) { for (const [name, version] of Object.entries(runtimes)) { const dir = "node_modules/" + name; fs.mkdirSync(dir, { recursive: true }); const native = ["@openai/codex","@anthropic-ai/claude-agent-sdk"].includes(name); const optionalDependencies = native ? Object.fromEntries(["linux-x64","darwin-arm64","darwin-x64"].map(target => [name+"-"+target,name === "@openai/codex" ? "npm:"+name+"@"+version+"-"+target : version])) : undefined; fs.writeFileSync(dir + "/package.json", JSON.stringify({ name, version, optionalDependencies })); } } const claude="node_modules/@agentclientprotocol/claude-agent-acp/package.json"; const c=JSON.parse(fs.readFileSync(claude));c.dependencies={"@agentclientprotocol/sdk":"1.4.0","@anthropic-ai/claude-agent-sdk":"0.3.257",zod:"^4.0.0"};fs.writeFileSync(claude,JSON.stringify(c));'
 if [ -f package.json ] && node -e 'process.exit(require("./package.json").name === "paperclip-native-artifact-staging" ? 0 : 1)'; then exit 0; fi
 mkdir -p node_modules/acpx/dist
+node -e 'const fs=require("node:fs");fs.mkdirSync("node_modules/esbuild",{recursive:true});fs.writeFileSync("node_modules/esbuild/package.json",JSON.stringify({name:"esbuild",version:"0.28.2",scripts:{postinstall:"node install.js"},optionalDependencies:Object.fromEntries(["linux-x64","darwin-arm64","darwin-x64"].map(target=>["@esbuild/"+target,"0.28.2"]))}));fs.mkdirSync("node_modules/@esbuild/linux-x64",{recursive:true});fs.writeFileSync("node_modules/@esbuild/linux-x64/package.json",JSON.stringify({name:"@esbuild/linux-x64",version:"0.28.2",os:["linux"],cpu:["x64"]}));'
 printf 'unpatched runtime\\n' > node_modules/acpx/dist/runtime.js
 printf '{"name":"acpx","version":"0.13.1"}\\n' > node_modules/acpx/package.json
 `,
@@ -555,6 +640,11 @@ printf 'patched spawnEnvironment runtime\\n' > "$target/dist/runtime.js"
   assert.equal(lstatSync(stagedAcpxDir).isDirectory(), true);
   assert.equal(lstatSync(stagedAcpxDir).isSymbolicLink(), false);
   assert.equal(existsSync(join(destinationDir, "node_modules/.pnpm")), false);
+  const stagedManifest = JSON.parse(readFileSync(join(destinationDir, "package.json"), "utf8"));
+  assert.equal(stagedManifest.optionalDependencies["@esbuild/darwin-arm64"], "0.28.2");
+  assert.equal(stagedManifest.optionalDependencies["@esbuild/darwin-x64"], "0.28.2");
+  assert.equal(existsSync(join(destinationDir, "node_modules/@esbuild/linux-x64")), false);
+  assert.equal(JSON.parse(readFileSync(join(destinationDir, "node_modules/esbuild/package.json"))).scripts.postinstall, "node install.js");
   assert.match(
     readFileSync(join(stagedAcpxDir, "dist/runtime.js"), "utf8"),
     /spawnEnvironment/,

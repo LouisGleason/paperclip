@@ -115,12 +115,18 @@ jobs:
           mkdir -p "$RUNNER_TEMP/service-source-qualification"
           test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
           printf '%s\n' "$SOURCE_SHA" > "$RUNNER_TEMP/service-source-qualification/source-sha.txt"
+          git show "$SOURCE_SHA:pnpm-lock.yaml" > "$RUNNER_TEMP/service-source-qualification/source-pnpm-lock.yaml"
+          cmp pnpm-lock.yaml "$RUNNER_TEMP/service-source-qualification/source-pnpm-lock.yaml"
           sha256sum pnpm-lock.yaml > "$RUNNER_TEMP/service-source-qualification/source-lock.sha256"
           # PR manifests precede the CI bot's master lockfile refresh. Resolve
           # in this owned checkout before the same frozen build CI uses.
+          # These locks describe the CLI bootstrap, not the installer's separate checkout.
           pnpm install --resolution-only --ignore-scripts --no-frozen-lockfile > "$RUNNER_TEMP/service-source-qualification/bootstrap-lock-resolution.log" 2>&1
+          cp pnpm-lock.yaml "$RUNNER_TEMP/service-source-qualification/build-pnpm-lock.yaml"
           sha256sum pnpm-lock.yaml > "$RUNNER_TEMP/service-source-qualification/build-lock.sha256"
+          git diff -- pnpm-lock.yaml > "$RUNNER_TEMP/service-source-qualification/lock-resolution.patch"
           pnpm install --frozen-lockfile > "$RUNNER_TEMP/service-source-qualification/bootstrap-install.log" 2>&1
+          sha256sum --check "$RUNNER_TEMP/service-source-qualification/build-lock.sha256" > "$RUNNER_TEMP/service-source-qualification/bootstrap-lock-preservation.log"
           # The raw workspace CLI bundle externalizes transitive dependencies
           # supplied by public package staging. Use the existing source entry
           # only to invoke the real git installer; the installed service still
@@ -254,7 +260,28 @@ jobs:
           cache: pnpm
 
       - name: Install dependencies
+        if: inputs.qualification_source_sha == ''
         run: pnpm install --no-frozen-lockfile
+
+      - name: Install exact candidate dependencies with lock evidence
+        if: inputs.qualification_source_sha != ''
+        env:
+          SOURCE_SHA: ${{ inputs.qualification_source_sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/source-qualification"
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          printf '%s\n' "$SOURCE_SHA" > "$RUNNER_TEMP/source-qualification/source-sha.txt"
+          git show "$SOURCE_SHA:pnpm-lock.yaml" > "$RUNNER_TEMP/source-qualification/source-pnpm-lock.yaml"
+          cmp pnpm-lock.yaml "$RUNNER_TEMP/source-qualification/source-pnpm-lock.yaml"
+          sha256sum pnpm-lock.yaml > "$RUNNER_TEMP/source-qualification/source-lock.sha256"
+          # Keep the CI-owned committed lock and the resolved build graph distinct.
+          pnpm install --resolution-only --ignore-scripts --no-frozen-lockfile > "$RUNNER_TEMP/source-qualification/lock-resolution.log" 2>&1
+          cp pnpm-lock.yaml "$RUNNER_TEMP/source-qualification/build-pnpm-lock.yaml"
+          sha256sum pnpm-lock.yaml > "$RUNNER_TEMP/source-qualification/build-lock.sha256"
+          git diff -- pnpm-lock.yaml > "$RUNNER_TEMP/source-qualification/lock-resolution.patch"
+          pnpm install --frozen-lockfile > "$RUNNER_TEMP/source-qualification/install.log" 2>&1
+          sha256sum --check "$RUNNER_TEMP/source-qualification/build-lock.sha256" > "$RUNNER_TEMP/source-qualification/build-lock-preservation.log"
 
       - name: Verify runner Chrome
         # Release smoke also runs headless on GitHub's Ubuntu image, so use the
@@ -321,9 +348,11 @@ jobs:
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/source-qualification"
           test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
-          sha256sum pnpm-lock.yaml > "$RUNNER_TEMP/source-qualification/build-lock.sha256"
+          sha256sum --check "$RUNNER_TEMP/source-qualification/build-lock.sha256" >> "$RUNNER_TEMP/source-qualification/build-lock-preservation.log"
           pnpm build > "$RUNNER_TEMP/source-qualification/build.log" 2>&1
+          sha256sum --check "$RUNNER_TEMP/source-qualification/build-lock.sha256" >> "$RUNNER_TEMP/source-qualification/build-lock-preservation.log"
           node scripts/verify-grok-npm-install.mjs > "$RUNNER_TEMP/source-qualification/public-install.log" 2>&1
+          sha256sum --check "$RUNNER_TEMP/source-qualification/build-lock.sha256" >> "$RUNNER_TEMP/source-qualification/build-lock-preservation.log"
 
       - name: Record the exact Linux-produced npm closure for the macOS consumers
         id: pack_identity
@@ -440,6 +469,7 @@ jobs:
       - name: Check the same assembled npm graph in an isolated home and runtime PATH
         env:
           SOURCE_SHA: ${{ inputs.qualification_source_sha }}
+          PAPERCLIP_PUBLIC_PACK_REQUIRE_LOCK_PROVENANCE: "1"
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/macos-public-install"

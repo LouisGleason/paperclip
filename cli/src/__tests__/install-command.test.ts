@@ -342,6 +342,126 @@ describe("managed install commands", () => {
     expect(sourcePack?.[1]).not.toContain("--ignore-scripts");
   });
 
+  it("installs mixed-version Git packages offline with the dependency's own SDK version and consumer hooks", async () => {
+    const sha = "f".repeat(40);
+    const checkoutCommands = createGitCheckoutRunCommand(sha, { bundledServer: true });
+    const { materializePublishManifest } = await import(new URL("../../../scripts/prepare-bundled-package.mjs", import.meta.url).href);
+    const npmEnv = {
+      ...process.env,
+      PATH: ORIGINAL_ENV.PATH,
+      npm_config_cache: path.join(root, "npm-cache"),
+      npm_config_userconfig: path.join(root, ".npmrc"),
+      npm_config_offline: "true",
+      npm_config_ignore_scripts: "false",
+    };
+    fs.writeFileSync(npmEnv.npm_config_userconfig, "");
+    let checkout: string;
+    let consumerInstalled = false;
+    let packedSdkReferences: Record<string, string> = {};
+    const runCommand = vi.fn(async (file: string, args: string[], options?: Parameters<CommandRunner>[2]) => {
+      if (file === "tar") {
+        const result = await checkoutCommands(file, args, options);
+        checkout = args[args.indexOf("-C") + 1];
+        const sdk = path.join(checkout, "packages/plugins/sdk");
+        fs.mkdirSync(path.join(sdk, "dist"), { recursive: true });
+        fs.writeFileSync(path.join(sdk, "dist/index.cjs"), "module.exports.ownVersion = '1.0.0';\n");
+        fs.writeFileSync(path.join(sdk, "prepare.cjs"), "require('node:fs').writeFileSync('source-pack-hook.txt', 'source hook ran');\n");
+        fs.writeFileSync(path.join(sdk, "package.json"), JSON.stringify({
+          name: "@paperclipai/plugin-sdk", version: "1.0.0", main: "dist/index.cjs", files: ["dist"],
+          dependencies: { "@paperclipai/shared": "0.3.1" }, scripts: { prepack: "node prepare.cjs" },
+        }));
+        const manifestPath = path.join(checkout, "scripts/release-package-manifest.json");
+        const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+        manifest.push({ dir: "packages/plugins/sdk", name: "@paperclipai/plugin-sdk" });
+        fs.writeFileSync(manifestPath, JSON.stringify(manifest));
+        const serverManifestPath = path.join(checkout, "server/package.json");
+        const serverManifest = JSON.parse(fs.readFileSync(serverManifestPath, "utf8"));
+        serverManifest.dependencies["@paperclipai/plugin-sdk"] = "workspace:*";
+        serverManifest.dependencies["@paperclipai/shared"] = "~0.3.0";
+        serverManifest.optionalDependencies = { "@paperclipai/db": "workspace:~" };
+        serverManifest.peerDependencies = { "@paperclipai/plugin-sdk": "workspace:^" };
+        fs.writeFileSync(serverManifestPath, JSON.stringify(serverManifest));
+        const dbManifestPath = path.join(checkout, "packages/db/package.json");
+        const dbManifest = JSON.parse(fs.readFileSync(dbManifestPath, "utf8"));
+        dbManifest.version = "0.2.0";
+        fs.writeFileSync(dbManifestPath, JSON.stringify(dbManifest));
+        fs.mkdirSync(path.join(checkout, "cli/dist"), { recursive: true });
+        fs.writeFileSync(path.join(checkout, "cli/dist/index.js"), "console.log('0.3.1');\n");
+        fs.writeFileSync(path.join(checkout, "cli/package.json"), JSON.stringify({
+          name: "paperclipai", version: "0.3.1", files: ["dist"], dependencies: { "@paperclipai/server": "0.3.1" },
+        }));
+        return result;
+      }
+      if (file === process.execPath && args[0]?.endsWith("prepare-bundled-package.mjs")) {
+        const result = await checkoutCommands(file, args, options);
+        const stagedManifestPath = path.join(args[2], "package.json");
+        // Use the real release manifest translator, including its owning-package
+        // workspace normalization. The installer must correct the Git-only case.
+        const manifest = materializePublishManifest(JSON.parse(fs.readFileSync(stagedManifestPath, "utf8")));
+        if (manifest.name === "@paperclipai/server") {
+          manifest.scripts = {
+            prepack: "node ../scripts/source-prepack-does-not-exist.cjs",
+            postpack: "node ../scripts/source-postpack-does-not-exist.cjs",
+            postinstall: "node dist/consumer-install.cjs",
+          };
+          fs.writeFileSync(path.join(args[2], "dist/consumer-install.cjs"),
+            "require('node:fs').writeFileSync('consumer-hook.txt', require('@paperclipai/plugin-sdk').ownVersion);\n");
+        }
+        fs.writeFileSync(stagedManifestPath, JSON.stringify(manifest));
+        return result;
+      }
+      if (file === "corepack" && args.includes("pack")) {
+        const source = path.join(checkout, args[args.indexOf("--dir") + 1]);
+        return runCommandWithDiagnostics("npm", ["pack", "--pack-destination", args[args.indexOf("--pack-destination") + 1], "--json"],
+          { cwd: source, env: npmEnv, timeout: 20_000 });
+      }
+      if (file === "npm" && args[0] === "pack") {
+        if (args[1]?.includes("workspace-package-")) {
+          const manifest = JSON.parse(fs.readFileSync(path.join(args[1], "package.json"), "utf8"));
+          if (manifest.name === "@paperclipai/server") {
+            packedSdkReferences = Object.fromEntries(["dependencies", "optionalDependencies", "peerDependencies"]
+              .map((section) => [section, manifest[section]["@paperclipai/plugin-sdk"]]));
+          }
+        }
+        return runCommandWithDiagnostics(file, [...args, "--json"], { ...options, env: npmEnv, timeout: 20_000 });
+      }
+      if (file === "npm" && args[0] === "install") {
+        expect(args).not.toContain("--ignore-scripts");
+        expect(args.filter((arg) => arg.endsWith(".tgz"))).toHaveLength(5);
+        expect(args.some((arg) => arg.endsWith("paperclipai-plugin-sdk-1.0.0.tgz"))).toBe(true);
+        expect(fs.readFileSync(path.join(checkout, "packages/plugins/sdk/source-pack-hook.txt"), "utf8")).toBe("source hook ran");
+        const sourceManifest = JSON.parse(fs.readFileSync(path.join(checkout, "server/package.json"), "utf8"));
+        expect(sourceManifest.dependencies["@paperclipai/plugin-sdk"]).toBe("workspace:*");
+        expect(sourceManifest.optionalDependencies["@paperclipai/db"]).toBe("workspace:~");
+        expect(sourceManifest.peerDependencies["@paperclipai/plugin-sdk"]).toBe("workspace:^");
+        let result;
+        try {
+          result = await runCommandWithDiagnostics(file, args, { ...options, env: npmEnv, timeout: 20_000 });
+        } catch (error) {
+          throw new Error(`Offline consumer failed with SDK 1.0.0 archive and packed SDK references ${JSON.stringify(packedSdkReferences)}: ${String(error)}`, { cause: error });
+        }
+        const installedServer = path.join(args[args.indexOf("--prefix") + 1], "node_modules/@paperclipai/server");
+        const installed = JSON.parse(fs.readFileSync(path.join(installedServer, "package.json"), "utf8"));
+        expect(installed.dependencies["@paperclipai/plugin-sdk"]).toBe("1.0.0");
+        expect(installed.dependencies["@paperclipai/shared"]).toBe("~0.3.0");
+        expect(installed.dependencies["@paperclipai/db"]).toBe("0.2.0");
+        expect(installed.optionalDependencies["@paperclipai/db"]).toBe("~0.2.0");
+        expect(installed.peerDependencies["@paperclipai/plugin-sdk"]).toBe("^1.0.0");
+        expect(fs.readFileSync(path.join(installedServer, "consumer-hook.txt"), "utf8")).toBe("1.0.0");
+        consumerInstalled = true;
+        return result;
+      }
+      if (file === process.execPath && args.at(-1) === "--version") {
+        return runCommandWithDiagnostics(file, args, { ...options, env: npmEnv, timeout: 20_000 });
+      }
+      return checkoutCommands(file, args, options);
+    });
+
+    await expect(installGitPayload("paperclipai/paperclip", sha, runCommand, resolveInstallStorePaths()))
+      .resolves.toMatchObject({ version: "0.3.1", reused: false });
+    expect(consumerInstalled).toBe(true);
+  }, 30_000);
+
   it.each(["source build", "staged pack", "consumer install"])("preserves the active Git install after a failed %s", async (phase) => {
     const previousSha = "a".repeat(40);
     await installCommand({ ref: previousSha, yes: true }, { runCommand: createGitCheckoutRunCommand(previousSha) });

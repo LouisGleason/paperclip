@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { accessSync, closeSync, constants, cpSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, realpathSync, statSync } from 'node:fs';
+import { accessSync, closeSync, constants, cpSync, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 
 // Keep public-package lifecycle code off the verification host. Resolve and
@@ -14,6 +15,39 @@ export const GROK_PUBLIC_INSTALL_LIFECYCLE = [
 // The cold Intel consumer parses the same large local release tarballs before
 // any lifecycle hook. Give only this initial phase one fixed diagnostic budget.
 export const MAC_PUBLIC_INSTALL_INITIAL_TIMEOUT_MS = 480_000;
+
+// The source lock may legitimately precede changed PR manifests. Preserve the
+// actual resolved producer graph separately from the isolated npm consumer lock.
+export function publicPackProducerLock({ sourceRevision, sourceLock, buildLock }) {
+  assert.match(sourceRevision, /^[a-f0-9]{40}$/, 'Producer lock requires the exact source revision');
+  for (const bytes of [sourceLock, buildLock]) assert.ok(Buffer.isBuffer(bytes) && bytes.length > 0, 'Producer lock requires retained lock bytes');
+  const record = (name, bytes) => ({ name, sha256: createHash('sha256').update(bytes).digest('hex') });
+  return { sourceRevision,
+    sourceLock: record('producer-source-pnpm-lock.yaml', sourceLock),
+    buildLock: record('producer-build-pnpm-lock.yaml', buildLock) };
+}
+
+export function verifyPublicPackProducerLock({ receipt, directory, sourceRevision, sourceLock, required = false }) {
+  assert.equal(receipt.sourceRevision, sourceRevision, 'The producer lock source must match this consumer');
+  const provenance = receipt.producerLock;
+  if (provenance === undefined) {
+    assert.equal(required, false, 'Public package qualification requires retained producer lock provenance');
+    return undefined; // Older v1 archives remain consumable without claiming lock verification.
+  }
+  assert.equal(provenance.sourceRevision, sourceRevision, 'The producer lock source must match this consumer');
+  const bytes = {};
+  for (const [field, name] of [['sourceLock', 'producer-source-pnpm-lock.yaml'], ['buildLock', 'producer-build-pnpm-lock.yaml']]) {
+    assert.equal(provenance[field]?.name, name, 'Producer lock must use the retained lock filename');
+    assert.match(provenance[field].sha256, /^[a-f0-9]{64}$/, 'Invalid producer lock checksum');
+    const path = join(directory, name);
+    assert.ok(lstatSync(path).isFile(), 'Producer lock must be a retained regular file');
+    bytes[field] = readFileSync(path);
+    assert.ok(bytes[field].length > 0, 'Producer lock requires retained lock bytes');
+    assert.equal(createHash('sha256').update(bytes[field]).digest('hex'), provenance[field].sha256, 'Transferred producer lock checksum mismatch');
+  }
+  assert.ok(bytes.sourceLock.equals(sourceLock), 'The producer source lock must match the committed source revision');
+  return provenance;
+}
 
 export function assertMacDeveloperRoot(developerRoot) {
   assert.ok(typeof developerRoot === 'string' && resolve(developerRoot) === developerRoot &&
@@ -65,6 +99,31 @@ export function prepareMacPublicInstallNodeHeaders({ nodeExecutable, nodeVersion
   return { source, destination, version: `v${version}`, resolution: 'matching selected setup-node distribution; no download' };
 }
 
+// Retain phase timings from the beginning of a failed install without adding
+// raw log bodies, registry URLs, package paths, or npm metadata to diagnostics.
+function collectNpmTimings(value, source, timings) {
+  const bytes = Buffer.isBuffer(value) ? value : Buffer.from(value ?? '');
+  const text = bytes.subarray(0, 1024 * 1024).toString('utf8');
+  const add = (rawPhase, durationMs) => {
+    const phase = rawPhase.startsWith('reifyNode:') ? 'reifyNode'
+      : rawPhase.startsWith('idealTree:node_modules/') ? 'idealTree:nodeModules'
+      : rawPhase === 'idealTree:#root' ? 'idealTree:root' : rawPhase;
+    if (!/^(?:npm|config|arborist|idealTree|reify|reifyNode|build|command)(?::[A-Za-z][A-Za-z0-9]*)*$/.test(phase) ||
+      !Number.isSafeInteger(durationMs) || durationMs < 0) return;
+    const key = `${source}/${phase}`, prior = timings.get(key);
+    timings.set(key, prior ? { ...prior, completedCount: prior.completedCount + 1,
+      totalMs: prior.totalMs + durationMs, maximumMs: Math.max(prior.maximumMs, durationMs) }
+      : { source, phase, completedCount: 1, totalMs: durationMs, maximumMs: durationMs });
+  };
+  for (const match of text.matchAll(/^(?:\d+\s+)?(?:npm\s+)?timing (\S+) Completed in (\d+)ms\s*$/gm)) add(match[1], Number(match[2]));
+  if (text.trimStart().startsWith('{')) {
+    try {
+      const data = JSON.parse(text);
+      for (const [phase, duration] of Object.entries(data.timers ?? {})) add(phase, duration);
+    } catch { /* A bounded prefix of a larger timing JSON is not complete evidence. */ }
+  }
+}
+
 // Preserve evidence before the consumer's finally removes its isolated npm
 // cache. In particular, a timed-out install may have no child stdout/stderr.
 export function runMacPublicInstallPhase({ stage, command, args, cwd, env, cache, timeout = 180_000, log = console.error }) {
@@ -79,6 +138,9 @@ export function runMacPublicInstallPhase({ stage, command, args, cwd, env, cache
     return output;
   } catch (error) {
     const tail = value => Buffer.from(value ?? '').subarray(-16 * 1024).toString('utf8');
+    const timings = new Map();
+    collectNpmTimings(error.stdout, 'stdout', timings);
+    collectNpmTimings(error.stderr, 'stderr', timings);
     emit({ status: 'failed', code: error.code ?? null, exitCode: error.status ?? null, signal: error.signal ?? null,
       stdout: tail(error.stdout), stderr: tail(error.stderr) });
     const logs = join(cache, '_logs');
@@ -91,12 +153,33 @@ export function runMacPublicInstallPhase({ stage, command, args, cwd, env, cache
         if (!realpathSync(path).startsWith(`${realpathSync(cache)}/`)) continue;
         const fd = openSync(path, 'r');
         try {
-          const size = fstatSync(fd).size, bytes = Buffer.alloc(Math.min(size, 16 * 1024));
-          readSync(fd, bytes, 0, bytes.length, Math.max(0, size - bytes.length));
+          const size = fstatSync(fd).size, tailLength = Math.min(size, 16 * 1024);
+          // Inspect at most 1 MiB per owned log, including its existing tail.
+          const headLength = Math.min(size, 1024 * 1024 - (size > 1024 * 1024 ? tailLength : 0));
+          const head = Buffer.alloc(headLength); readSync(fd, head, 0, head.length, 0);
+          collectNpmTimings(head, name, timings);
+          let bytes = head.subarray(Math.max(0, head.length - tailLength));
+          if (size > headLength) {
+            bytes = Buffer.alloc(tailLength); readSync(fd, bytes, 0, bytes.length, size - bytes.length);
+            collectNpmTimings(bytes, name, timings);
+          }
           emit({ status: 'npm-diagnostic', name, bytes: size, tail: bytes.toString('utf8') });
         } finally { closeSync(fd); }
       }
     } } catch (diagnosticError) { emit({ status: 'npm-diagnostic-unavailable', code: diagnosticError.code ?? null }); }
+    if (timings.size) {
+      const summary = { stage, timeoutMs: timeout, elapsedMs: Date.now() - started,
+        status: 'npm-timing-summary', inspectedBytesPerLogLimit: 1024 * 1024,
+        timings: [], truncated: false };
+      for (const timing of timings.values()) {
+        summary.timings.push(timing);
+        if (Buffer.byteLength(JSON.stringify(summary)) > 16 * 1024 - 32) {
+          summary.timings.pop(); summary.truncated = true; break;
+        }
+      }
+      const encoded = JSON.stringify(summary);
+      if (Buffer.byteLength(encoded) <= 16 * 1024) log(encoded);
+    }
     throw error;
   }
 }

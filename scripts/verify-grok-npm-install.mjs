@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { materializePublishManifest, prepareBundledPackage } from './prepare-bundled-package.mjs';
-import { GROK_PUBLIC_INSTALL_IMAGE, GROK_PUBLIC_INSTALL_LIFECYCLE, MAC_PUBLIC_INSTALL_INITIAL_TIMEOUT_MS, discoverMacPublicInstallToolchain, grokConsumerDockerArgs, macPublicInstallLifecyclePolicy, prepareMacPublicInstallNodeHeaders, runMacPublicInstallPhase } from './grok-public-install-sandbox.mjs';
+import { GROK_PUBLIC_INSTALL_IMAGE, GROK_PUBLIC_INSTALL_LIFECYCLE, MAC_PUBLIC_INSTALL_INITIAL_TIMEOUT_MS, discoverMacPublicInstallToolchain, grokConsumerDockerArgs, macPublicInstallLifecyclePolicy, prepareMacPublicInstallNodeHeaders, publicPackProducerLock, runMacPublicInstallPhase, verifyPublicPackProducerLock } from './grok-public-install-sandbox.mjs';
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const [mode, requestedOutput, ...extraArguments] = process.argv.slice(2);
 assert.ok(mode === undefined || ['--pack-only', '--consume-pack'].includes(mode) && requestedOutput && !extraArguments.length,
@@ -56,6 +56,9 @@ try {
     assert.equal(receipt.schema, 'paperclip.public-npm-pack.v1');
     assert.equal(receipt.sourceRevision, sourceRevision, 'The package producer source must match this consumer');
     assert.equal(receipt.producerPlatform, 'linux-x64', 'The macOS consumer must inspect the Linux-produced public packages');
+    const producerLock = verifyPublicPackProducerLock({ receipt, directory: consumePack, sourceRevision,
+      sourceLock: run('git', ['show', `${sourceRevision}:pnpm-lock.yaml`], repo),
+      required: process.env.PAPERCLIP_PUBLIC_PACK_REQUIRE_LOCK_PROVENANCE === '1' });
     const inputs = [...receipt.tarballs, receipt.lifecycleSentinel];
     assert.equal(new Set(inputs.map(item => item.name)).size, inputs.length, 'Duplicate public package');
     for (const input of inputs) {
@@ -124,12 +127,16 @@ try {
     console.log(JSON.stringify({ schema: 'paperclip.hosted-macos.public-npm-install.v1', sourceRevision,
       producerPlatform: 'linux-x64', consumerPlatform: `${process.platform}-${process.arch}`,
       sameProducerTarballs: receipt.tarballs, isolatedHomeAndPath: true, lifecycleSentinelVerified: true,
+      producerLock, producerLockVerified: producerLock !== undefined,
       consumerLockSha256: sha256(lock), consumerLockPreserved: true, lifecycleNetwork: 'macOS sandbox-exec network denied',
       ...installed, providerCalls: 0 }));
     break verification;
   }
   const builtRevision = JSON.parse(readFileSync(join(repo, 'server/dist/build-info.json'), 'utf8')).commit;
   assert.equal(builtRevision, sourceRevision, 'Public packages must be built from the selected source revision');
+  const sourceLock = run('git', ['show', `${sourceRevision}:pnpm-lock.yaml`], repo);
+  const buildLock = readFileSync(join(repo, 'pnpm-lock.yaml'));
+  const producerLock = publicPackProducerLock({ sourceRevision, sourceLock, buildLock });
   // Canary's existing source-pack control builds only this host's daemon. The
   // paired release qualification supplies validated three-target assets and
   // must retain the full release-manifest requirement in every consumer.
@@ -214,9 +221,12 @@ try {
       return { name: basename(path), sha256: sha256(readFileSync(path)) };
     });
     const sentinelName = packLifecycleSentinel(packTransferOutput);
+    assert.ok(readFileSync(join(repo, 'pnpm-lock.yaml')).equals(buildLock), 'Package production must preserve the resolved producer lock');
+    writeFileSync(join(packTransferOutput, producerLock.sourceLock.name), sourceLock, { mode: 0o600 });
+    writeFileSync(join(packTransferOutput, producerLock.buildLock.name), buildLock, { mode: 0o600 });
     const receipt = { schema: 'paperclip.public-npm-pack.v1', sourceRevision, releaseVersion,
       packageCount: needed.size + 1, tarballs: packed,
-      producerPlatform: `${process.platform}-${process.arch}`,
+      producerPlatform: `${process.platform}-${process.arch}`, producerLock,
       lifecycleSentinel: { name: sentinelName, sha256: sha256(readFileSync(join(packTransferOutput, sentinelName))) }, providerCalls: 0 };
     writeFileSync(join(packTransferOutput, 'pack-receipt.json'), JSON.stringify(receipt, null, 2), { mode: 0o600 });
     console.log(JSON.stringify(receipt));
@@ -311,7 +321,8 @@ try {
     cliReceipt.browserNetwork = 'owned bridge with loopback publication';
   }
   const tarballHashes = tarballs.map(path => ({ name: basename(path), sha256: sha256(readFileSync(path)) }));
-  console.log(JSON.stringify({ schema: 'paperclip.grok.public-npm-install.v1', sourceRevision, releaseVersion, lifecycleScriptsEnabled: true, lifecycleSentinelVerified: true, lifecycleNetwork: 'none', consumerImage: GROK_PUBLIC_INSTALL_IMAGE, consumerUid, consumerLockPreserved: true, consumerLockSha256: sha256(consumerLock), cleanNpmInstall: true, packageCount: needed.size + 1, tarballs: tarballHashes, ...cliReceipt, builtinLauncherPresent: true, separateGrokPackage: false, npmProvisionedBinary: false, missingPrerequisiteRejected: true, provisionedBinaryVerified: true, commandLeaseVerified: true, providerCalls: 0 }));
+  assert.ok(readFileSync(join(repo, 'pnpm-lock.yaml')).equals(buildLock), 'Qualification must preserve the resolved producer lock');
+  console.log(JSON.stringify({ schema: 'paperclip.grok.public-npm-install.v1', sourceRevision, releaseVersion, producerLock, producerLockPreserved: true, lifecycleScriptsEnabled: true, lifecycleSentinelVerified: true, lifecycleNetwork: 'none', consumerImage: GROK_PUBLIC_INSTALL_IMAGE, consumerUid, consumerLockPreserved: true, consumerLockSha256: sha256(consumerLock), cleanNpmInstall: true, packageCount: needed.size + 1, tarballs: tarballHashes, ...cliReceipt, builtinLauncherPresent: true, separateGrokPackage: false, npmProvisionedBinary: false, missingPrerequisiteRejected: true, provisionedBinaryVerified: true, commandLeaseVerified: true, providerCalls: 0 }));
   }
 } finally {
   const cleanupErrors = [];

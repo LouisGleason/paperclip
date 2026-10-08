@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
@@ -138,6 +139,7 @@ test('premerge qualification consumes one Linux-produced assembled npm graph on 
   assert.deepEqual([...mac.matchAll(/- target: (.+)/g)].map(match => match[1]), ['darwin-arm64', 'darwin-x64']);
   assert.match(mac, /needs\.smoke\.outputs\.packed_artifact/);
   assert.match(mac, /--consume-pack "\$RUNNER_TEMP\/runner-public-pack"/);
+  assert.match(mac, /PAPERCLIP_PUBLIC_PACK_REQUIRE_LOCK_PROVENANCE: "1"/);
   assert.doesNotMatch(mac, /pnpm build|npm pack|secrets\./);
 });
 
@@ -197,6 +199,72 @@ test("provider-free qualification reuses the installed browser oracle and preser
     "Image evidence directory must be created independently before output redirection");
   assert.match(workflow, /name: Upload provider-free qualification evidence\n\s+if: always\(\) && inputs\.qualification_source_sha != ''/);
   assert.match(workflow, /timeout-minutes: 45/);
+});
+
+test('qualification retains both lock graphs and rejects changes during frozen install, build, or packing', () => {
+  const workflow = readWorkflow('release-smoke.yml');
+  const install = workflow.match(/name: Install exact candidate dependencies with lock evidence[\s\S]*?run: \|\n([\s\S]*?)(?=\n      - name:)/)?.[1];
+  const build = workflow.match(/name: Qualify exact-source installed browser entry[\s\S]*?run: \|\n([\s\S]*?)(?=\n      - name:)/)?.[1];
+  const bootstrap = workflow.match(/name: Prepare the exact candidate CLI source bootstrap[\s\S]*?run: \|\n([\s\S]*?)(?=\n      - name:)/)?.[1]?.split('          # The raw workspace CLI bundle')[0];
+  assert.ok(install && build && bootstrap);
+  assert.match(workflow, /name: Install dependencies\n\s+if: inputs\.qualification_source_sha == ''\n\s+run: pnpm install --no-frozen-lockfile/);
+  const sourceRevision = 'a'.repeat(40), committed = "lockfileVersion: '9.0'\nimporters: {}\n";
+  const resolved = "lockfileVersion: '9.0'\nimporters:\n  server:\n    dependencies:\n      compression:\n        specifier: ^1.8.2\n        version: 1.8.2\n";
+  for (const [service, mutation] of [[true, ''], [true, 'frozen'], [false, ''], [false, 'frozen'], [false, 'build'], [false, 'pack'], [false, 'source']]) {
+    const root = mkdtempSync(path.join(tmpdir(), 'paperclip-lock-qualification-test-'));
+    try {
+      const bin = path.join(root, 'bin'), temporary = path.join(root, 'artifacts');
+      mkdirSync(bin); mkdirSync(temporary);
+      const source = path.join(root, 'committed-lock.yaml');
+      writeFileSync(source, committed);
+      writeFileSync(path.join(root, 'pnpm-lock.yaml'), mutation === 'source' ? 'changed before resolution\n' : committed);
+      const directory = path.join(temporary, service ? 'service-source-qualification' : 'source-qualification');
+      const executable = (name, code) => writeFileSync(path.join(bin, name), `#!${process.execPath}\n${code}\n`, { mode: 0o755 });
+      executable('git', `import {readFileSync} from 'node:fs';import {spawnSync} from 'node:child_process';
+        const args=process.argv.slice(2);
+        if(args.join(' ')==='rev-parse HEAD')console.log(process.env.SOURCE_SHA);
+        else if(args[0]==='show' && args[1]===process.env.SOURCE_SHA+':pnpm-lock.yaml')process.stdout.write(readFileSync(process.env.FIXTURE_SOURCE_LOCK));
+        else if(args.join(' ')==='diff -- pnpm-lock.yaml'){
+          const diff=spawnSync('diff',['-u',process.env.FIXTURE_SOURCE_LOCK,'pnpm-lock.yaml'],{encoding:'utf8'});
+          if(diff.error)throw diff.error;if(diff.status>1)process.exit(diff.status);process.stdout.write(diff.stdout);
+        }else process.exit(64);`);
+      executable('pnpm', `import {appendFileSync,writeFileSync} from 'node:fs';
+        const args=process.argv.slice(2);appendFileSync('commands.jsonl',JSON.stringify(args)+'\\n');
+        if(args.join(' ')==='install --resolution-only --ignore-scripts --no-frozen-lockfile')writeFileSync('pnpm-lock.yaml',${JSON.stringify(resolved)});
+        else if(args.join(' ')==='install --frozen-lockfile'){if(process.env.FIXTURE_MUTATION==='frozen')appendFileSync('pnpm-lock.yaml','# changed by install\\n');}
+        else if(args.join(' ')==='build'){if(process.env.FIXTURE_MUTATION==='build')appendFileSync('pnpm-lock.yaml','# changed by build\\n');}
+        else process.exit(65);`);
+      executable('node', `import {appendFileSync,writeFileSync} from 'node:fs';
+        if(process.argv.slice(2).join(' ')!=='scripts/verify-grok-npm-install.mjs')process.exit(66);
+        writeFileSync('pack-invoked','true');if(process.env.FIXTURE_MUTATION==='pack')appendFileSync('pnpm-lock.yaml','# changed by packing\\n');`);
+      const result = spawnSync('bash', ['-c', service ? bootstrap : `${install}\n${build}`], {
+        cwd: root, encoding: 'utf8', timeout: 10_000, env: { ...process.env, NODE_OPTIONS: '',
+          PATH: `${bin}:${process.env.PATH}`, RUNNER_TEMP: temporary, SOURCE_SHA: sourceRevision,
+          FIXTURE_SOURCE_LOCK: source, FIXTURE_MUTATION: mutation },
+      });
+      assert.equal(result.status === 0, mutation === '', `${service ? 'service' : 'public'}/${mutation}: ${result.stderr}`);
+      assert.equal(readFileSync(path.join(directory, 'source-pnpm-lock.yaml'), 'utf8'), committed);
+      if (mutation === 'source') {
+        assert.equal(existsSync(path.join(root, 'commands.jsonl')), false, 'A modified source lock must fail before resolution');
+        continue;
+      }
+      assert.equal(readFileSync(path.join(directory, 'build-pnpm-lock.yaml'), 'utf8'), resolved);
+      assert.match(readFileSync(path.join(directory, 'lock-resolution.patch'), 'utf8'), /\+\s+specifier: \^1\.8\.2/);
+      for (const kind of ['source', 'build']) {
+        const retained = path.join(directory, `${kind}-pnpm-lock.yaml`);
+        const expected = spawnSync('sha256sum', [retained], { encoding: 'utf8' }).stdout.split(/\s+/)[0];
+        assert.equal(readFileSync(path.join(directory, `${kind}-lock.sha256`), 'utf8').split(/\s+/)[0], expected);
+      }
+      const commands = readFileSync(path.join(root, 'commands.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+      assert.deepEqual(commands.slice(0, 2), [['install', '--resolution-only', '--ignore-scripts', '--no-frozen-lockfile'], ['install', '--frozen-lockfile']]);
+      assert.equal(existsSync(path.join(root, 'pack-invoked')), !service && ['', 'pack'].includes(mutation),
+        'A changed install/build lock must not reach the producer');
+      if (mutation === '') {
+        assert.equal(readFileSync(path.join(root, 'pnpm-lock.yaml'), 'utf8'), resolved);
+        assert.match(readFileSync(path.join(directory, service ? 'bootstrap-lock-preservation.log' : 'build-lock-preservation.log'), 'utf8'), /pnpm-lock.yaml: OK/);
+      }
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  }
 });
 
 test("chaos verification isolates callers that verify the same source commit", () => {

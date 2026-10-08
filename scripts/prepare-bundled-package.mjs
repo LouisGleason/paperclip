@@ -329,6 +329,83 @@ function lstatExists(path) {
   catch (error) { if (error.code === "ENOENT") return false; throw error; }
 }
 
+// A Linux-produced bundle contains esbuild's JavaScript but only the producer's
+// optional executable. Expose its exact platform declarations to the consumer,
+// just as embedded-postgres does below, before retaining the original hooks.
+export function stageBundledEsbuildOptionalDependencies(destinationDir, publishManifest) {
+  const graphRoot = resolve(destinationDir, "node_modules");
+  if (realpathSync(graphRoot) !== graphRoot) throw new Error("Bundled esbuild graph must be a canonical owned directory");
+  const result = structuredClone(publishManifest), pending = [{ directory: graphRoot, depth: 0 }];
+  const optional = {}, remove = new Set();
+  let packageCount = 0;
+  const ownedDirectory = directory => {
+    const stat = lstatSync(directory);
+    if (!stat.isDirectory() || stat.isSymbolicLink() || !inside(graphRoot, realpathSync(directory))) {
+      throw new Error("Bundled esbuild dependency escapes its producer graph");
+    }
+  };
+  const manifestAt = directory => {
+    const file = resolve(directory, "package.json"), stat = lstatSync(file);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size > 256 * 1024) {
+      throw new Error("Bundled esbuild dependency manifest must be a bounded regular file");
+    }
+    return JSON.parse(readFileSync(file, "utf8"));
+  };
+  while (pending.length) {
+    const { directory, depth } = pending.pop();
+    if (depth > 64) throw new Error("Bundled esbuild dependency graph exceeds its depth limit");
+    const packages = [];
+    for (const entry of readdirSync(directory)) {
+      if (entry.startsWith(".")) continue;
+      const candidate = resolve(directory, entry);
+      ownedDirectory(candidate);
+      if (entry.startsWith("@")) {
+        for (const child of readdirSync(candidate)) {
+          const scoped = resolve(candidate, child); ownedDirectory(scoped); packages.push(scoped);
+        }
+      } else packages.push(candidate);
+    }
+    for (const packageDirectory of packages) {
+      if (++packageCount > 20_000) throw new Error("Bundled esbuild dependency graph exceeds its package limit");
+      const metadata = manifestAt(packageDirectory);
+      const nested = resolve(packageDirectory, "node_modules");
+      if (lstatExists(nested)) { ownedDirectory(nested); pending.push({ directory: nested, depth: depth + 1 }); }
+      if (basename(packageDirectory) !== "esbuild") continue;
+      if (metadata.name !== "esbuild" || !/^\d+\.\d+\.\d+$/.test(metadata.version ?? "")) {
+        throw new Error("Bundled esbuild package identity mismatch");
+      }
+      const declarations = metadata.optionalDependencies ?? {};
+      if (nativeTargets.some(target => declarations[`@esbuild/${target}`] !== metadata.version)) {
+        throw new Error("Bundled esbuild omitted a supported platform declaration");
+      }
+      const issuer = createRequire(resolve(packageDirectory, "package.json"));
+      for (const [name, version] of Object.entries(declarations)) {
+        if (!/^@esbuild\/[a-z0-9]+-[a-z0-9]+$/.test(name) || version !== metadata.version) {
+          throw new Error("Bundled esbuild platform declaration must match its exact package version");
+        }
+        if ((optional[name] !== undefined && optional[name] !== version)
+          || (result.optionalDependencies?.[name] !== undefined && result.optionalDependencies[name] !== version)) {
+          throw new Error(`Bundled esbuild platform version conflicts with published dependency: ${name}`);
+        }
+        optional[name] = version;
+        for (const lookup of issuer.resolve.paths(name) ?? []) {
+          const candidate = resolve(lookup, name);
+          if (!inside(graphRoot, candidate) || !lstatExists(candidate)) continue;
+          ownedDirectory(candidate);
+          const installed = manifestAt(candidate);
+          if (installed.name !== name || installed.version !== version) {
+            throw new Error(`Bundled esbuild installed platform identity mismatch: ${name}`);
+          }
+          remove.add(candidate);
+        }
+      }
+    }
+  }
+  for (const directory of remove) rmSync(directory, { recursive: true, force: true });
+  if (Object.keys(optional).length) result.optionalDependencies = { ...result.optionalDependencies, ...optional };
+  return result;
+}
+
 export function materializeDockerProviderGraph(serverDirectory, architecture, { sourceRoot = repoRoot } = {}) {
   const runtimeData = JSON.parse(readFileSync(resolve(sourceRoot, runtimeDataPath), "utf8"));
   const target = dockerBundledProviderTarget(architecture, runtimeData);
@@ -516,6 +593,8 @@ export function prepareBundledPackage(sourceDir, destinationDir, { sourceRoot = 
     writeFileSync(deployedPackagePath, `${JSON.stringify(stagedPackage, null, 2)}\n`);
     rmSync(resolve(destinationDir, "node_modules/@embedded-postgres"), { recursive: true, force: true });
   }
+  writeFileSync(deployedPackagePath, `${JSON.stringify(stageBundledEsbuildOptionalDependencies(destinationDir,
+    JSON.parse(readFileSync(deployedPackagePath, "utf8"))), null, 2)}\n`);
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

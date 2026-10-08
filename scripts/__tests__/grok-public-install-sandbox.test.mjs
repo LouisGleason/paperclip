@@ -8,12 +8,68 @@ import { once } from 'node:events';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
-import { GROK_PUBLIC_INSTALL_IMAGE, GROK_PUBLIC_INSTALL_LIFECYCLE, MAC_PUBLIC_INSTALL_INITIAL_TIMEOUT_MS, assertMacDeveloperRoot, discoverMacPublicInstallToolchain, grokConsumerDockerArgs, macPublicInstallLifecyclePolicy, prepareMacPublicInstallNodeHeaders, runMacPublicInstallPhase } from '../grok-public-install-sandbox.mjs';
+import { GROK_PUBLIC_INSTALL_IMAGE, GROK_PUBLIC_INSTALL_LIFECYCLE, MAC_PUBLIC_INSTALL_INITIAL_TIMEOUT_MS, assertMacDeveloperRoot, discoverMacPublicInstallToolchain, grokConsumerDockerArgs, macPublicInstallLifecyclePolicy, prepareMacPublicInstallNodeHeaders, publicPackProducerLock, runMacPublicInstallPhase, verifyPublicPackProducerLock } from '../grok-public-install-sandbox.mjs';
 import { assertStandardImageIdentity, inspectInstalledDaemon, inspectInstalledProviderReadiness, inspectInstalledUi, inspectManagedServiceInstall, installedProbeMode, installedProbePaths, standardImageDockerArgs, standardImageRequest } from '../../tests/release-smoke/installed-cli-probe.mjs';
 
 const paths = { assets: '/private/staging/assets', consumer: '/private/staging/consumer', cache: '/private/staging/cache', uid: 1001, gid: 1001 };
 const values = (args, flag) => args.flatMap((value, index) => value === flag ? [args[index + 1]] : []);
 const hash = bytes => `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
+
+test('public pack provenance verifies the actual resolved producer lock separately from committed and consumer locks', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'paperclip-producer-lock-test-'));
+  const sourceRevision = 'a'.repeat(40);
+  // PR manifests can add dependencies before the CI-owned source lock refresh.
+  // The committed range and the selected build version are separate evidence.
+  const sourceLock = Buffer.from("lockfileVersion: '9.0'\nimporters:\n  server:\n    dependencies: {}\n");
+  const buildLock = Buffer.from("lockfileVersion: '9.0'\nimporters:\n  server:\n    dependencies:\n      compression:\n        specifier: ^1.8.2\n        version: 1.8.2\n");
+  try {
+    const producerLock = publicPackProducerLock({ sourceRevision, sourceLock, buildLock });
+    assert.equal(producerLock.sourceLock.sha256, hash(sourceLock).slice(7));
+    assert.equal(producerLock.buildLock.sha256, hash(buildLock).slice(7));
+    assert.notEqual(producerLock.sourceLock.sha256, producerLock.buildLock.sha256);
+    await writeFile(join(directory, producerLock.sourceLock.name), sourceLock);
+    await writeFile(join(directory, producerLock.buildLock.name), buildLock);
+    const receipt = { schema: 'paperclip.public-npm-pack.v1', sourceRevision, producerLock, consumerLockSha256: 'c'.repeat(64) };
+    const options = { receipt, directory, sourceRevision, sourceLock, required: true };
+    assert.equal(verifyPublicPackProducerLock(options), producerLock);
+    assert.notEqual(producerLock.buildLock.sha256, receipt.consumerLockSha256);
+    await writeFile(join(directory, producerLock.buildLock.name), Buffer.concat([buildLock, Buffer.from('# changed resolved graph\n')]));
+    assert.throws(() => verifyPublicPackProducerLock(options), /Transferred producer lock checksum mismatch/);
+    await writeFile(join(directory, producerLock.buildLock.name), buildLock);
+    assert.throws(() => verifyPublicPackProducerLock({ ...options, receipt: { ...receipt,
+      producerLock: { ...producerLock, buildLock: { ...producerLock.buildLock, sha256: receipt.consumerLockSha256 } } } }), /checksum mismatch/);
+    assert.throws(() => verifyPublicPackProducerLock({ ...options, sourceRevision: 'b'.repeat(40) }), /source must match/);
+    assert.throws(() => verifyPublicPackProducerLock({ ...options, receipt: { ...receipt,
+      producerLock: { ...producerLock, sourceRevision: 'b'.repeat(40) } } }), /source must match/);
+    // Self-consistent substituted source bytes still cannot qualify this commit.
+    const substitutedSource = Buffer.from('lockfileVersion: substituted\n');
+    await writeFile(join(directory, producerLock.sourceLock.name), substitutedSource);
+    assert.throws(() => verifyPublicPackProducerLock({ ...options, receipt: { ...receipt,
+      producerLock: { ...producerLock, sourceLock: { ...producerLock.sourceLock, sha256: hash(substitutedSource).slice(7) } } } }), /committed source revision/);
+    await writeFile(join(directory, producerLock.sourceLock.name), sourceLock);
+    await rm(join(directory, producerLock.buildLock.name));
+    assert.throws(() => verifyPublicPackProducerLock(options), { code: 'ENOENT' });
+    await symlink(join(directory, producerLock.sourceLock.name), join(directory, producerLock.buildLock.name));
+    assert.throws(() => verifyPublicPackProducerLock(options), /retained regular file/);
+    assert.throws(() => verifyPublicPackProducerLock({ ...options, receipt: { ...receipt,
+      producerLock: { ...producerLock, buildLock: { ...producerLock.buildLock, name: '../pnpm-lock.yaml' } } } }), /retained lock filename/);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test('older public pack receipts remain readable without making a new qualification provenance claim', () => {
+  const sourceRevision = 'a'.repeat(40), sourceLock = Buffer.from('source lock');
+  const options = { receipt: { schema: 'paperclip.public-npm-pack.v1', sourceRevision }, directory: '/unused', sourceRevision, sourceLock };
+  assert.equal(verifyPublicPackProducerLock(options), undefined);
+  assert.throws(() => verifyPublicPackProducerLock({ ...options, required: true }), /requires retained producer lock provenance/);
+  assert.throws(() => publicPackProducerLock({ sourceRevision: 'master', sourceLock, buildLock: sourceLock }), /exact source revision/);
+  assert.throws(() => publicPackProducerLock({ sourceRevision, sourceLock, buildLock: Buffer.alloc(0) }), /retained lock bytes/);
+  const source = readFileSync(new URL('../verify-grok-npm-install.mjs', import.meta.url), 'utf8');
+  assert.ok(source.indexOf('const producerLock = verifyPublicPackProducerLock(') < source.indexOf("stage: 'scripts-disabled-install'"),
+    'Transferred producer locks must be checked before any consumer installation');
+  assert.match(source, /producerLockVerified: producerLock !== undefined/);
+  assert.match(source, /Package production must preserve the resolved producer lock/);
+  assert.match(source, /Qualification must preserve the resolved producer lock/);
+});
 
 async function daemonFixture(root, server) {
   // These contract fixtures exercise the installed probe's independent checks.
@@ -163,6 +219,59 @@ test('failed Mac install phases retain bounded npm debug tails before owned cach
     events.length = 0;
     assert.equal(runMacPublicInstallPhase({ ...options, args: ['-e', 'console.log("done")'] }).toString().trim(), 'done');
     assert.deepEqual(events.map(event => event.status), ['started', 'passed']);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('a Mac install timeout retains early phase totals despite late reify noise without adding raw metadata', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'paperclip-mac-timings-test-')), logs = join(root, '_logs'), events = [];
+  try {
+    await mkdir(logs);
+    const early = '10 timing idealTree:userRequests Completed in 340000ms\n11 timing idealTree Completed in 360000ms\n12 timing reify:loadTrees Completed in 360005ms\n';
+    const noise = '200 timing reifyNode:node_modules/@private/package-name Completed in 10097ms\n'.repeat(20_000);
+    await writeFile(join(logs, '2026-debug-0.log'), early + noise + '999 timing reify:unpack Completed in 111000ms\n');
+    await writeFile(join(logs, '2026-timing.json'), JSON.stringify({ metadata: { secret: 'MUST_NOT_APPEAR', argv: ['https://example.com/?token=secret'] },
+      timers: { 'npm:load': 15, 'command:install': 479900, 'https://example.com/?token=secret': 1 } }));
+    assert.throws(() => runMacPublicInstallPhase({ stage: 'scripts-disabled-install', command: process.execPath,
+      args: ['-e', 'console.log("npm timing idealTree:init Completed in 12ms");console.error("npm timing reify:diffTrees Completed in 3ms");setTimeout(()=>{},60000)'],
+      cwd: root, env: { PATH: '/usr/bin:/bin' }, cache: root, timeout: 150,
+      log: value => events.push(JSON.parse(value)) }), error => error.code === 'ETIMEDOUT');
+    const summaries = events.filter(event => event.status === 'npm-timing-summary');
+    assert.equal(summaries.length, 1);
+    const summary = summaries[0], encoded = JSON.stringify(summary);
+    assert.ok(Buffer.byteLength(encoded) <= 16 * 1024);
+    assert.equal(summary.inspectedBytesPerLogLimit, 1024 * 1024);
+    const timing = (source, phase) => summary.timings.find(item => item.source === source && item.phase === phase);
+    assert.equal(timing('2026-debug-0.log', 'idealTree:userRequests').totalMs, 340000);
+    assert.equal(timing('2026-debug-0.log', 'idealTree').totalMs, 360000);
+    assert.equal(timing('2026-debug-0.log', 'reify:loadTrees').totalMs, 360005);
+    assert.equal(timing('2026-debug-0.log', 'reify:unpack').totalMs, 111000);
+    assert.equal(timing('2026-debug-0.log', 'reifyNode').maximumMs, 10097);
+    assert.ok(timing('2026-debug-0.log', 'reifyNode').completedCount < 20_000, 'Only the bounded head and tail may be inspected');
+    assert.equal(timing('stdout', 'idealTree:init').totalMs, 12);
+    assert.equal(timing('stderr', 'reify:diffTrees').totalMs, 3);
+    assert.equal(timing('2026-timing.json', 'command:install').totalMs, 479900);
+    assert.doesNotMatch(encoded, /MUST_NOT_APPEAR|https:|token|private\/package-name|argv|metadata/);
+    const tail = events.find(event => event.status === 'npm-diagnostic' && event.name === '2026-debug-0.log').tail;
+    assert.equal(Buffer.byteLength(tail), 16 * 1024);
+    assert.doesNotMatch(tail, /idealTree:userRequests/, 'The old tail-only diagnostic misses the independently preserved early phase');
+    assert.equal(events.filter(event => event.status === 'started').length, 1, 'A diagnostic must not retry installation');
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('Mac timing summaries stay within sixteen KiB even with many distinct completed phases', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'paperclip-mac-timing-budget-test-')), logs = join(root, '_logs'), events = [];
+  try {
+    await mkdir(logs);
+    await writeFile(join(logs, '2026-debug-0.log'), '1 timing idealTree:userRequests Completed in 340000ms\n' +
+      Array.from({ length: 5000 }, (_, index) => `${index + 2} timing reify:phase${index} Completed in 1ms\n`).join(''));
+    assert.throws(() => runMacPublicInstallPhase({ stage: 'scripts-disabled-install', command: process.execPath,
+      args: ['-e', 'process.exit(7)'], cwd: root, env: { PATH: '/usr/bin:/bin' }, cache: root,
+      log: value => events.push(JSON.parse(value)) }), error => error.status === 7);
+    const summary = events.find(event => event.status === 'npm-timing-summary');
+    assert.equal(summary.truncated, true);
+    assert.ok(Buffer.byteLength(JSON.stringify(summary)) <= 16 * 1024);
+    assert.equal(summary.timings[0].phase, 'idealTree:userRequests');
+    assert.equal(summary.timings[0].totalMs, 340000);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 

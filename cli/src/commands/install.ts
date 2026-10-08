@@ -293,13 +293,39 @@ export async function installGitPayload(repo: string, sha: string, runCommand: C
     }
     const metadata = JSON.parse(fs.readFileSync(path.join(checkoutPath, "cli", "package.json"), "utf8")) as { version: string };
     const workspacePackages = resolveGitInstallWorkspacePackages(checkoutPath);
+    const workspaceVersions = new Map(workspacePackages.map((entry) => {
+      const packageJson = JSON.parse(fs.readFileSync(path.join(checkoutPath, entry.dir, "package.json"), "utf8")) as { version?: unknown };
+      if (typeof packageJson.version !== "string" || !EXACT_VERSION_PATTERN.test(packageJson.version)) {
+        throw new Error(`Git install cannot stage ${entry.name}: its package version must be an exact version.`);
+      }
+      return [entry.name, packageJson.version] as const;
+    }));
     for (const [index, workspacePackage] of workspacePackages.entries()) {
       const packageDir = path.join(checkoutPath, workspacePackage.dir);
-      const packageJson = JSON.parse(fs.readFileSync(path.join(packageDir, "package.json"), "utf8")) as { bundleDependencies?: string[]; bundledDependencies?: string[] };
+      const packageJson = JSON.parse(fs.readFileSync(path.join(packageDir, "package.json"), "utf8")) as {
+        bundleDependencies?: string[]; bundledDependencies?: string[];
+        dependencies?: Record<string, string>; optionalDependencies?: Record<string, string>; peerDependencies?: Record<string, string>;
+      };
       const bundledDependencies = packageJson.bundleDependencies ?? packageJson.bundledDependencies ?? [];
       if (bundledDependencies.length > 0) {
         const stagedPackage = path.join(stagingRoot, `workspace-package-${index}`);
         await runCommand(process.execPath, [path.join(checkoutPath, "scripts", "prepare-bundled-package.mjs"), packageDir, stagedPackage], { cwd: checkoutPath, env: buildEnv(), maxBuffer: 32 * 1024 * 1024 });
+        // Release packaging gives workspace packages one version. A Git checkout
+        // can retain independent versions, so bind each staged workspace reference
+        // to that dependency's actual package rather than the owning package.
+        const stagedManifestPath = path.join(stagedPackage, "package.json");
+        const stagedManifest = JSON.parse(fs.readFileSync(stagedManifestPath, "utf8")) as typeof packageJson;
+        for (const section of ["dependencies", "optionalDependencies", "peerDependencies"] as const) {
+          for (const [name, specifier] of Object.entries(packageJson[section] ?? {})) {
+            if (!specifier.startsWith("workspace:")) continue;
+            const version = workspaceVersions.get(name);
+            if (!version) throw new Error(`Git install cannot stage workspace dependency ${name}: its package version is missing.`);
+            const range = specifier.slice("workspace:".length);
+            const prefix = range === "^" || range === "~" ? range : "";
+            stagedManifest[section] = { ...stagedManifest[section], [name]: `${prefix}${version}` };
+          }
+        }
+        fs.writeFileSync(stagedManifestPath, `${JSON.stringify(stagedManifest, null, 2)}\n`);
         // The stage contains compiled runtime files, not the source workspace.
         // Match release packaging: source-only prepack/postpack hooks must not
         // rebuild it or remove its prepared assets. Consumer install hooks stay enabled.
