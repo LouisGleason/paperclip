@@ -147,7 +147,7 @@ const mockEnvironmentsApi = vi.hoisted(() => ({
 }));
 const mockInstanceSettingsApi = vi.hoisted(() => ({
   get: vi.fn(async () => ({ defaultEnvironmentId: null as string | null })),
-  getExperimental: vi.fn(async () => ({ enableManagedSandboxOnly: false })),
+  getExperimental: vi.fn(async (): Promise<{ enableManagedSandboxOnly: boolean; enableNativeRunner?: boolean }> => ({ enableManagedSandboxOnly: false })),
 }));
 const mockApprovalsApi = vi.hoisted(() => ({
   create: vi.fn(),
@@ -334,6 +334,7 @@ function isArcPrimary(text: string): boolean {
 
 describe("OnboardingWizard restore-gate (stale localStorage across accounts)", () => {
   beforeEach(() => {
+    mockInstanceSettingsApi.getExperimental.mockResolvedValue({ enableManagedSandboxOnly: false });
     localHealth.get.mockResolvedValue({ deploymentMode: "authenticated" });
     managedApi.checkLocalLogin.mockReset().mockResolvedValue({
       status: "sign_in_required",
@@ -413,6 +414,7 @@ describe("OnboardingWizard restore-gate (stale localStorage across accounts)", (
 
   describe("qualified Copilot onboarding", () => {
     async function openCopilot() {
+      mockInstanceSettingsApi.getExperimental.mockResolvedValue({ enableManagedSandboxOnly: false, enableNativeRunner: true });
       mockCompany.companies = [{ id: "c1", name: "Canary", issuePrefix: "CAN" }];
       mockCompaniesApi.list.mockResolvedValue(mockCompany.companies);
       mockAdapterRegistry.list = [{ type: "claude_local" }, { type: "paperclip_runner" }];
@@ -423,6 +425,7 @@ describe("OnboardingWizard restore-gate (stale localStorage across accounts)", (
         return { ...values.adapterSchemaValues, model: values.model };
       });
       const { root, queryClient } = render();
+      queryClient.setQueryData(queryKeys.instance.experimentalSettings, { enableManagedSandboxOnly: false, enableNativeRunner: true });
       await act(async () => root.render(<QueryClientProvider client={queryClient}><OnboardingWizard /></QueryClientProvider>));
       await flushReact();
       const click = async (label: string) => {
