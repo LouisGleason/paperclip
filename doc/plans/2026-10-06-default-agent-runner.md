@@ -10,13 +10,13 @@ One owner carries implementation, verification and relevant review fixes through
 
 - Worktree: `/Users/dotta/.codex/worktrees/e492/paperclip`
 - Branch: `codex/default-agent-runner`
-- Base: `4a8178e9cf40bf77d1a22a2dc6ddc1a7d5189eae` (observed master, integrated 2026-10-07); existing-agent staging baseline remains `b31558064093564fb937cf046596d1d497f5be27`.
+- Base: `fc6304dfe5f2e446e09bd052a7b45f51e930f250` (observed master, integrated 2026-10-07); existing-agent staging baseline remains `b31558064093564fb937cf046596d1d497f5be27`.
 - PR: https://github.com/paperclipai/paperclip/pull/15422
 - Preview: http://127.0.0.1:3114/RUN/agents (owned checkout process; final compiled serving revision remains unqualified).
 - Evidence task: http://127.0.0.1:3114/RUN/issues/RUN-2
 - Test-drive: keep user instance3104 unchanged. The owned3114 checkout health follows mutable HEAD and cannot establish compiled runtime identity. Final local acceptance uses the hosted assembled package graph outside Git, with source and byte verification; staging uses the exact immutable image/migrator and qualified managed image.
-- Frozen runtime candidate: `2dbe43a43021add337de07b7fb68c99388874d39`. CI and automated review pass; its public image/migrator pair is verified. Qualification workflow fixes are recorded separately from the unchanged runtime source.
-- Next action: finish the existing hosted packaging/service qualification and managed snapshot, then complete the final live matrix. The isolated3114 API is currently down; restore it only from the verified assembled package graph. Merge, production deployment and default promotion require separate authorization.
+- Supporting tested runtime: `2dbe43a43021add337de07b7fb68c99388874d39`. Its green CI and public image/migrator pair remain evidence for that source. Current master changes the runner protocol, daemon and migration; the integrated candidate requires fresh artifacts and checks.
+- Next action: finish the installation, first-run invite and native setup diagnostic repairs; freeze the integrated candidate and qualify fresh hosted artifacts, then complete the final live matrix. The isolated3114 API is currently down; restore it only from the verified assembled package graph. Merge, production deployment and default promotion require separate authorization.
 
 ## Implemented
 
@@ -26,7 +26,7 @@ Live testing and regression review fixed historical-adapter SQL projection, buil
 
 ## Historical verification state (2026-10-07)
 
-The active state is the [production readiness checkpoint](#production-readiness-checkpoint-2026-10-07). Historical results below remain supporting evidence; they do not close its failed or blocked gates.
+The active state is the [candidate reconciliation checkpoint](#candidate-reconciliation-checkpoint-2026-10-07-1937-cdt). Historical results below remain supporting evidence; they do not close its failed or blocked gates.
 
 - Workspace typecheck, production build, Storybook build and token gates passed after the functional review fixes. Server typecheck passed after the credential-routing guard fix.
 - Focused review regressions: 422 passed, then 66 passed after correcting the AgentCore test's step label. Credential inheritance, connection pools and permission suites: 183 passed after the security fix. Session/revision tests: 9 passed. Pinned Grok setup probes: 6 passed.
@@ -366,3 +366,21 @@ Current allocations: initial25, Cursor25, environments50, root local42, historic
 After a separately authorized merge, use the existing private composer and record its exact immutable distribution identity. Qualify that actual private image on isolated staging before production. Capture current production identity and verify disposable new-native/old-legacy rollback execution; if incompatible, use a qualified forward fix preserving execution/session identity. Deploy-time snapshots do not authorize restoring over subsequent customer writes. Prepare the existing immutable, snapshot-backed campaign with zero tolerated failures, `set_default=false`, canary acceptance before expansion and provisioning default last behind the warm-pool barrier. Explicit canary-only campaigns must not accidentally user-pin the designated canary (`markUserManaged:false` through the supported campaign API). No merge, production action, default promotion or legacy conversion has occurred.
 
 The service-bootstrap repair changes only the existing qualification workflow and its two maintained contract tests, plus this dated record. All product and live-E2E Git objects remain equal to frozen2dbe. The generated wrapper also passes under a guard rejecting every workspace dist module; its negative control fails as expected.26 targeted tests, YAML/embedded shell parsing and diff checks pass with zero provider calls. A later PR head records qualification-definition provenance separately; actual installed source/health/UI/provider hashes remain2dbe. Retest the failed hosted service gate using that definition; do not mark it passed from these targeted controls.
+
+
+### Candidate reconciliation checkpoint (2026-10-07, 19:37 CDT)
+
+Current master `fc6304dfe5f2e446e09bd052a7b45f51e930f250` adds experimental OpenAI Dot, PRP v3, native execution v6, Rust changes and migration0317. Integrate it without changing the five qualified default harnesses. Preserve experimental Dot behind its existing feature gate, advanced configuration access and unpaired saving; execution still requires a binding. Preserve shared dropdowns, Codex/SSH setup verification and explicit-null account handling. Existing Dot create/convert and selection tests pass68 cases. Fresh image/daemon/migrator artifacts are required; old2dbe artifacts cannot be relabeled as this source.
+
+| Required journey / gate | Status | Evidence and next action |
+| --- | --- | --- |
+| Master integration and automated regression | In progress | Conflicts resolved; focused Dot service cases pass68, agent form cases pass101, invite cases pass20, token gates pass. Final candidate CI/review still required. |
+| Supported clean Git/service installation | Failed; repair under test | Corrected bootstrap in release-smoke37706950517 reaches the actual installer, which lacks server/ui-dist. Invoke the existing prepare:ui-dist before bundled staging. Existing installer19 cases pass; negative control reproduces the hosted ENOENT while controls pass. Retest hosted service after freeze. |
+| Packaged first-run invite | Failed; repaired locally | Linux installed browser exposes auto-accept before invite data and stale button label. Both deferred bootstrap/company cases pass; removing the pending-data guard fails exactly both. The existing browser case now checks the heading and actual Accept invite button. Fresh installed browser proof required. |
+| Three-platform package closure | Supporting producer pass; consumers failed | Old2dbe full18 artifact11520591474 is source-bound. Linux installed startup/UI byte proof passes but invite browser fails. Mac consumer failure diagnostics remain under inspection. No old full18 local download/install/startup. |
+| Isolated staging upgrade and target identity | Passed for supporting2dbe | All six source upgrades preserve saved execution/defaults; all six qualified snapshot environment records pass independent readback. No evidence of automatic conversion. |
+| Actual managed Codex first onboarding | Failed | One setup attempt fails before agent creation, with zero heartbeat runs. Leasebf66af1c-102e-4638-829d-3f031b066d50 is released with successful cleanup; default/cap restored. Normal read-only logs cannot recover the detailed error: Daytona returns combined output in stdout, but the setup probe reads only stderr. Add redacted bounded stdout fallback and focused tests. Underlying failure remains unclassified; no authentication success claim. |
+| Remaining paid local/managed execution and attended adoption | Blocked | Paid expansion is held after this onboarding regression. Automatic approval review rejected the next Claude case before process creation. No workaround or runner conversion. Fresh qualified source, actionable diagnostics, budget reconciliation and bounded safe next attempt precede further paid cases. |
+| Human review / actual private cloud composition / production rollout | Blocked or not executed | Required CODEOWNER approval is missing. Actual private distribution, warm/cold signup and production campaign require separately authorized merge/deployment. |
+
+The entire failed Codex5USD allowance remains held. Existing250USD ceiling and unpriced cost/compute/cleanup reservations remain unchanged. No new paid case, snapshot bake, production action, merge or provisioning-default promotion has occurred at this checkpoint. All Docker/native/full packaging builds remain hosted. Owned3114 is offline, user3104 unchanged; evidence publishing waits for normal verified packaged startup. Original failed runs and source-specific supporting evidence remain available.

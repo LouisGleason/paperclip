@@ -952,14 +952,18 @@ export function agentService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
         : {};
       const adapterConfig = normalizePaperclipRunnerAdapterConfig(adapterType, rawAdapterConfig);
       if (adapterType === "paperclip_runner" && !options?.runnerResolved) {
-        const { resolvePaperclipRunnerProviderProfile } = await import("./native-runtime/provider-profile.js");
-        const profile = resolvePaperclipRunnerProviderProfile(adapterConfig);
-        if (profile.provider === "claude_managed") {
-          const { managedAgentProfileService } = await import("./managed-agent-profiles.js");
-          await managedAgentProfileService(db).requireQualified(companyId, profile.managedProfileId);
-        } else if (profile.provider === "aws_agentcore") {
-          const { remoteAgentProfileService } = await import("./remote-agent-profiles.js");
-          await remoteAgentProfileService(db).requireQualified(companyId, profile.agentCoreProfileId, "aws_bedrock_agentcore_harness");
+        const { resolvePaperclipRunnerProviderProfile, validatePaperclipRunnerDotConfig } = await import("./native-runtime/provider-profile.js");
+        if (adapterConfig.provider === "openai_dot") {
+          validatePaperclipRunnerDotConfig(adapterConfig, false);
+        } else {
+          const profile = resolvePaperclipRunnerProviderProfile(adapterConfig);
+          if (profile.provider === "claude_managed") {
+            const { managedAgentProfileService } = await import("./managed-agent-profiles.js");
+            await managedAgentProfileService(db).requireQualified(companyId, profile.managedProfileId);
+          } else if (profile.provider === "aws_agentcore") {
+            const { remoteAgentProfileService } = await import("./remote-agent-profiles.js");
+            await remoteAgentProfileService(db).requireQualified(companyId, profile.agentCoreProfileId, "aws_bedrock_agentcore_harness");
+          }
         }
       }
       // Run the server-enforced binding invariant after generic normalization

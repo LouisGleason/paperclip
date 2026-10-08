@@ -556,6 +556,7 @@ async function renderCreateClaudeSandbox(
 async function renderStatefulCreateClaudeSandbox(
   environments: Environment[],
   valueOverrides: Partial<typeof defaultCreateValues> = {},
+  showAdapterTypeField = false,
 ) {
   mockEnvironmentsApi.list.mockResolvedValue(environments);
 
@@ -584,7 +585,7 @@ async function renderStatefulCreateClaudeSandbox(
         values={values}
         onChange={(patch) => setValues((prev) => ({ ...prev, ...patch }))}
         hidePromptTemplate
-        showAdapterTypeField={false}
+        showAdapterTypeField={showAdapterTypeField}
         showAdapterTestEnvironmentButton
       />
     );
@@ -877,6 +878,27 @@ describe("AgentConfigForm environment selector", () => {
     } finally {
       accountList.mockRestore();
     }
+  });
+
+  it("keeps experimental Dot in Advanced without the ordinary provider picker", async () => {
+    const result = await renderStatefulCreateClaudeSandbox([], {
+      adapterType: "paperclip_runner", model: "gpt-6", defaultEnvironmentId: "",
+      adapterSchemaValues: { provider: "codex", modelReasoningEffort: "high" },
+    }, true);
+    roots.push(result.root);
+    const menu = await openPicker(result.container, "Managed harness");
+    await act(async () => menu.querySelector<HTMLButtonElement>('[data-value="openai_dot"]')!.click());
+    await flushReact();
+    expect(result.valuesRef.current.adapterType).toBe("paperclip_runner");
+    expect(buildPaperclipRunnerConfig(result.valuesRef.current)).toEqual({
+      provider: "openai_dot", lifecycleMode: "per_turn", allowUnmeteredProvider: false,
+    });
+    expect(result.container.textContent).toContain("Save the agent, then return here to pair your Dot.");
+    for (const label of ["Model", "Runner", "Runner lifecycle", "ACP agent", "Thinking effort"]) {
+      expect(result.container.querySelector(`[aria-label="${label}"]`)).toBeNull();
+    }
+    expect(result.container.querySelectorAll('[aria-label="Harness"]')).toHaveLength(1);
+    expect(result.container.querySelector("select")).toBeNull();
   });
 
   it("saves Grok 4.7 reasoning effort using the runtime key", async () => {

@@ -100,6 +100,10 @@ export function buildPaperclipRunnerConfig(v: CreateConfigValues): Record<string
     ? providerCandidate
     : "codex";
   if (provider !== "codex") delete config.modelReasoningEffort;
+  if (provider === "openai_dot") {
+    return { provider, lifecycleMode: "per_turn", allowUnmeteredProvider: schemaValues.allowUnmeteredProvider === true,
+      ...(typeof schemaValues.dotBindingId === "string" ? { dotBindingId: schemaValues.dotBindingId } : {}) };
+  }
   const selectedAcpxProfile = PAPERCLIP_RUNNER_ACPX_PROFILES.find(profile => profile.value === schemaValues.acpxAgent);
   if (provider === "acpx" && schemaValues.acpxAgent !== undefined && !selectedAcpxProfile) {
     throw new Error(`Unknown ACP agent: ${String(schemaValues.acpxAgent)}`);

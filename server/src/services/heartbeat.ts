@@ -11,6 +11,8 @@ import { retryIdempotentDatabaseOperation } from "../database-retry.js";
 import { prepareConnectionInstructionDelivery } from "./connection-instructions.js";
 import { resolveAssignedConnectionInstructionsForRun } from "./native-runtime/assigned-mcp-tools.js";
 import { externalObjectService } from "./external-objects.js";
+import { resolvePaperclipInstanceRoot } from "../home-paths.js";
+import { dotRunnerBroker } from "./dot-runner-broker.js";
 import { isAiAuthenticationBlocked } from "./ai-auth-failure.js";
 import { nativeRetryCancellationCommitCondition, rethrowNativeCancellationLockConflict, claimCancellationRequest, startupCancellationFence } from "./native-runtime/native-cancellation-request.js";
 import { CHAT_COMPLETION_WAKE_REASON, prepareChatCompletionTurn, chatCompletionInstruction, isCompletedOnboardingHandoffWake } from "./chat-completion-delivery.js";
@@ -3793,6 +3795,16 @@ interface WakeupOptions {
   /** Exact failed run selected by an authenticated board Retry request. */
   failedRunId?: string | null;
   durableChatRequest?: DurableChatWakeupRequest;
+  /** Server-owned Dot admission receipt; never accepted from API payloads. */
+  durableDotRequest?: {
+    id: string;
+    companyId: string;
+    agentId: string;
+    issueId: string;
+    requestId: string;
+    idempotencyKey: string;
+    requestedAt: Date;
+  };
   source?: "timer" | "assignment" | "on_demand" | "automation";
   triggerDetail?: "manual" | "ping" | "callback" | "system";
   reason?: string | null;
@@ -15539,6 +15551,10 @@ export function heartbeatService(
       delayMs?: number;
     },
   ) {
+    if (parseObject(agent.adapterConfig).provider === "openai_dot"
+        || parseObject(parseObject(parseObject(run.runnerProfileJson).nativeExecutionInput).provider).kind === "openai_dot") {
+      return { outcome: "not_scheduled" as const, reason: "Dot external execution must be reconciled before a new assignment; Paperclip cannot confirm its external stop.", issueId: readNonEmptyString(run.contextSnapshot?.issueId) };
+    }
     if (run.errorCode === "provider_tool_definition_invalid") {
       return { outcome: "not_scheduled" as const,
         reason: "Repair the invalid tool definitions before starting a new attempt.",
@@ -16946,9 +16962,11 @@ export function heartbeatService(
       enabled: asBoolean(heartbeat.enabled, false),
       intervalSec: Math.max(0, asNumber(heartbeat.intervalSec, 0)),
       wakeOnDemand: isHeartbeatWakeOnDemandEnabled(agent),
-      maxConcurrentRuns: normalizeMaxConcurrentRuns(
-        heartbeat.maxConcurrentRuns,
-      ),
+      // A Dot binding has one external turn. Competing assignments must retain
+      // their queue position instead of claiming a second run that cannot bind.
+      maxConcurrentRuns: agent.adapterType === "paperclip_runner" &&
+        parseObject(agent.adapterConfig).provider === "openai_dot"
+        ? 1 : normalizeMaxConcurrentRuns(heartbeat.maxConcurrentRuns),
       skipTimerWhenNoActionableWork: asBoolean(
         heartbeat.skipTimerWhenNoActionableWork ??
           heartbeat.requireActionableTimerWork ??
@@ -21510,6 +21528,8 @@ export function heartbeatService(
               persistedRunnerProfile.nativeExecutionInput,
             )
           : null;
+      const isDotRun = persistedNativeExecutionInput?.provider.kind === "openai_dot"
+        || (!persistedNativeExecutionInput && agent.adapterType === "paperclip_runner" && parseObject(agent.adapterConfig).provider === "openai_dot");
       const persistedNativeExecutionWorkspaceId =
         persistedNativeExecutionInput?.binding.executionWorkspaceId ?? null;
       const requestedExecutionWorkspaceId =
@@ -21579,6 +21599,9 @@ export function heartbeatService(
       const executionForcedToKubernetes =
         isExecutionForcedToKubernetes(executionPolicy);
       let selectedEnvironmentId = environmentResolution.environmentId;
+      if (isDotRun && (executionForcedToKubernetes || managedSandboxOnly || selectedEnvironmentId && selectedEnvironmentId !== localEnvironment.id)) {
+        throw new ConfigurationIncompleteFailure("Dot currently requires a self-hosted local Runner controller; this environment policy is not supported.", { provider: "openai_dot", reason: "controller_environment_unsupported" });
+      }
       if (executionForcedToKubernetes) {
         let kubernetesEnvironment =
           await environmentsSvc.findKubernetesEnvironment(agent.companyId);
@@ -21669,6 +21692,7 @@ export function heartbeatService(
       if (
         nativeChatWorkspaceScope &&
         persistedNativeExecutionInput &&
+        persistedNativeExecutionInput.schema !== "paperclip.native-execution-input.v6" &&
         !nativeChatWorkspaceMatches({
           scope: nativeChatWorkspaceScope,
           expectedCwd: nativeChatExpectedCwd,
@@ -22137,6 +22161,14 @@ export function heartbeatService(
           return preflightEnvironment.driver;
         },
         resolveWorkspace: async () => {
+          if (isDotRun) {
+            // This is private controller storage, never a provider filesystem.
+            // v6 projects workspace.access=none and cwd=null to Dot.
+            const cwd = path.resolve(resolvePaperclipInstanceRoot(), "runtime", "paperclip-runner", "dot-controllers", agent.companyId, run.id);
+            await fs.mkdir(cwd, { recursive: true, mode: 0o700 });
+            return { cwd, source: "agent_home" as const, projectId: null, workspaceId: null, repoUrl: null, repoRef: null,
+              workspaceHints: [], warnings: [], baseCwdFallback: false, materializationFailures: [], additionalWorkspaces: [], referencedProjectFailures: [] };
+          }
           if (useIsolatedTaskDirectory && issueRef) {
             const cwd = await materializeIsolatedTaskDirectory({
               companyId: agent.companyId,
@@ -22215,7 +22247,7 @@ export function heartbeatService(
             : workspace;
         },
       });
-      const hostExecutionWorkspaceConfig =
+      const hostExecutionWorkspaceConfig = isDotRun ? {} :
         stripHostWorkspaceProvisionForLowTrustSandbox({
           config: mergedConfig,
           trustPreset,
@@ -22363,7 +22395,7 @@ export function heartbeatService(
         executionWorkspace,
         reusedExecutionWorkspace,
         policy: resolvedWorkspaceReusePolicy,
-      } = await provisionExecutionWorkspaceForFreshnessDecision<RealizedExecutionWorkspace>(
+      } = isDotRun ? { executionWorkspace: { ...executionWorkspaceBase, strategy: "project_primary" as const, cwd: resolvedWorkspace.cwd, branchName: null, worktreePath: null, warnings: [], created: false, branchCreatedByRuntime: false } as RealizedExecutionWorkspace, reusedExecutionWorkspace: false, policy: workspaceReuseProvisioningPolicy } : await provisionExecutionWorkspaceForFreshnessDecision<RealizedExecutionWorkspace>(
         {
           requestedShouldReuseExisting,
           existingExecutionWorkspaceId:
@@ -23790,7 +23822,7 @@ export function heartbeatService(
         });
         const hasInstructionFilesystem = nativeRuntimeResolution.kind !== "native"
           ? adapter.supportsInstructionsBundle === true
-          : !["claude_managed_agents_api", "aws_agentcore_harness_api"].includes(nativeRuntimeResolution.profile.backend);
+          : !["claude_managed_agents_api", "aws_agentcore_harness_api", "openai_dot_mcp"].includes(nativeRuntimeResolution.profile.backend);
         if (hasInstructionFilesystem) {
           try {
             // Missing contract fields on a restored session mean the deployed
@@ -24059,7 +24091,7 @@ export function heartbeatService(
             isNativeSessionId(taskNativeSessionId)
               ? taskSessionForRun.lastRunId
               : null;
-          const resumableTaskSessionId = taskResumeRunId
+          const resumableTaskSessionId = isDotRun ? null : taskResumeRunId
             ? taskNativeSessionId
             : (legacyRetrySessionId ?? null);
           const requestedNativeSessionId =
@@ -24114,7 +24146,7 @@ export function heartbeatService(
           const supportsManagedWarmSession = agent.adapterType === "paperclip_runner" &&
             nativeRuntimeResolution.profile.backend === "codex_app_server";
           const effectiveLifecyclePolicy = persistedNativeExecutionInput?.session.lifecyclePolicy ??
-            (managedAiRuntime && !supportsManagedWarmSession
+            (nativeRuntimeResolution.profile.backend === "openai_dot_mcp" || managedAiRuntime && !supportsManagedWarmSession
               ? { mode: "per_turn" as const, idleTimeoutMs: null }
               : environmentLifecyclePolicy ?? agentLifecyclePolicy);
           if (
@@ -24294,6 +24326,8 @@ export function heartbeatService(
                   })
                 : null;
             const pinnedPlanMarkdown = pinnedPlan?.body ?? "";
+            const dotBinding = nativeRuntimeResolution.profile.backend === "openai_dot_mcp"
+              ? await dotRunnerBroker(db).snapshot(agent.companyId, agent.id, String(parseObject(agent.adapterConfig).dotBindingId ?? "")) : undefined;
             const nativeRuntimeContext = await buildNativeRuntimeContext({
               db,
               agent,
@@ -24317,7 +24351,7 @@ export function heartbeatService(
                         }),
                       ) ??
                       `# ${issueRef.identifier ?? issueRef.id}: ${issueRef.title}`,
-                      projectRepositoryPaths.length > 0
+                      nativeRuntimeResolution.profile.backend !== "openai_dot_mcp" && projectRepositoryPaths.length > 0
                         ? `## Project repositories\nThe task workspace also contains these editable Git repositories:\n${projectRepositoryPaths.map((repo) => `- ${repo}`).join("\n")}`
                         : null,
                     ].filter(Boolean).join("\n\n"),
@@ -24390,6 +24424,7 @@ export function heartbeatService(
                         : agent.adapterConfig,
                       managedProfile,
                       agentCoreProfile,
+                      dotBinding,
                     }),
                     lifecyclePolicy: effectiveLifecyclePolicy,
                     interactionResponses,
@@ -27285,18 +27320,35 @@ export function heartbeatService(
     if (durableRequest?.failedRunRetry) {
       opts = { ...opts, allowRunCoalescing: false };
     }
-    const durableReceiptFields = durableRequest
-      ? { id: durableRequest.id, requestedAt: durableRequest.requestedAt }
+    const dotRequest = opts.durableDotRequest;
+    if (dotRequest && (durableRequest || dotRequest.agentId !== agentId ||
+        dotRequest.companyId !== agent.companyId || dotRequest.issueId !== issueId ||
+        dotRequest.requestId !== payload?.dotRequestId || source !== "assignment" ||
+        opts.requestedByActorType !== "agent" || opts.requestedByActorId !== agentId ||
+        agent.adapterType !== "paperclip_runner" || parseObject(agent.adapterConfig).provider !== "openai_dot" ||
+        opts.idempotencyKey !== dotRequest.idempotencyKey)) {
+      throw conflict("Dot work request does not match its admission authority.");
+    }
+    const receiptRequest = durableRequest ?? dotRequest;
+    const durableReceiptFields = receiptRequest
+      ? { id: receiptRequest.id, requestedAt: receiptRequest.requestedAt }
       : {};
     const existingDurableReceipt = async (queryDb: Db) => {
-      if (!durableRequest) return null;
+      if (!receiptRequest) return null;
       const receipt = await queryDb
         .select()
         .from(agentWakeupRequests)
-        .where(eq(agentWakeupRequests.id, durableRequest.id))
+        .where(eq(agentWakeupRequests.id, receiptRequest.id))
         .limit(1)
         .then((rows) => rows[0] ?? null);
-      if (receipt) assertDurableChatWakeupReceipt(durableRequest, receipt);
+      if (receipt && durableRequest) assertDurableChatWakeupReceipt(durableRequest, receipt);
+      if (receipt && dotRequest && (receipt.companyId !== dotRequest.companyId ||
+          receipt.agentId !== dotRequest.agentId || receipt.source !== "assignment" ||
+          receipt.requestedByActorType !== "agent" || receipt.requestedByActorId !== dotRequest.agentId ||
+          receipt.idempotencyKey !== dotRequest.idempotencyKey || receipt.payload?.issueId !== dotRequest.issueId ||
+          receipt.payload?.dotRequestId !== dotRequest.requestId)) {
+        throw conflict("requestId was reused for another task.");
+      }
       return receipt;
     };
     const priorReceipt = await existingDurableReceipt(db);
@@ -27325,7 +27377,7 @@ export function heartbeatService(
     // retain distinct durable receipts even when the same gate blocks them.
     const coalesceExecutionWait =
       opts.requestedByActorType === "system" &&
-      !durableRequest &&
+      !receiptRequest &&
       !wakeCommentId &&
       queuedCommentIdsFromRunContext(enrichedContextSnapshot).length === 0 &&
       !isInteractionResolutionWakePayload(payload ?? {}) &&
@@ -28729,10 +28781,10 @@ export function heartbeatService(
                   wakeupRequestId: activeExecutionRun.wakeupRequestId,
                 },
                 allowRunCoalescing: isConversation(issue) ? false : opts.allowRunCoalescing,
-                durableReceipt: durableRequest
+                durableReceipt: receiptRequest
                   ? {
-                      id: durableRequest.id,
-                      requestedAt: durableRequest.requestedAt,
+                      id: receiptRequest.id,
+                      requestedAt: receiptRequest.requestedAt,
                     }
                   : undefined,
                 reason,

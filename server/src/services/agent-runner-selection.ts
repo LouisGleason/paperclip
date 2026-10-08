@@ -5,7 +5,7 @@ import { AgentRunnerConfigError, resolveAgentRunnerConfig } from "@paperclipai/a
 import { findActiveServerAdapter, hasActiveAdapterOverride, listEnabledServerAdapters } from "../adapters/registry.js";
 import { getDisabledAdapterTypes } from "./adapter-plugin-store.js";
 import { unprocessable } from "../errors.js";
-import { PaperclipRunnerProviderProfileError, resolvePaperclipRunnerProviderProfile } from "./native-runtime/provider-profile.js";
+import { PaperclipRunnerProviderProfileError, resolvePaperclipRunnerProviderProfile, validatePaperclipRunnerDotConfig } from "./native-runtime/provider-profile.js";
 import { runSshCommand } from "@paperclipai/adapter-utils/ssh";
 import { resolveEnvironmentDriverConfigForRuntime } from "./environment-config.js";
 
@@ -47,7 +47,11 @@ export function resolveNewAgentRunner(input: {
         { code: "agent_runner_unavailable" },
       );
     }
-    if (resolved.adapterType === "paperclip_runner") resolvePaperclipRunnerProviderProfile(resolved.adapterConfig);
+    if (resolved.adapterType === "paperclip_runner") {
+      // Pairing happens after the agent is saved; execution still requires a binding.
+      if (resolved.adapterConfig.provider === "openai_dot") validatePaperclipRunnerDotConfig(resolved.adapterConfig, false);
+      else resolvePaperclipRunnerProviderProfile(resolved.adapterConfig);
+    }
     return resolved;
   } catch (error) {
     if (error instanceof AgentRunnerConfigError) throw unprocessable(error.message, { code: error.code, fields: error.fields });

@@ -601,7 +601,8 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
     : overlay.adapterType ?? props.agent.adapterType;
   const getCapabilities = useAdapterCapabilities();
   const adapterCaps = getCapabilities(adapterType);
-  const isLocal = adapterCaps.supportsInstructionsBundle || adapterCaps.supportsSkills || adapterCaps.supportsLocalAgentJwt;
+  const isDotRunner = adapterType === "paperclip_runner" && (isCreate ? props.values.adapterSchemaValues?.provider : eff("adapterConfig", "provider", config.provider)) === "openai_dot";
+  const isLocal = !isDotRunner && (adapterCaps.supportsInstructionsBundle || adapterCaps.supportsSkills || adapterCaps.supportsLocalAgentJwt);
   
   // The legacy working directory is an absolute path on the host, so the
   // managed-sandbox-only policy hides it. A stored value stays untouched; it is
@@ -944,6 +945,8 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
 
   /** Props passed to adapter-specific config field components */
   const adapterFieldProps = {
+    companyId: selectedCompanyId ?? undefined,
+    agentId: isCreate ? undefined : props.agent.id,
     mode,
     isCreate,
     adapterType,
@@ -959,8 +962,8 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
     // Resolve the effective instructions-file gate once. The instructions file
     // is an absolute host path, so the managed-sandbox-only policy hides it for
     // every adapter without a per-adapter edit.
-    hideInstructionsFile: hideInstructionsFile || hideHostPaths,
-    managedSandboxOnly: hideHostPaths,
+    hideInstructionsFile: hideInstructionsFile || hideHostPaths || isDotRunner,
+    managedSandboxOnly: hideHostPaths || isDotRunner,
   };
 
   // Section toggle state — advanced always starts collapsed
@@ -969,7 +972,9 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
   function selectHarness(harness: string) {
                   try {
                     const model = "";
-                    const resolved = ["claude_managed", "aws_agentcore"].includes(harness)
+                    const resolved = harness === "openai_dot"
+                      ? { adapterType: "paperclip_runner", adapterConfig: { provider: "openai_dot", lifecycleMode: "per_turn", allowUnmeteredProvider: false } }
+                      : ["claude_managed", "aws_agentcore"].includes(harness)
                       ? { adapterType: "paperclip_runner", adapterConfig: { provider: harness, model: harness === "aws_agentcore" ? "global.anthropic.claude-sonnet-4-6" : "claude-sonnet-5", lifecycleMode: "per_turn" } }
                       : harness === "cursor" && runnerAdapters?.find(a => a.type === harness)?.defaultRunner !== "legacy"
                       ? { adapterType: "paperclip_runner", adapterConfig: { provider: "acpx", acpxAgent: "cursor", model: "", lifecycleMode: "per_turn" } }
@@ -979,7 +984,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                     else setOverlay(prev => {
                       const currentRuntime = (prev.runtime.runtimeConfig as Record<string, unknown> | undefined) ?? runtimeConfig;
                       const binding = aiRuntimeConnectionBindingSchema.safeParse(currentRuntime.aiConnection).data;
-                      const keepBinding = !binding || binding.mode === "router" || binding.provider === aiProviderForAdapter(harness);
+                      const keepBinding = harness !== "openai_dot" && (!binding || binding.mode === "router" || binding.provider === aiProviderForAdapter(harness));
                       return { ...prev, adapterType: resolved.adapterType, adapterConfig: resolved.adapterConfig,
                         runtime: keepBinding ? prev.runtime : { ...prev.runtime, runtimeConfig: { ...currentRuntime, aiConnection: null } } };
                     });
@@ -1655,14 +1660,15 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
               </Field>
             )}
             {showAdapterTypeField && !adapterPickerDisabledTypes.has("paperclip_runner") && (
-              <Field label="Managed harness" hint="Requires a qualified organization profile.">
+              <Field label="Managed harness" hint="Managed services require a qualified organization profile. Dot requires the experimental integration to be enabled.">
                 <SelectPopover aria-label="Managed harness"
-                  value={["claude_managed", "aws_agentcore"].includes(modelHarness) ? modelHarness : ""}
+                  value={["claude_managed", "aws_agentcore", "openai_dot"].includes(modelHarness) ? modelHarness : ""}
                   onValueChange={value => { if (value) selectHarness(value); }}
                   options={[
                     { value: "", label: "Choose a managed harness…" },
                     { value: "claude_managed", label: "Claude Managed" },
                     { value: "aws_agentcore", label: "AWS AgentCore" },
+                    { value: "openai_dot", label: "OpenAI Dot (experimental)" },
                   ]}
                 />
               </Field>
@@ -1670,7 +1676,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
           </details>
 
           {runnerSelectionError && <p role="alert" className="text-sm text-destructive">{runnerSelectionError}</p>}
-          {!isCreate && selectedCompanyId && <AiConnectionField companyId={selectedCompanyId} agentId={props.agent.id} agentName={props.agent.name} adapterType={aiRoutingHarness(adapterType, eff("adapterConfig", "provider", config.provider), eff("adapterConfig", "acpxAgent", config.acpxAgent))}
+          {!isDotRunner && !isCreate && selectedCompanyId && <AiConnectionField companyId={selectedCompanyId} agentId={props.agent.id} agentName={props.agent.name} adapterType={aiRoutingHarness(adapterType, eff("adapterConfig", "provider", config.provider), eff("adapterConfig", "acpxAgent", config.acpxAgent))}
             routerAdapterType={adapterType} value={aiRuntimeConnectionBindingSchema.safeParse(((overlay.runtime.runtimeConfig as Record<string, unknown> | undefined) ?? runtimeConfig).aiConnection).data}
             model={String(eff("adapterConfig", "model", config.model) ?? "")} environmentId={currentDefaultEnvironmentId || undefined} legacy
             onChange={binding => mark("runtime", "runtimeConfig", { ...runtimeConfig, aiConnection: binding })} />}

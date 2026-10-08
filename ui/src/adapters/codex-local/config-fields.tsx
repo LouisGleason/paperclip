@@ -1,5 +1,5 @@
 import { SelectPopover } from "../../components/ui/select";
-import { AdapterMark } from "../../components/AdapterMark";
+import { DotRunnerConnection } from "../../components/DotRunnerConnection";
 import { configFieldsForSection } from "../config-sections";
 import type { AdapterConfigFieldsProps } from "../types";
 import {
@@ -21,7 +21,6 @@ import {
   PAPERCLIP_RUNNER_IDLE_TIMEOUT_DEFAULT_MS,
   PAPERCLIP_RUNNER_IDLE_TIMEOUT_MAX_MS,
   PAPERCLIP_RUNNER_PERMISSION_CAPABILITIES,
-  PAPERCLIP_RUNNER_ACPX_PROFILES,
   isPaperclipRunnerProvider,
   resolvePaperclipRunnerIdleTimeoutMs,
   resolvePaperclipRunnerPermissionMode,
@@ -37,17 +36,12 @@ const defaultOpenCodeRunnerModel = "openrouter/deepseek/deepseek-v4-flash-0731";
 const defaultAcpxClaudeModel = "claude-sonnet-5";
 const defaultClaudeManagedModel = "claude-sonnet-5";
 const defaultAwsAgentCoreModel = "global.anthropic.claude-sonnet-4-6";
-const runnerHarnessOptions = [
-  { value: "codex", label: "Codex", adapter: "codex_local" },
-  { value: "opencode", label: "OpenCode 1.18.34", adapter: "opencode_local" },
-  { value: "claude_managed", label: "Claude Managed", adapter: "claude_local" },
-  { value: "aws_agentcore", label: "AWS AgentCore", adapter: "aws_agentcore" },
-  { value: "acpx", label: "ACP agents", adapter: "acpx_local" },
-  { value: "grok", label: "Grok Build", adapter: "grok_local" },
-];
+
 
 export function CodexLocalConfigFields({
   section,
+  companyId,
+  agentId,
   mode,
   isCreate,
   adapterType,
@@ -198,6 +192,13 @@ export function CodexLocalConfigFields({
          />
         </Field>
       )}
+      {runnerManaged && runnerProvider === "openai_dot" && <>
+        <Field configSection="adapter" label="Dot connection" hint="A verified event round trip is required before assigning work.">
+          <DotRunnerConnection companyId={companyId} agentId={agentId} bindingId={String(runnerSchemaValue("dotBindingId", ""))} onBinding={id => updateRunnerSchemaValue("dotBindingId", id)} />
+        </Field>
+        <ToggleField label="Allow externally billed provider" hint="Dot does not report token usage or cost. Paperclip cannot enforce a provider spend ceiling; known company and agent budget limits still apply."
+          checked={runnerSchemaValue("allowUnmeteredProvider", false) === true} onChange={value => updateRunnerSchemaValue("allowUnmeteredProvider", value)} />
+      </>}
       {runnerManaged && runnerProvider === "acpx" && runnerSchemaValue("acpxAgent", "claude") === "cursor" && (
         <Field configSection="adapter" label="Cursor mode" hint="Select Cursor's session mode. Permissions and company approval rules still apply.">
           <SelectPopover aria-label="Cursor mode"
@@ -391,7 +392,7 @@ export function CodexLocalConfigFields({
           )}
         </Field>
       )}
-      {runnerManaged && (
+      {runnerManaged && runnerProvider !== "openai_dot" && (
         <Field configSection="runPolicy"
           label="Runner lifecycle"
           hint="Turn by turn suspends after each run. Warm keeps the same provider process available between governed runs."
@@ -411,7 +412,7 @@ export function CodexLocalConfigFields({
          />
         </Field>
       )}
-      {runnerManaged && runnerLifecycleMode === "warm" && (
+      {runnerManaged && runnerProvider !== "openai_dot" && runnerLifecycleMode === "warm" && (
         <Field configSection="runPolicy"
           label="Warm idle timeout (ms)"
           hint="After this much inactivity, runnerd checkpoints and suspends the provider session. The maximum is 24 hours."
@@ -675,7 +676,7 @@ export function CodexLocalConfigFields({
           )}
         </>
       )}
-      <LocalWorkspaceRuntimeFields
+      {runnerProvider !== "openai_dot" && <LocalWorkspaceRuntimeFields
         isCreate={isCreate}
         values={values}
         set={set}
@@ -685,7 +686,7 @@ export function CodexLocalConfigFields({
         mode={mode}
         adapterType={adapterType}
         models={models}
-      />
+      />}
     </>
   ));
 }

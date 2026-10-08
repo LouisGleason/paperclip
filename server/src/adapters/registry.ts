@@ -406,6 +406,10 @@ const paperclipRunnerAdapter: ServerAdapterModule = {
         }],
       };
     }
+    if (profile.provider === "openai_dot") {
+      return { adapterType: "paperclip_runner", status: "warn" as const, testedAt: new Date().toISOString(),
+        checks: [{ code: "dot_event_test_required", level: "warn" as const, message: "Dot manages its model and billing. Validate the dedicated agent binding and event round trip in Paperclip; this read-only check does not wake the Dot." }] };
+    }
     try {
       // SSH Codex's native hello stages and verifies the task's exact daemon
       // and CLI. A preinstalled-only check would reject supported SSH hosts.
