@@ -11,9 +11,15 @@ import {
   registerServerAdapter, unregisterServerAdapter, type AdapterExecutionContext,
 } from "../adapters/index.js";
 import { heartbeatService } from "../services/heartbeat.js";
-import { startEmbeddedPostgresTestDatabase } from "./helpers/embedded-postgres.js";
+import { getEmbeddedPostgresTestSupport, startEmbeddedPostgresTestDatabase } from "./helpers/embedded-postgres.js";
 
-describe("saved Slack invitation command in heartbeat prompts", () => {
+const postgresSupport = await getEmbeddedPostgresTestSupport();
+const describePostgres = postgresSupport.supported ? describe : describe.skip;
+if (!postgresSupport.supported) {
+  console.warn(`Skipping Slack invitation heartbeat tests: ${postgresSupport.reason ?? "embedded Postgres unavailable"}`);
+}
+
+describePostgres("saved Slack invitation command in heartbeat prompts", () => {
   const adapterType = "slack_invitation_test";
   const captured = new Map<string, AdapterExecutionContext>();
   let temporary: Awaited<ReturnType<typeof startEmbeddedPostgresTestDatabase>>;
