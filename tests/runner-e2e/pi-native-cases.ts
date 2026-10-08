@@ -29,16 +29,19 @@ export function gradePiNativeMemory(actual: unknown, nonce: string): boolean {
   return typeof actual === "string" && actual === `${nonce}\n`;
 }
 
-/** Agent-file paths are withheld from public targets. Bind the private-root read
- * to exact memory text as well as the independent saved-file/readback oracles.
- * Named workspace reads and unrelated/bootstrap text cannot substitute. */
-export function hasPiNativeMemoryRead(events: readonly Record<string, any>[], nonce: string): boolean {
+/** Local agent-file targets are withheld. Remote per-turn copies are projected
+ * under the exact agent/run path. Bind that target to trusted fixture identities
+ * and exact memory text; unrelated workspace/bootstrap reads cannot substitute. */
+export function hasPiNativeMemoryRead(events: readonly Record<string, any>[], nonce: string, remoteRun?: { agentId: string; runId: string }): boolean {
+  const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/u;
+  if (remoteRun && (!uuid.test(remoteRun.agentId) || !uuid.test(remoteRun.runId))) return false;
+  const target = remoteRun ? `.paperclip-runtime/agent-files/${remoteRun.agentId}/${remoteRun.runId}/${PI_NATIVE_MEMORY_PATH}` : null;
   const tools = events.filter(row => row.eventType === "tool.execution.completed")
     .map(row => row.payload?.prpEvent?.payload)
     .filter(payload => payload?.schema === "paperclip.tool.execution.v1" && payload.transport === "builtin");
   const memoryReads = tools.filter(payload => {
     if (payload.name !== "read" || payload.operation !== "read" || payload.status !== "completed"
-      || payload.target !== null || payload.readOnly !== true || payload.outputTruncated !== false
+      || payload.target !== target || payload.readOnly !== true || payload.outputTruncated !== false
       || typeof payload.executionId !== "string" || payload.executionId.length === 0 || typeof payload.output !== "string") return false;
     try {
       const result = JSON.parse(payload.output);

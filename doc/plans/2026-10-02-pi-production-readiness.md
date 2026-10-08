@@ -5,6 +5,53 @@ set of release gates. Pi remains a candidate until every required gate passes.
 Keep behavioral qualification on the accepted fixtures. Do not expand it to
 widgets, images, Cursor or Copilot qualification. The existing draft stack must be reviewed in dependency order.
 
+## Correct cloud memory-read authority — 2026-10-08
+
+Frozen runtime/image `b696e131ae32a82418e570b32f4727b5adb14e49` passes all
+54 applicable PR checks and cloud image/public-install job `37777555436`.
+The job retains the exact 20 normal archives and their source-bound hash
+manifest. Its immutable image is
+`ghcr.io/paperclipai/paperclip-daytona-runner@sha256:ce622e03c606cb93eedda824133b791449f7be752d85e220a2e316f825f37226`.
+A fresh cloud consumer passes normal install and lifecycle, complete package
+archive and managed-Pi verification, normal companion import, the actual
+installed production pack reader, and installed CLI health/UI startup. The
+reader repair therefore reaches a real paid native Pi turn on Sonnet 4.6.
+
+Definition-21 campaign `pi-sonnet-memory-b696-daytona-1791464677` retains its
+canonical candidate failure at `native-memory-write-verification`. Pi actually
+writes the requested 33 bytes, performs one complete native read with the exact
+nonce plus LF, receives the expected cross-root denial, saves the exact bytes
+through the public managed-file API, and retires cleanly. The grader wrongly
+requires a null projected target for cloud agent files. The remote projection
+correctly names `.paperclip-runtime/agent-files/<agent-id>/<run-id>/memory/pi-native.txt`;
+local private-root reads remain withheld. This is a grader-authority mismatch,
+not evidence of wrong file content. Restart and the fresh task were not reached.
+
+All 45 canonical files, 93,697,980 bytes, are retained and independently
+verified. Archive SHA256 is
+`59a746148b786e16442200fe4a525e189d168849a3fde5bc3c480c5a7421dcd5`.
+Cleanup passes with no owned runtime processes or temporary roots. The
+historical canonical grade is unchanged.
+
+Definition 22 requires the exact cloud target derived from the independently
+known fixture agent and current run IDs. It keeps the completed, untruncated,
+read-only native receipt, exact text/LF, duplicate-read rejection and no-shell
+checks. Null or wrong agent/run targets cannot qualify a cloud read. Native
+local behavior still requires the withheld target. Add controls for another
+agent, a prior run, another file, truncated/wrong contents, and shell execution.
+Only harness tests and this plan change; keep the same normal runtime/image
+freeze for one explicitly selected definition-22 cloud memory case, with zero
+automatic retries and the unchanged key/campaign caps.
+
+All 173 focused cloud unit tests pass, including local and remote memory,
+wrong-path/byte controls, incomplete terminal evidence and cleanup retention.
+Definition-22 SHA256 is
+`44167a91fac42d4af03187c4cd94412923502c7c26125ae06a0bf67120396195`.
+The cloud source typecheck cannot pass with the production-only dependency
+graph: source-only server dev types, chat and the private Runner source link
+are absent. Its errors do not name the changed memory files. Use the normal
+PR CI dependency graph for repository typecheck and build.
+
 ## Retain cloud-built packages for the changed reader — 2026-10-08
 
 Reader fix `111082ad429c3d21ba74e9241d1375da6e82a7cd` passes all 54

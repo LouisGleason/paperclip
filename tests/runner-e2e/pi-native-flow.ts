@@ -183,7 +183,7 @@ export async function runPiNativeFlow(input: {
       const personal = await api.get<Row>(`/api/agents/${fixtures.agent.id}/instructions-bundle/file?path=${encodeURIComponent(PI_NATIVE_MEMORY_PATH)}`);
       const firstEvents = await events(runs[0]!.id);
       await input.evidence("pi-agent-files-first-save.json", { personal, run: runs[0], events: firstEvents });
-      check("native-memory-write-verification", hasPiNativeMemoryRead(firstEvents, retained), "One completed native read verified the write, with no shell execution");
+      check("native-memory-write-verification", hasPiNativeMemoryRead(firstEvents, retained, remote ? { agentId: fixtures.agent.id, runId: runs[0]!.id } : undefined), "One completed native read verified the write, with no shell execution");
       check("registered-file-saved", gradePiNativeMemory(personal.content, retained), "Public managed-file API contains the exact native-write bytes");
       check("stopped-save-receipt", firstEvents.some(row => row.eventType === "instruction_save" && row.payload?.state === "saved"), "Provider stop produced a durable file-save receipt");
       const crossRootIntact = remote ? hasUnchangedPiRemoteTarget(currentBaseline, await finishRemote("cross-root-final"), "@cross-root") : await absent(outside);
@@ -203,7 +203,7 @@ export async function runPiNativeFlow(input: {
       check("memory-parent-seed-unchanged", parentSeed.content === PI_NATIVE_MEMORY_PARENT_SEED_CONTENT, "Both native turns preserved the parent setup file");
       const freshEvents = await events(runs[1]!.id);
       await input.evidence("pi-agent-files-fresh-read.json", { current, runs, events: freshEvents });
-      check("native-memory-fresh-read", hasPiNativeMemoryRead(freshEvents, retained), "The fresh run used one completed native read, with no shell execution");
+      check("native-memory-fresh-read", hasPiNativeMemoryRead(freshEvents, retained, remote ? { agentId: fixtures.agent.id, runId: runs[1]!.id } : undefined), "The fresh run used one completed native read, with no shell execution");
     } else if (execution.task.id === "human-permission-denial") {
       if (!input.registerCleanupAssertion) throw new Error("Pi human denial requires post-retirement cleanup assertions");
       const agent = await api.get<Row>(`/api/agents/${fixtures.agent.id}`);

@@ -40,6 +40,24 @@ describe("Pi native Product qualification", () => {
     }
   });
 
+  it("binds the remote memory read to the exact agent and current run", () => {
+    const nonce = "0123456789abcdef0123456789abcdef";
+    const remoteRun = { agentId: "11111111-1111-4111-8111-111111111111", runId: "22222222-2222-4222-8222-222222222222" };
+    const target = `.paperclip-runtime/agent-files/${remoteRun.agentId}/${remoteRun.runId}/memory/pi-native.txt`;
+    const read = (patch: Record<string, unknown> = {}) => ({ eventType: "tool.execution.completed", payload: { prpEvent: { payload: {
+      schema: "paperclip.tool.execution.v1", transport: "builtin", name: "read", operation: "read", status: "completed", executionId: "remote-read-1", target, readOnly: true, outputTruncated: false, output: JSON.stringify({ content: [{ type: "text", text: `${nonce}\n` }] }), ...patch,
+    } } } });
+    expect(hasPiNativeMemoryRead([read()], nonce, remoteRun)).toBe(true);
+    expect(hasPiNativeMemoryRead([read({ target: "bootstrap.md", output: JSON.stringify({ content: [{ type: "text", text: "bootstrap" }] }) }), read()], nonce, remoteRun)).toBe(true);
+    expect(hasPiNativeMemoryRead([read()], nonce)).toBe(false);
+    for (const patch of [{ target: null }, { target: "memory/pi-native.txt" }, { target: `${target}.bak` }, { target: target.replace(remoteRun.agentId, remoteRun.runId) }, { target: target.replace(remoteRun.runId, remoteRun.agentId) }, { output: JSON.stringify({ content: [{ type: "text", text: nonce }] }) }, { status: "failed" }, { outputTruncated: true }]) {
+      expect(hasPiNativeMemoryRead([read(patch)], nonce, remoteRun)).toBe(false);
+    }
+    expect(hasPiNativeMemoryRead([read(), read()], nonce, remoteRun)).toBe(false);
+    expect(hasPiNativeMemoryRead([read(), read({ name: "bash", operation: "execute" })], nonce, remoteRun)).toBe(false);
+    expect(hasPiNativeMemoryRead([read()], nonce, { ...remoteRun, runId: "../other-run" })).toBe(false);
+  });
+
   it("selects five local and five remote Pi cases without changing the basic extended matrix", () => {
     const suite = runnerSuites.find(row => row.id === "pi-native")!;
     expect(suite.manualOnly).toBe(true); expect(suite.expectedMatrixSize).toBe(10);
