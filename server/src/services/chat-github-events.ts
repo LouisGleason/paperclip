@@ -31,6 +31,87 @@ const person = z.object({
   login: z.string().min(1).max(100),
   type: z.string().optional(),
 });
+
+export function githubBodyMentionsBot(body: string, username: string | null): boolean {
+  if (!username) return false;
+  const name = username.replace(/\[bot\]$/i, "");
+  if (!name) return false;
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(?<![\\w-])@${escaped}(?:\\[bot\\])?(?![\\w-])`, "i").test(body);
+}
+
+const mentionPayloadSchema = z.object({
+  action: z.string(),
+  repository: z.object({ id, full_name: z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/) }),
+  sender: person,
+  changes: z.object({ body: z.object({ from: z.string().nullable() }).optional() }).optional(),
+});
+const descriptionSchema = z.object({
+  number: z.number().int().positive().safe(),
+  body: z.string().nullable(),
+  pull_request: z.unknown().optional(),
+});
+const commentSchema = z.object({
+  id,
+  body: z.string().nullable(),
+  in_reply_to_id: id.optional(),
+});
+
+/** Explicit requests use the ordinary message admission path, including the
+ * actor who made an edit, rather than the automatic event's original author. */
+export function githubExplicitMentionEvent(
+  eventType: string,
+  payload: unknown,
+  deliveryId: string,
+  botUsername: string | null,
+) {
+  const parsed = mentionPayloadSchema.safeParse(payload);
+  if (!parsed.success || !deliveryId) return null;
+  const envelope = parsed.data;
+  const source = payload as Record<string, unknown>;
+  const isIssue = eventType === "issues" || eventType === "issue_comment";
+  const target = descriptionSchema.safeParse(source[isIssue ? "issue" : "pull_request"]);
+  if (!target.success) return null;
+  const description = eventType === "issues" || eventType === "pull_request";
+  const review = eventType === "pull_request_review";
+  if (!description && !review && !["issue_comment", "pull_request_review_comment"].includes(eventType)) return null;
+  if (eventType === "issues" && target.data.pull_request !== undefined) return null;
+  const content = description ? target : commentSchema.safeParse(source[review ? "review" : "comment"]);
+  if (!content.success) return null;
+  const body = content.data.body ?? "";
+  if (!githubBodyMentionsBot(body, botUsername)) return null;
+  const edited = envelope.action === "edited";
+  if (edited) {
+    // A title/label edit, push, or unrelated edit retaining an old mention
+    // must not rerun the request. Missing previous content is not evidence
+    // that the editor added a mention.
+    if (!envelope.changes?.body || githubBodyMentionsBot(envelope.changes.body.from ?? "", botUsername)) return null;
+  } else if (envelope.action !== (description ? "opened" : review ? "submitted" : "created")) return null;
+  if (envelope.sender.type === "Bot") return null;
+  const repository = envelope.repository.full_name.toLowerCase();
+  const number = target.data.number;
+  const issueThread = isIssue && target.data.pull_request === undefined;
+  const comment = !description && !review ? commentSchema.parse(source.comment) : null;
+  const reviewId = review ? commentSchema.parse(source.review).id : null;
+  // Match the native adapter's repository casing so addressed descriptions
+  // and ordinary follow-up comments share the same existing conversation.
+  const threadId = `github:${envelope.repository.full_name}:${issueThread ? "issue:" : ""}${number}${eventType === "pull_request_review_comment" ? `:rc:${comment!.in_reply_to_id ?? comment!.id}` : ""}`;
+  return {
+    threadId,
+    // Created comments retain the SDK's identity so alternate delivery paths
+    // cannot duplicate a turn. Edits are separate, delivery-deduplicated asks.
+    messageId: edited || description ? `mention-event:${deliveryId}` : review ? `review:${reviewId}` : comment!.id,
+    body: body.slice(0, 65536),
+    sender: envelope.sender,
+    edited,
+    receiptReactionSupported: !description && !review && !edited,
+    url: `https://github.com/${repository}/${issueThread ? "issues" : "pull"}/${number}${description ? "" : review ? `#pullrequestreview-${reviewId}` : eventType === "pull_request_review_comment" ? `#discussion_r${comment!.id}` : `#issuecomment-${comment!.id}`}`,
+    raw: comment ? {
+      type: eventType === "pull_request_review_comment" ? "review_comment" : "issue_comment",
+      comment: source.comment, repository: source.repository, prNumber: number, threadType: issueThread ? "issue" : "pr",
+    } : {},
+  };
+}
 const payloadSchema = z.object({
   action: z.enum(["opened", "synchronize", "reopened", "ready_for_review"]),
   repository: z.object({

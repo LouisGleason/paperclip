@@ -3816,6 +3816,113 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
         ),
       ).rejects.toThrow("no longer authorized");
     });
+    it.each(["issues", "pull_request", "issue_comment", "pull_request_review_comment", "pull_request_review"])(
+      "admits signed %s mentions with automation off, deduplicates and retains manual task authority", async (event) => {
+        const f = await reviewBotFixture();
+        const saved = await f.management.configuration(f.endpoint.id, "owner-user");
+        await f.management.saveConfiguration(f.endpoint.id, { expectedRevision: saved.revision, configuration: { ...saved.configuration, defaults: { ...saved.configuration.defaults, invocation: "mentions_only", events: [], issueOpened: false }, repositories: { ...saved.configuration.repositories, "97531": { instructions: "Use repository-specific guidance" } } } }, "owner-user");
+        const body = `@${f.endpoint.botUsername!.replace(/\[bot\]$/, "")} tell me a joke`;
+        const target = { number: 83, title: "Say hello", body, user: { id: 42, login: "octocat", type: "User" }, labels: [] };
+        const comment = { id: 83001, body, user: target.user, created_at: new Date().toISOString(), updated_at: new Date().toISOString(), in_reply_to_id: 83000 };
+        const payload = {
+          action: event.includes("comment") ? "created" : event === "pull_request_review" ? "submitted" : "opened",
+          installation: { id: 2468 },
+          repository: { id: 97531, full_name: "PaperclipAI/Paperclip", name: "paperclip", owner: { id: 1357, login: "paperclipai" } },
+          sender: target.user, issue: target, pull_request: target, comment, review: comment,
+        };
+        const delivery = randomUUID();
+        const send = () => f.service.handleWebhook(f.endpoint.publicId, "github", signedGitHubWebhookRequest({ event, delivery, payload, webhookSecret: f.webhookSecret }));
+        expect((await send()).status).toBeLessThan(300);
+        await expect.poll(async () => (await db.select().from(chatConversations).where(eq(chatConversations.endpointId, f.endpoint.id))).length).toBe(1);
+        await send();
+        const [conversation] = await db.select().from(chatConversations).where(eq(chatConversations.endpointId, f.endpoint.id));
+        expect(conversation.externalThreadId).toBe(`github:PaperclipAI/Paperclip:${event === "issues" || event === "issue_comment" ? "issue:" : ""}83${event === "pull_request_review_comment" ? ":rc:83000" : ""}`);
+        expect(conversation.providerUrl).not.toContain("mention-event");
+        if (event === "issues") expect(conversation.providerUrl).toBe("https://github.com/paperclipai/paperclip/issues/83");
+        const [task] = await db.select().from(issues).where(eq(issues.id, conversation.issueId!));
+        expect(task).toMatchObject({ assigneeAgentId: f.assignedAgentId, responsibleUserId: "owner-user" });
+        const comments = await db.select().from(issueComments).where(eq(issueComments.issueId, task.id));
+        expect(comments).toHaveLength(1);
+        expect(comments[0].body).toContain("tell me a joke");
+        const [request] = await db.select().from(chatDeliveries).where(and(eq(chatDeliveries.endpointId, f.endpoint.id), eq(chatDeliveries.eventKind, "mention")));
+        expect(request.normalizedEvent).toHaveProperty("githubManual.event", "mention");
+        expect(request.normalizedEvent).toHaveProperty("githubManual.policy.instructions", "Use repository-specific guidance");
+        expect(request.normalizedEvent).not.toHaveProperty("githubAutomatic");
+        expect(request.normalizedEvent).not.toHaveProperty("githubIssue");
+        expect(await db.select().from(chatGitHubReviews).where(eq(chatGitHubReviews.endpointId, f.endpoint.id))).toHaveLength(0);
+        expect(await db.select().from(chatActions).where(and(eq(chatActions.endpointId, f.endpoint.id), eq(chatActions.kind, "github_review_check")))).toHaveLength(0);
+        expect((await f.management.configuration(f.endpoint.id, "owner-user")).configuration.defaults.invocation).toBe("mentions_only");
+      },
+    );
+    it("authorizes description edits as the editor, never inheriting the original author's access", async () => {
+      const f = await reviewBotFixture();
+      const body = `@${f.endpoint.botUsername!} help`;
+      const payload = {
+        action: "edited", installation: { id: 2468 },
+        repository: { id: 97531, full_name: "paperclipai/paperclip", name: "paperclip", owner: { id: 1357, login: "paperclipai" } },
+        sender: { id: 77, login: "unlinked-editor", type: "User" },
+        issue: { number: 84, title: "Say hello", body, user: { id: 42, login: "octocat", type: "User" }, labels: [] },
+        changes: { body: { from: "No mention" } },
+      };
+      const send = (content = payload) => f.service.handleWebhook(f.endpoint.publicId, "github", signedGitHubWebhookRequest({ event: "issues", delivery: randomUUID(), payload: content, webhookSecret: f.webhookSecret }));
+      await send();
+      expect(await db.select().from(chatConversations).where(eq(chatConversations.endpointId, f.endpoint.id))).toHaveLength(0);
+      expect(f.wakeup).not.toHaveBeenCalled();
+      const allowed = { ...payload, sender: { id: 42, login: "octocat", type: "User" }, issue: { ...payload.issue, user: payload.sender } };
+      await send(allowed);
+      await expect.poll(async () => (await db.select().from(chatConversations).where(eq(chatConversations.endpointId, f.endpoint.id))).length).toBe(1);
+      const [conversation] = await db.select().from(chatConversations).where(eq(chatConversations.endpointId, f.endpoint.id));
+      const comments = await db.select().from(issueComments).where(eq(issueComments.issueId, conversation.issueId!));
+      expect(comments).toHaveLength(1);
+      await send({ ...allowed, changes: { body: { from: body } } });
+      expect(await db.select().from(issueComments).where(eq(issueComments.issueId, conversation.issueId!))).toHaveLength(1);
+      await db.update(chatIdentityLinks).set({ status: "revoked" }).where(eq(chatIdentityLinks.principalId, f.principal.id));
+      await send({ ...allowed, issue: { ...allowed.issue, number: 85 } });
+      expect(await db.select().from(chatConversations).where(eq(chatConversations.endpointId, f.endpoint.id))).toHaveLength(1);
+      expect(await f.service.listActivity(f.endpoint.id)).toEqual(expect.arrayContaining([expect.objectContaining({ status: "filtered" })]));
+    });
+    it.each(["issue_comment", "pull_request_review_comment"])("admits a newly mentioned %s edit while preserving its lifecycle record", async (event) => {
+      const f = await reviewBotFixture();
+      const target = { number: 83, title: "Say hello", body: "Description", user: { id: 42, login: "octocat", type: "User" } };
+      const payload = {
+        action: "edited", installation: { id: 2468 },
+        repository: { id: 97531, full_name: "paperclipai/paperclip", name: "paperclip", owner: { id: 1357, login: "paperclipai" } },
+        sender: target.user, issue: target, pull_request: target,
+        comment: { id: 83001, body: `@${f.endpoint.botUsername!} help`, user: target.user, updated_at: new Date().toISOString() },
+        changes: { body: { from: "No mention" } },
+      };
+      await f.service.handleWebhook(f.endpoint.publicId, "github", signedGitHubWebhookRequest({ event, delivery: randomUUID(), payload, webhookSecret: f.webhookSecret }));
+      await expect.poll(async () => (await db.select().from(chatConversations).where(eq(chatConversations.endpointId, f.endpoint.id))).length).toBe(1);
+      const deliveries = await db.select().from(chatDeliveries).where(eq(chatDeliveries.endpointId, f.endpoint.id));
+      expect(deliveries).toEqual(expect.arrayContaining([
+        expect.objectContaining({ eventKind: "message_updated" }),
+        expect.objectContaining({ eventKind: "mention", normalizedEvent: expect.objectContaining({ githubManual: expect.objectContaining({ event: "mention" }) }) }),
+      ]));
+    });
+    it("records automatic policy skips without retaining provider content, and refuses mentions in disabled repositories", async () => {
+      const f = await reviewBotFixture();
+      const saved = await f.management.configuration(f.endpoint.id, "owner-user");
+      await f.management.saveConfiguration(f.endpoint.id, { expectedRevision: saved.revision, configuration: { ...saved.configuration, defaults: { ...saved.configuration.defaults, invocation: "mentions_only" } } }, "owner-user");
+      const payload = {
+        action: "opened", installation: { id: 2468 },
+        repository: { id: 97531, full_name: "paperclipai/paperclip", name: "paperclip", owner: { id: 1357, login: "paperclipai" } },
+        sender: { id: 42, login: "octocat" },
+        issue: { number: 86, title: "Private title", body: "Private body", user: { id: 42, login: "octocat", type: "User" }, labels: [] },
+      };
+      const delivery = randomUUID();
+      const send = (content = payload, guid = delivery) => f.service.handleWebhook(f.endpoint.publicId, "github", signedGitHubWebhookRequest({ event: "issues", delivery: guid, payload: content, webhookSecret: f.webhookSecret }));
+      await send(); await send();
+      const activity = await f.service.listActivity(f.endpoint.id);
+      expect(activity.filter(row => row.status === "filtered")).toHaveLength(1);
+      expect(activity).toEqual(expect.arrayContaining([expect.objectContaining({ detail: expect.stringContaining("runs only when mentioned") })]));
+      const [ignored] = await db.select().from(chatDeliveries).where(eq(chatDeliveries.endpointId, f.endpoint.id));
+      expect(JSON.stringify(ignored.normalizedEvent)).not.toContain("Private");
+      expect(ignored.normalizedEvent).toHaveProperty("filtering.contentRetained", false);
+      await db.update(chatEndpointResources).set({ enabled: false }).where(eq(chatEndpointResources.endpointId, f.endpoint.id));
+      await send({ ...payload, issue: { ...payload.issue, body: `@${f.endpoint.botUsername!} help` } }, randomUUID());
+      expect(await db.select().from(chatConversations).where(eq(chatConversations.endpointId, f.endpoint.id))).toHaveLength(0);
+      expect(f.wakeup).not.toHaveBeenCalled();
+    });
     it("admits opt-in signed issue events without PR checks, deduplicates them and rechecks revoked policy", async () => {
       const f = await reviewBotFixture();
       const payload = {

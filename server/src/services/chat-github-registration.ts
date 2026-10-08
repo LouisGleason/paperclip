@@ -228,6 +228,7 @@ export function githubChatRegistrationService(
           "issues",
           "issue_comment",
           "pull_request_review_comment",
+          "pull_request_review",
           "pull_request",
         ],
       },

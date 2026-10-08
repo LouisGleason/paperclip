@@ -407,3 +407,65 @@ No new connection or App was created during this correction. The delayed-ping
 waiting and same-draft recovery fixes remain in place. All 30 focused setup and
 management UI tests, UI typecheck/build, Storybook build and token gates pass.
 The earlier full-suite and current-head CI/review limits still apply.
+
+### Explicit mentions in descriptions and comments (October 8)
+
+The user's issue #5 contained `@banana-bot-man` in its description. Its signed
+`issues` delivery reached the stack at 11:24:21 UTC and was acknowledged, but
+the handler used automatic issue policy without looking for an explicit
+mention. Mentions-only correctly disabled automatic work, so no task existed.
+The repository and configuring user's verified identity were already allowed.
+
+Explicit mentions now enter the ordinary manual-message admission path for
+issue and PR descriptions, conversation comments, inline review comments, and
+submitted review summaries. Body edits trigger only when they add a mention;
+an existing mention does not replay on pushes, title edits, reopening, or an
+unrelated body edit. The authenticated editor is the initiating principal.
+Original authors cannot lend their access to an unauthorized editor. The
+existing repository, identity, membership, sponsor, runtime and low-trust gates
+remain authoritative, including current-state checks before task mutation and
+publication. Description requests do not automatically create review checks:
+the agent must use its normal review tools when a review is requested.
+
+Created comments preserve the native adapter's message and thread identities;
+edited requests have distinct delivery-deduplicated identities. Comment edits
+also retain their original lifecycle update. An explicit dependency processes
+the new mention before an orphan edit receipt can wait for the old unmentioned
+comment. Source URLs stay correct through both live and recovered admission.
+Automatic policy skips appear in Activity without retaining provider content.
+
+New App manifests subscribe to `pull_request_review` as well as the existing
+four events. It uses the existing Pull requests permission, with no new
+permission scope. Older Apps remain compatible; review-summary mentions need
+that event enabled in their App settings. The gateway still transports the
+original signed bytes, and the stack owns parsing and admission.
+
+Live qualification used the existing Banana Bot Man App, company, agent,
+installation, vault and single smoke repository, with revision 1 unchanged:
+mentions-only, automatic events empty, and automatic issue runs off.
+
+| Real GitHub source | Paperclip outcome | Provider outcome |
+| --- | --- | --- |
+| Issue #6 description | GIT-7 completed | One animal response from `banana-bot-man[bot]` |
+| PR #7 description | GIT-8 completed; current head `7f456f37881bf4bfe39692f897d60e1625521298` | 5/5 review with animal; completed successful Paperclip Review check |
+| Issue #8 without mention | No task | Activity explains mentions-only skip |
+| Issue #8 comment edited to add mention | GIT-9 completed | Animal response from the same App |
+| PR #7 inline comment | GIT-10 completed in the exact inline thread | Animal reply under that comment |
+
+The original issue #5 was left intact. Review-summary delivery is covered by
+signed integration tests; the existing App's subscription was not changed for
+live qualification. All 51 GitHub workflow integration tests, 125 parsing,
+policy and webhook configuration tests, 33 catalog tests, and seven native
+GitHub adapter/provider regressions pass. The final five signed-source cases
+also pass with mixed-case repository names and repository-specific guidance.
+Workspace typecheck and build pass; server typecheck and build were repeated
+after the final routing correction.
+
+A fresh full `pnpm test:run` reported one failure in the unchanged
+`workspace-runtime.test.ts` bounded-conflict case and was interrupted after
+that failure while other server suites were still running. That exact test
+passes in isolation. There is no verified baseline or green full-suite claim.
+Logs: `/private/tmp/github-mentions-repo-tests.log` and
+`/private/tmp/github-mentions-workspace-runtime-failure.log`.
+
+Live review evidence: `/private/tmp/paperclip-github-e2e-evidence/github-description-mention-review.png`.

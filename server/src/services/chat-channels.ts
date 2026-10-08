@@ -14,7 +14,7 @@ import { buildChatCommunicationGuidance } from "./chat-communication-guidance.js
 function githubPolicyRecord(value: unknown): Record<string, unknown> { return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}; }
 import { githubChatManagementService } from "./chat-github-management.js";
 import { githubReviewCheckService } from "./chat-github-checks.js";
-import { githubAutomaticReviewEvent, githubAutomaticIssueEvent, githubAutomaticAdmission, githubPreviousAssessment } from "./chat-github-events.js";
+import { githubAutomaticReviewEvent, githubAutomaticIssueEvent, githubAutomaticAdmission, githubPreviousAssessment, githubBodyMentionsBot, githubExplicitMentionEvent } from "./chat-github-events.js";
 import { githubReviewPrompt } from "./chat-github-review-policy.js";
 import { chatGitHubConfigurations, chatGitHubRegistrations, chatGitHubReviews } from "@paperclipai/db";
 import type { GitHubReviewEventContext, GitHubIssueEventContext, GitHubAutomaticEventContext, GitHubReviewPolicy } from "@paperclipai/shared";
@@ -812,6 +812,7 @@ const UNAVOIDABLE_GITHUB_EVENTS = [
 const SUPPORTED_GITHUB_WEBHOOK_EVENTS = new Set<string>([
   "issues",
   "pull_request",
+  "pull_request_review",
   "ping",
   ...REQUIRED_GITHUB_EVENTS,
   ...UNAVOIDABLE_GITHUB_EVENTS,
@@ -1098,6 +1099,7 @@ type LiveInboundMessage = {
   endpoint: EndpointRow;
   message: Message;
   receiptReactionSupported: boolean;
+  providerUrl: string | null;
   runtimeContext?: InboundRuntimeContext;
   thread: Thread;
   trigger: ChatSdkMessageCallbackEvent["trigger"];
@@ -6315,6 +6317,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
         ...REQUIRED_GITHUB_EVENTS,
         ...UNAVOIDABLE_GITHUB_EVENTS,
         "pull_request",
+        "pull_request_review",
         "issues",
       ]);
       const excessiveEvents = [...configuredEvents].filter(
@@ -14537,7 +14540,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
     if (endpoint.provider === "github" && !githubAutomatic && !githubIssue && !githubManual) {
       const [config] = await db.select().from(chatGitHubConfigurations).where(eq(chatGitHubConfigurations.endpointId, endpoint.id));
       if (config) {
-        const repository = thread.channelId.replace(/^github:/, "");
+        const repository = thread.channelId.replace(/^github:/, "").toLowerCase();
         const [repo] = await db.select().from(chatEndpointResources).where(and(eq(chatEndpointResources.endpointId, endpoint.id), eq(chatEndpointResources.providerResourceId, repository)));
         const repositoryId = String(repo?.metadata?.providerRepositoryId ?? "");
         githubManual = { policy: { ...config.configuration.defaults, ...config.configuration.repositories[repositoryId] }, revision: config.revision, event: trigger === "mention" || message.isMention ? "mention" : "comment" };
@@ -14632,6 +14635,10 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
       (githubAutomatic
         ? `https://github.com/${githubAutomatic.context.repository}/pull/${githubAutomatic.context.pullNumber}`
         : githubIssue ? `https://github.com/${githubIssue.context.repository}/issues/${githubIssue.context.issueNumber}` : null) ??
+      // Description/review requests and edits have synthetic ledger IDs, not
+      // native comment IDs. Their verified source URL must not acquire a fake
+      // issuecomment anchor from that ledger identity.
+      (endpoint.provider === "github" && githubManual && !receiptReactionSupported ? recoveredProviderUrl : null) ??
       chatProviderConversationUrl({
         provider: endpoint.provider,
         providerAccountId: endpoint.providerAccountId,
@@ -15277,6 +15284,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
         message,
         trigger,
         receiptReactionSupported,
+        providerUrl,
         runtimeContext,
       });
       if (!deferDrainUntilFollowup) {
@@ -16853,8 +16861,12 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
     )
       return null;
     const normalized = delivery.normalizedEvent as {
-      message?: { targetProviderEventId?: unknown };
+      message?: { targetProviderEventId?: unknown; admissionDependencyEventId?: unknown };
     };
+    // An edit can also introduce a new addressed request. Process that durable
+    // admission before waiting for the old, potentially unadmitted source.
+    if (typeof normalized.message?.admissionDependencyEventId === "string")
+      return normalized.message.admissionDependencyEventId;
     return typeof normalized.message?.targetProviderEventId === "string"
       ? normalized.message.targetProviderEventId
       : null;
@@ -17458,7 +17470,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
               live.message,
               live.trigger,
               false,
-              null,
+              live.providerUrl,
               live.runtimeContext,
               undefined,
               delivery.id,
@@ -17688,6 +17700,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
       providerUpdateId?: number | null;
       raw?: unknown;
       revision?: string | null;
+      admissionDependencyEventId?: string;
     },
     runtimeContext?: RuntimeContext,
   ) {
@@ -17751,6 +17764,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
             message: {
               providerMessageId: input.messageId,
               targetProviderEventId,
+              ...(input.admissionDependencyEventId ? { admissionDependencyEventId: input.admissionDependencyEventId } : {}),
               ...(endpoint.provider === "github" && input.isBotMessage === true
                 ? { isBotMessage: true }
                 : {}),
@@ -24715,6 +24729,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
       eventType === "issue_comment" ||
       eventType === "issues" ||
       eventType === "pull_request" ||
+      eventType === "pull_request_review" ||
       eventType === "pull_request_review_comment"
     );
   }
@@ -24728,15 +24743,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
     if (!comment || typeof comment !== "object") return false;
     const body = (comment as { body?: unknown }).body;
     if (typeof body !== "string") return false;
-    const identities = new Set([
-      botUsername,
-      botUsername.replace(/\[bot\]$/i, ""),
-    ]);
-    return [...identities].some((identity) => {
-      if (!identity) return false;
-      const escaped = identity.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      return new RegExp(`(?<!\\w)@${escaped}(?![\\w-])`, "i").test(body);
-    });
+    return githubBodyMentionsBot(body, botUsername);
   }
 
   function githubIngressAllowedInEndpointState(
@@ -27239,11 +27246,44 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
     // their normal transactional fences if a pause wins after this check.
     if (!matchesGitHubIngressFence(runtimeContext))
       return ignoreSupersededIngress();
+    if (provider === "github") {
+      const mention = githubExplicitMentionEvent(
+        request.headers.get("x-github-event") ?? "",
+        await request.clone().json(),
+        request.headers.get("x-github-delivery") ?? "",
+        endpoint.botUsername,
+      );
+      if (mention) {
+        const thread = endpointRuntime.thread(mention.threadId);
+        const message = {
+          id: mention.messageId, threadId: thread.id, text: mention.body,
+          formatted: { type: "root", children: [] }, raw: mention.raw,
+          author: { userId: mention.sender.id, userName: mention.sender.login, fullName: mention.sender.login, isBot: false, isMe: false, isSystem: false },
+          metadata: { dateSent: new Date(), edited: mention.edited }, attachments: [], links: [], isMention: true,
+        } as unknown as Message;
+        await processMessage(endpoint, thread, message, "mention", true, mention.url, { ...runtimeContext, endpointRuntime }, undefined, null, mention.receiptReactionSupported);
+        if (mention.edited) {
+          // Admit the new explicit request before its supplemental edit
+          // record: an orphan lifecycle receipt must not wait for the old
+          // unmentioned comment and block this newly addressed root.
+          const lifecycle = await githubLifecycleEventFromRequest(request.clone());
+          if (lifecycle) await recordLifecycleDelivery({
+            endpointId: endpoint.id, ...lifecycle,
+            admissionDependencyEventId: `${durableExternalThreadIdentity(thread.id)}:${message.id}`,
+          }, runtimeContext);
+        }
+        return new Response("accepted", { status: 202 });
+      }
+      if (request.headers.get("x-github-event") === "pull_request_review") return new Response("ignored", { status: 200 });
+    }
     if (provider === "github" && request.headers.get("x-github-event") === "issues") {
       const event = githubAutomaticIssueEvent(await request.clone().json(), request.headers.get("x-github-delivery") ?? "");
       if (!event) return new Response("ignored", { status: 200 });
       const admission = await githubAutomaticAdmission(db, endpoint, event);
-      if (!admission?.allowed) return new Response("ignored", { status: 200 });
+      if (!admission?.allowed) {
+        await recordGitHubAutomaticSkip(endpoint, event.deliveryId, "issue opened", admission?.reason, runtimeContext);
+        return new Response("ignored", { status: 200 });
+      }
       const thread = endpointRuntime.thread(`github:${event.repository}:issue:${event.issueNumber}`);
       const message = {
         id: `issue-event:${event.deliveryId}`, threadId: thread.id,
@@ -27267,7 +27307,10 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
       if (!event) return new Response("ignored", { status: 200 });
       const admission = await githubAutomaticAdmission(db, endpoint, event);
       if (admission) await githubReviewCheckService(db, fetchImpl).enqueue(endpoint, event, admission.allowed, admission.reason);
-      if (!admission?.allowed) return new Response("ignored", { status: 200 });
+      if (!admission?.allowed) {
+        await recordGitHubAutomaticSkip(endpoint, event.deliveryId, "pull request event", admission?.reason, runtimeContext);
+        return new Response("ignored", { status: 200 });
+      }
       const previousAssessment = await githubPreviousAssessment(db, endpoint, event.repositoryId, event.pullNumber);
       if (previousAssessment) event.priorReviewedHeadSha = previousAssessment.headSha;
       const thread = endpointRuntime.thread(`github:${event.repository}:${event.pullNumber}`);
@@ -28703,6 +28746,33 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
         lastPublicationStatus:
           lastPublication.get(conversation.id)?.state ?? null,
       };
+    });
+  }
+
+  async function recordGitHubAutomaticSkip(
+    endpoint: EndpointRow, deliveryId: string, event: string, reason: string | undefined, runtimeContext: LifecycleRuntimeFence,
+  ) {
+    const details: Record<string, string> = {
+      mentions_only: "This bot runs only when mentioned. No new mention was found in this event.",
+      event_disabled: "Automatic runs are off for this GitHub event.",
+      person_not_authorized: "The GitHub author is not authorized to start automatic work.",
+      identity_revoked: "The GitHub author's identity link was revoked.",
+      automatic_reviews_disabled_for_person: "Automatic runs are off for this GitHub author.",
+      guest_automatic_reviews_disabled: "Automatic runs are off for external contributors.",
+      responsible_user_unavailable: "The member responsible for automatic tasks is unavailable.",
+      repository_disabled: "Destination is not enabled in Paperclip",
+      bot_tools_disabled: "This bot's GitHub tools are disabled.",
+    };
+    await db.transaction(async (tx) => {
+      const current = await runtimeCallbackEndpoint(tx, endpoint.id, runtimeContext, ["verifying", "active"]);
+      if (!current) return;
+      const providerEventId = `github:policy_ingress:${createHash("sha256").update(deliveryId).digest("hex")}`;
+      await tx.insert(chatDeliveries).values({
+        companyId: current.companyId, endpointId: current.id,
+        providerEventId, deduplicationKey: providerEventId, eventKind: "message", state: "filtered", processedAt: new Date(),
+        redactedError: `GitHub ${event} ignored. ${details[reason ?? ""] ?? "Automatic runs are restricted by this bot's review policy."}`,
+        normalizedEvent: { providerEventId, kind: "message", filtering: { contentRetained: false, reason: reason ?? "automatic_policy_unavailable" } },
+      }).onConflictDoNothing();
     });
   }
 
