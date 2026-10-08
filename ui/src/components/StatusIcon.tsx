@@ -13,9 +13,12 @@ function statusLabel(status: string): string {
 
 interface StatusIconProps {
   status: string;
+  externalConversationState?: "active" | "waiting" | null;
   blockerAttention?: IssueBlockerAttention | null;
   onChange?: (status: string) => void;
   className?: string;
+  /** Optional layout wrapper around the glyph. Does not change glyph dimensions. */
+  glyphContainerClassName?: string;
   showLabel?: boolean;
   /** Glyph size (PAP-243a). Default `md` (16px); lists/detail/mentions use `lg` (20px). */
   size?: StatusGlyphSize;
@@ -88,20 +91,23 @@ function blockedAttentionLabel(blockerAttention: IssueBlockerAttention | null | 
  */
 export function StatusIcon({
   status,
+  externalConversationState,
   blockerAttention,
   onChange,
   className,
+  glyphContainerClassName,
   showLabel,
   size = "md",
   issueId,
   animated,
 }: StatusIconProps) {
   const [open, setOpen] = useState(false);
+  const displayStatus = status === "in_review" && externalConversationState === "waiting" ? "idle" : status;
   const isCoveredBlocked = status === "blocked" && blockerAttention?.state === "covered";
-  const ariaLabel = status === "blocked" ? blockedAttentionLabel(blockerAttention) : statusLabel(status);
-  const glyphStatus = isCoveredBlocked ? "in_queue" : status;
+  const ariaLabel = status === "blocked" ? blockedAttentionLabel(blockerAttention) : statusLabel(displayStatus);
+  const glyphStatus = isCoveredBlocked ? "in_queue" : displayStatus;
 
-  const glyph = (
+  const glyphIcon = (
     <StatusGlyph
       status={glyphStatus}
       size={size}
@@ -111,12 +117,17 @@ export function StatusIcon({
       title={ariaLabel}
     />
   );
+  const glyph = glyphContainerClassName ? (
+    <span className={glyphContainerClassName} data-status-glyph-container="true">
+      {glyphIcon}
+    </span>
+  ) : glyphIcon;
 
   if (!onChange) {
     return showLabel ? (
       <span className="inline-flex items-center gap-1.5">
         {glyph}
-        <span className="text-sm">{statusLabel(status)}</span>
+        <span className="text-sm">{statusLabel(displayStatus)}</span>
       </span>
     ) : (
       glyph
@@ -130,7 +141,7 @@ export function StatusIcon({
       className="inline-flex min-h-5 items-center gap-1.5 cursor-pointer hover:bg-accent/50 rounded px-1 -mx-1 py-0.5 transition-colors"
     >
       {glyph}
-      <span className="text-sm">{statusLabel(status)}</span>
+      <span className="text-sm">{statusLabel(displayStatus)}</span>
     </button>
   ) : (
     <button
