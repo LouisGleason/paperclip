@@ -170,6 +170,11 @@ describe('GitHub skill source import', () => {
     expect(link?.getAttribute('href')).toBe('https://github.com/settings/installations/123');
     expect(link?.getAttribute('target')).toBe('_blank');
     expect(document.body.textContent).not.toContain('Connect GitHub to see your repos');
+    vi.mocked(skillSourcesApi.repositories).mockResolvedValue(structuredClone(repos));
+    await act(async () => document.querySelector<HTMLButtonElement>('[aria-label="Refresh repositories"]')!.click());
+    await flush();
+    expect(skillSourcesApi.repositories).toHaveBeenCalledTimes(2);
+    expect(document.querySelectorAll('[cmdk-item]')).toHaveLength(2);
   });
   it('links empty repositories to standard GitHub setup in Apps while preserving the import draft', async () => {
     vi.mocked(skillSourcesApi.repositories).mockResolvedValue({ repositories: [], connections: [], connectionCount: 0, failedConnectionCount: 0 });

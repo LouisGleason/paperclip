@@ -168,12 +168,12 @@ function SourceDialog({ companyId, source, onClose, onSaved }: {
     <DialogHeader><DialogTitle>{source ? source.fullName : 'Import from GitHub'}</DialogTitle>{source && <DialogDescription id="source-description">Choose the skills to keep synced. Unchecked skills stay installed.</DialogDescription>}</DialogHeader>
       {!ready && !scan.isPending && <div className="flex flex-col gap-4">
         <div className="flex flex-col gap-2">
-          {availableRepositories.length > 0 && <div className="flex items-center justify-between gap-2">
+          {(availableRepositories.length > 0 || hasGitHubConnection) && <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <span className="text-xs text-muted-foreground">{availableRepositories.length} {availableRepositories.length === 1 ? 'repository' : 'repositories'}</span>
               <Button type="button" variant="ghost" size="icon-xs" aria-label="Refresh repositories" title="Refresh repositories" disabled={busy || repositories.isFetching} onClick={() => void repositories.refetch()}><RefreshCw className={repositories.isFetching ? 'size-3 animate-spin' : 'size-3'} /></Button>
             </div>
-            <Button asChild variant="outline" size="sm">{repositoryAccessLink}</Button>
+            {availableRepositories.length > 0 && <Button asChild variant="outline" size="sm">{repositoryAccessLink}</Button>}
           </div>}
           {repositories.isPending && <p role="status" className="text-sm text-muted-foreground">Loading your GitHub repositories…</p>}
           {availableRepositories.length > 0 && <Command className="h-auto border border-border" label="Source repositories">
