@@ -137,6 +137,12 @@ export function GitHubChatSetup() {
     (agent) => agent.id === (bot?.assignedAgentId ?? agentId),
   );
   const state = identityOnly ? undefined : progress.data;
+  const deliveryVerifiedWhileChecking =
+    state?.state === "verify" &&
+    !!bot?.setup?.webhookVerifiedAt &&
+    state.verification?.checks.some(
+      (check) => !check.ok && ["webhook", "delivery"].includes(check.key),
+    );
   const existingIdentityMethod =
     identityOnly || state?.identityMethod === "existing_connection";
   const connected = state?.state === "connected" && !existing;
@@ -604,10 +610,16 @@ export function GitHubChatSetup() {
       ) : state?.state === "verify" ? (
         <>
           <p role="status" className="text-sm text-muted-foreground">
-            {state.message ?? "Checking GitHub access…"}
+            {deliveryVerifiedWhileChecking
+              ? "GitHub delivery verified. Checking App and repository access…"
+              : state.message ?? "Checking GitHub access…"}
           </p>
           {state.verification?.checks
-            .filter((check) => !check.ok)
+            .filter(
+              (check) =>
+                !check.ok &&
+                !(deliveryVerifiedWhileChecking && ["webhook", "delivery"].includes(check.key)),
+            )
             .map((check) => (
               <p key={check.key} className="text-sm">
                 {check.detail}

@@ -423,44 +423,52 @@ export function githubChatManagementService(db: Db, fetchImpl = fetch) {
       const inaccessible: string[] = [];
       // Ask GitHub to authorize the selected repository IDs now. A cached
       // inventory alone cannot prove access after an installation is changed.
-      for (let offset = 0; offset < resources.length; offset += 4) {
-        await Promise.all(
-          resources.slice(offset, offset + 4).map(async (resource) => {
-            const repositoryId = String(
-              resource.metadata?.providerRepositoryId ?? "",
-            );
-            try {
-              if (
-                !permissionsOk ||
-                resource.availability !== "available" ||
-                !/^[1-9][0-9]*$/.test(repositoryId) ||
-                !Number.isSafeInteger(Number(repositoryId))
-              )
-                throw new Error("Unavailable repository");
-              const issued = await githubBotRequest<{ token?: string }>(
-                fetchImpl,
-                credentials.appJwt,
-                `/app/installations/${credentials.credentials.installationId}/access_tokens`,
-                {
-                  method: "POST",
-                  body: {
-                    repository_ids: [Number(repositoryId)],
-                    permissions: {
-                      contents: "read",
-                      metadata: "read",
-                      issues: "write",
-                      pull_requests: "write",
-                      checks: "write",
-                    },
-                  },
+      const verifiable = resources.filter((resource) => {
+        const repositoryId = String(resource.metadata?.providerRepositoryId ?? "");
+        if (
+          !permissionsOk ||
+          resource.availability !== "available" ||
+          !/^[1-9][0-9]*$/.test(repositoryId) ||
+          !Number.isSafeInteger(Number(repositoryId))
+        ) {
+          inaccessible.push(resource.label ?? resource.providerResourceId);
+          return false;
+        }
+        return true;
+      });
+      // GitHub authorizes up to 500 explicit IDs in one scoped token request.
+      // Keep these tokens inside verification; task credentials remain scoped
+      // separately. Never omit repository_ids, which would request all access.
+      for (let offset = 0; offset < verifiable.length; offset += 500) {
+        const batch = verifiable.slice(offset, offset + 500);
+        try {
+          const issued = await githubBotRequest<{ token?: string }>(
+            fetchImpl,
+            credentials.appJwt,
+            `/app/installations/${credentials.credentials.installationId}/access_tokens`,
+            {
+              method: "POST",
+              body: {
+                repository_ids: batch.map((resource) =>
+                  Number(resource.metadata!.providerRepositoryId),
+                ),
+                permissions: {
+                  contents: "read",
+                  metadata: "read",
+                  issues: "write",
+                  pull_requests: "write",
+                  checks: "write",
                 },
-              );
-              if (!issued.token) throw new Error("Missing installation token");
-            } catch {
-              inaccessible.push(resource.label ?? resource.providerResourceId);
-            }
-          }),
-        );
+              },
+            },
+          );
+          if (!issued.token) throw new Error("Missing installation token");
+        } catch {
+          // A rejected batch is unverified; do not activate from cached access.
+          inaccessible.push(
+            ...batch.map((resource) => resource.label ?? resource.providerResourceId),
+          );
+        }
       }
       checks.push({
         key: "repositories",

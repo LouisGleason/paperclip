@@ -207,6 +207,36 @@ describe("GitHub App wizard", () => {
     expect(container.textContent).toContain("continue automatically");
     expect(githubChatApi.registration).not.toHaveBeenCalled();
   });
+  it("replaces a stale ping wait as soon as signed delivery arrives", async () => {
+    vi.mocked(githubChatApi.advance).mockResolvedValue({
+      endpointId: "draft-1",
+      state: "verify",
+      message: "Waiting for GitHub to verify webhook delivery…",
+      verification: {
+        ready: false,
+        checks: [{ key: "webhook", label: "Signed delivery", ok: false,
+          detail: "Keep this page open until the signed ping arrives." }],
+      },
+    });
+    await render("resume=draft-1");
+    expect(container.textContent).toContain("Waiting for GitHub");
+    // Endpoint polling observes the receipt while full access verification is
+    // still in flight. The previous progress response must not mislead users.
+    await act(async () => {
+      client.setQueryData(["github-setup", "draft-1"], {
+        ...fixture.endpoint,
+        setup: { ...fixture.endpoint.setup, webhookVerifiedAt: "2026-10-08T10:31:10Z" },
+      });
+    });
+    await settle();
+    expect(container.querySelector('[role="status"]')?.textContent).toContain(
+      "GitHub delivery verified. Checking App and repository access",
+    );
+    expect(container.textContent).not.toContain("Waiting for GitHub");
+    expect(container.textContent).not.toContain("until the signed ping arrives");
+    expect(container.textContent).not.toContain("GitHub connected");
+    expect(githubChatApi.registration).not.toHaveBeenCalled();
+  });
   it("reconnects the same App using vaulted credentials without requiring another paste", async () => {
     fixture.endpoint.status = "attention";
     fixture.endpoint.botExternalId = "1234";

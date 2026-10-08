@@ -183,6 +183,34 @@ GitHub signature verification, and deduplication across push and polling.
 Localhost and self-hosted instances can continue using outbound polling.
 This is a deferred improvement; do not implement it in the current setup work.
 
+## Live setup finding: slow repository verification (2026-10-08)
+
+The personal-account Animal Bot Man setup received a verified signed ping at
+10:31:10 UTC. Its wizard still showed the previous ping-wait response while
+connection verification checked 86 enabled repositories, once in progress and
+again under the credential lease before activation. The next setup response
+completed at 10:32:03 UTC; missing HTTPS was not the cause.
+
+Verify explicit enabled repository IDs in batches within GitHub's 500-ID limit,
+preserving the final check under the activation lease. Never request an unscoped
+token or pass these verification tokens to agents. A failed batch remains
+unverified. As soon as endpoint polling observes signed delivery, replace the
+old ping-wait message with App/repository verification progress. Keep the same
+App, vault, agent, and GitHub-selected repository access.
+
+Focused tests cover 86- and 501-repository verification, disabled selections,
+revoked access, and the UI receipt arriving ahead of a full progress response.
+The existing draft reached connected without a new App or credential entry.
+After restarting the preserved test drive with the fix, this same App's full
+progress verification returned connected in 2.74 seconds, with all 86 repository
+checks passing and the configuration still at revision 1. Server/UI typecheck
+and builds, 24 focused backend tests, 19 wizard UI tests, and token gates pass.
+Connection completion remains separate from proving a model or review run.
+
+[GitHub's installation-token documentation](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-an-installation-access-token-for-a-github-app)
+specifies the 500-repository limit and prohibits granting access beyond the
+installation's authorized repositories.
+
 ## Prior findings retained
 
 Earlier setup research found repeated interviews, missing manager APIs, tunnel

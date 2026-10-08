@@ -3497,6 +3497,49 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
         detail: expect.stringContaining("Restore installation access"),
       });
     });
+    it.each([86, 501])("verifies %i enabled repositories in bounded token batches", async (count) => {
+      const f = await reviewBotFixture();
+      const permissions = { contents: "read", issues: "write", metadata: "read", pull_requests: "write", checks: "write" };
+      f.setAppAccess({ permissions, events: ["pull_request", "issue_comment", "pull_request_review_comment"] });
+      const [first] = await db.select().from(chatEndpointResources)
+        .where(eq(chatEndpointResources.endpointId, f.endpoint.id));
+      const ids = [Number(first.metadata!.providerRepositoryId)];
+      await db.insert(chatEndpointResources).values(Array.from({ length: count - 1 }, (_, index) => {
+        const repositoryId = 100_000 + index;
+        ids.push(repositoryId);
+        return { ...first, id: randomUUID(), providerResourceId: `paperclipai/repo-${index}`,
+          label: `paperclipai/repo-${index}`, enabled: true, availability: "available" as const,
+          metadata: { ...first.metadata, providerRepositoryId: repositoryId } };
+      }));
+      // A saved narrower selection must never be included just because it is
+      // present in the installation inventory.
+      await db.insert(chatEndpointResources).values({ ...first, id: randomUUID(),
+        providerResourceId: "paperclipai/disabled", label: "paperclipai/disabled", enabled: false,
+        metadata: { ...first.metadata, providerRepositoryId: 999_999 } });
+      const batches: number[][] = [];
+      let revoked = false;
+      f.setSupplementalProviderFetch(async (input, init) => {
+        if (String(input).endsWith("/app/installations/2468"))
+          return Response.json({ permissions, suspended_at: null });
+        if (String(input).endsWith("/access_tokens")) {
+          const body = JSON.parse(String(init?.body));
+          expect(body.permissions).toEqual(permissions);
+          expect(body.repository_ids.length).toBeGreaterThan(0);
+          expect(body.repository_ids.length).toBeLessThanOrEqual(500);
+          batches.push(body.repository_ids);
+          return revoked ? new Response("", { status: 403 }) : Response.json({ token: "test-installation-token" });
+        }
+        return undefined;
+      });
+      const verified = await f.management.verification(f.endpoint.id);
+      expect(verified.checks.find((check) => check.key === "repositories")?.ok).toBe(true);
+      expect(batches).toHaveLength(Math.ceil(count / 500));
+      expect(batches.flat().sort((a, b) => a - b)).toEqual(ids.sort((a, b) => a - b));
+      revoked = true;
+      const denied = await f.management.verification(f.endpoint.id);
+      expect(denied.connectionReady).toBe(false);
+      expect(denied.checks.find((check) => check.key === "repositories")?.ok).toBe(false);
+    });
     it("requires every essential GitHub tool and rejects Contents write during verification", async () => {
       const f = await reviewBotFixture();
       let contents = "read";
