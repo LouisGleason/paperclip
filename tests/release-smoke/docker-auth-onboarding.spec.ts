@@ -115,7 +115,8 @@ test.describe("Docker authenticated onboarding smoke", () => {
     await page.getByRole("button", { name: "Create Account" }).click();
     await expect(page).not.toHaveURL(/\/auth/, { timeout: 20_000 });
     await page.goto(bootstrapPath!);
-    await page.getByRole("button", { name: "Accept bootstrap invite" }).click();
+    await expect(page.getByRole("heading", { name: "Accept bootstrap invite" })).toBeVisible();
+    await page.getByRole("button", { name: "Accept invite", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Bootstrap complete" })).toBeVisible();
     await page.getByRole("link", { name: "Open board" }).click();
     const health = await getJson<{ commit: string }>(page, "/api/health");

@@ -209,6 +209,39 @@ describe("Codex and OpenCode selected native account verification", () => {
     expect(bundledRunner).not.toHaveBeenCalled();
     expect(runnerBinding).toHaveBeenCalledWith(expect.stringMatching(/paperclip-runnerd$/));
   });
+  it.each(["codex", "opencode"] as const)("preserves and redacts %s failures from combined sandbox output", async provider => {
+    const model = provider === "codex" ? "gpt-6.1-sol" : "openrouter/example/model";
+    const config = { env: { OPENAI_API_KEY: "selected-key", OPENROUTER_API_KEY: "selected-key",
+      NATIVE_AUTH_JSON_SECRET: JSON.stringify({ tokens: { access_token: "selected-access-token", refresh_token: "selected-refresh-token" } }) } };
+    execute.mockResolvedValue({ exitCode: 1, timedOut: false, stdout: `Authentication failed for ${model}: selected-key selected-access-token selected-refresh-token\n${"diagnostic ".repeat(300)}`, stderr: "" });
+    const result = await testNativeRunnerAuthentication({ ...context, config }, provider, model);
+    expect(result).toMatchObject({ adapterType: "paperclip_runner", status: "fail", checks: [{ code: `${provider}_hello_probe_auth_required`, level: "error", message: expect.stringContaining(`Authentication failed for ${model}`) }] });
+    expect(result.checks[0].message).toContain("[REDACTED]");
+    expect(result.checks[0].message.length).toBeLessThanOrEqual(2000);
+    expect(JSON.stringify(result)).not.toMatch(/selected-key|selected-access-token|selected-refresh-token/);
+    expect(result.checks[0].hint).toContain("Legacy runner is available explicitly in Advanced");
+    expect(execute).toHaveBeenCalledOnce();
+    expect(nativeProbe).not.toHaveBeenCalled();
+  });
+  it.each(["codex", "opencode"] as const)("keeps %s runtime/model failures distinct from authentication", async provider => {
+    execute.mockResolvedValue({ exitCode: 1, timedOut: false, stdout: "The requested model is unavailable", stderr: "" });
+    const result = await testNativeRunnerAuthentication(context, provider, provider === "codex" ? "missing-model" : "provider/missing-model");
+    expect(result).toMatchObject({ status: "fail", checks: [{ code: `${provider}_hello_probe_failed`, message: "The requested model is unavailable" }] });
+  });
+  it.each(["codex", "opencode"] as const)("prefers %s stderr over stdout when both streams are available", async provider => {
+    execute.mockResolvedValue({ exitCode: 1, timedOut: false, stdout: "Authentication failed in an unrelated diagnostic", stderr: "Provider pack prerequisite is missing: selected-key" });
+    const result = await testNativeRunnerAuthentication({ ...context, config: { env: { OPENAI_API_KEY: "selected-key" } } }, provider, provider === "codex" ? null : "provider/model");
+    expect(result).toMatchObject({ status: "fail", checks: [{ code: `${provider}_hello_probe_failed`, message: "Provider pack prerequisite is missing: [REDACTED]" }] });
+  });
+  it.each(["codex", "opencode"] as const)("retains %s actionable fallback for empty output and timeout precedence", async provider => {
+    execute.mockResolvedValue({ exitCode: 1, timedOut: false, stdout: " \n", stderr: " \n" });
+    const model = provider === "codex" ? null : "provider/model";
+    const empty = await testNativeRunnerAuthentication(context, provider, model);
+    expect(empty).toMatchObject({ status: "fail", checks: [{ code: `${provider}_hello_probe_failed`, message: "The selected native runtime could not verify this account.", hint: expect.stringContaining("Legacy runner is available explicitly in Advanced") }] });
+    execute.mockResolvedValue({ exitCode: 1, timedOut: true, stdout: "Authentication failed", stderr: "" });
+    expect(await testNativeRunnerAuthentication(context, provider, model)).toMatchObject({ status: "fail", checks: [{ code: `${provider}_hello_probe_timeout`, message: "Native provider hello probe timed out." }] });
+    expect(nativeProbe).not.toHaveBeenCalled();
+  });
   it("preserves the explicitly selected qualified image daemon instead of resolving another one", async () => {
     vi.stubEnv("PAPERCLIP_RUNNER_REMOTE_PROVIDER_PACK_PATH", "/opt/paperclip-runner/provider-pack");
     vi.stubEnv("PAPERCLIP_RUNNER_REMOTE_BINARY_PATH", "/image/exact-linux-daemon");
@@ -327,6 +360,38 @@ describe("selected native account verification", () => {
     expect(result.status).toBe("pass");
     expect(execute).toHaveBeenCalledWith(expect.any(String), context.executionTarget, expect.stringContaining("probeQualifiedAcpxEnvironment"), expect.objectContaining({ cwd: "/workspace", env: expect.objectContaining({ CLAUDE_CODE_OAUTH_TOKEN: "bound-subscription-token" }), timeoutSec: 110 }));
     expect(execute.mock.calls[0][2]).not.toContain("bound-subscription-token");
+  });
+
+  const remoteCredentials = [["claude", "CLAUDE_CODE_OAUTH_TOKEN", "claude-sonnet-5"], ["grok", "XAI_API_KEY", "grok-4.7"], ["cursor", "CURSOR_AUTH_TOKEN", "cursor-model"]] as const;
+  it.each(remoteCredentials)("preserves and redacts %s failures from combined sandbox output", async (agent, key, model) => {
+    execute.mockResolvedValue({ exitCode: 1, timedOut: false, stdout: `Authentication failed for ${model}: bound-subscription-token\n${"diagnostic ".repeat(300)}`, stderr: "" });
+    const result = await testNativeAcpxAuthentication({ ...context, config: { env: { [key]: "bound-subscription-token" } } }, agent, model);
+    expect(result).toMatchObject({ adapterType: "paperclip_runner", status: "fail", checks: [{ code: `${agent}_hello_probe_auth_required`, level: "error", message: expect.stringContaining(`Authentication failed for ${model}`) }] });
+    expect(result.checks[0].message).toContain("[REDACTED]");
+    expect(result.checks[0].message.length).toBeLessThanOrEqual(2000);
+    expect(JSON.stringify(result)).not.toContain("bound-subscription-token");
+    expect(result.checks[0].hint).toContain("Legacy runner is available explicitly in Advanced");
+    expect(execute).toHaveBeenCalledOnce();
+    expect(probe).not.toHaveBeenCalled();
+  });
+  it.each(remoteCredentials)("keeps %s runtime/model failures distinct from authentication", async (agent, key, model) => {
+    execute.mockResolvedValue({ exitCode: 1, timedOut: false, stdout: "The requested model is unavailable", stderr: "" });
+    const result = await testNativeAcpxAuthentication({ ...context, config: { env: { [key]: "selected-account" } } }, agent, model);
+    expect(result).toMatchObject({ status: "fail", checks: [{ code: `${agent}_hello_probe_failed`, message: "The requested model is unavailable" }] });
+  });
+  it.each(remoteCredentials)("prefers %s stderr over stdout when both streams are available", async (agent, key, model) => {
+    execute.mockResolvedValue({ exitCode: 1, timedOut: false, stdout: "Authentication failed in an unrelated diagnostic", stderr: "Provider pack prerequisite is missing: selected-account" });
+    const result = await testNativeAcpxAuthentication({ ...context, config: { env: { [key]: "selected-account" } } }, agent, model);
+    expect(result).toMatchObject({ status: "fail", checks: [{ code: `${agent}_hello_probe_failed`, message: "Provider pack prerequisite is missing: [REDACTED]" }] });
+  });
+  it.each(remoteCredentials)("retains %s actionable fallback for empty output and timeout precedence", async (agent, key, model) => {
+    const selectedContext = { ...context, config: { env: { [key]: "selected-account" } } };
+    execute.mockResolvedValue({ exitCode: 1, timedOut: false, stdout: " \n", stderr: " \n" });
+    const empty = await testNativeAcpxAuthentication(selectedContext, agent, model);
+    expect(empty).toMatchObject({ status: "fail", checks: [{ code: `${agent}_hello_probe_failed`, message: "The selected native runtime could not verify this account.", hint: expect.stringContaining("Legacy runner is available explicitly in Advanced") }] });
+    execute.mockResolvedValue({ exitCode: 1, timedOut: true, stdout: "Authentication failed", stderr: "" });
+    expect(await testNativeAcpxAuthentication(selectedContext, agent, model)).toMatchObject({ status: "fail", checks: [{ code: `${agent}_hello_probe_timeout`, message: "Native provider hello probe timed out." }] });
+    expect(probe).not.toHaveBeenCalled();
   });
 
   it.each([

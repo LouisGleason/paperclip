@@ -972,7 +972,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
   function selectHarness(harness: string) {
                   try {
                     const model = "";
-                    const resolved = harness === "openai_dot"
+                    const resolved: { adapterType: string; adapterConfig: Record<string, unknown> } = harness === "openai_dot"
                       ? { adapterType: "paperclip_runner", adapterConfig: { provider: "openai_dot", lifecycleMode: "per_turn", allowUnmeteredProvider: false } }
                       : ["claude_managed", "aws_agentcore"].includes(harness)
                       ? { adapterType: "paperclip_runner", adapterConfig: { provider: harness, model: harness === "aws_agentcore" ? "global.anthropic.claude-sonnet-4-6" : "claude-sonnet-5", lifecycleMode: "per_turn" } }

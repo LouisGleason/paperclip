@@ -85,6 +85,13 @@ function redactNativeProbeMessage(message: string, environment: Record<string, s
   return message.slice(0, 2000);
 }
 
+function nativeProbeFailureMessage(probe: { stdout: string; stderr: string }, environment: Record<string, string>): string {
+  // Sandbox one-shot execution returns combined output as stdout. Preserve its
+  // failure detail without exposing bound credentials or unbounded output.
+  return redactNativeProbeMessage(probe.stderr.trim() || probe.stdout.trim()
+    || "The selected native runtime could not verify this account.", environment);
+}
+
 /** SSH setup shares task artifacts, transport, isolated launch home, and process ownership. */
 async function probeSshNativeCodex(options: {
   context: AdapterEnvironmentTestContext;
@@ -283,7 +290,7 @@ export async function testNativeRunnerAuthentication(context: AdapterEnvironment
       const probe = await runAdapterExecutionTargetShellCommand(`native-hello-${crypto.randomUUID()}`, target, command,
         { cwd: target.remoteCwd, env: environment, timeoutSec: 110 });
       if (probe.timedOut) throw new Error("Native provider hello probe timed out.");
-      if (probe.exitCode !== 0) throw new Error(probe.stderr.trim() || "The selected native runtime could not verify this account.");
+      if (probe.exitCode !== 0) throw new Error(nativeProbeFailureMessage(probe, environment));
       const result = JSON.parse(probe.stdout.trim());
       if (result.codexCredentialRefreshPath) {
         try {
@@ -393,7 +400,7 @@ export async function testNativeAcpxAuthentication(context: AdapterEnvironmentTe
       const probe = await runAdapterExecutionTargetShellCommand(`native-hello-${crypto.randomUUID()}`, context.executionTarget, command,
         { cwd: context.executionTarget.remoteCwd, env: environment, timeoutSec: 110 });
       if (probe.timedOut) throw new Error("Native provider hello probe timed out.");
-      if (probe.exitCode !== 0) throw new Error(probe.stderr.trim() || "The selected native runtime could not verify this account.");
+      if (probe.exitCode !== 0) throw new Error(nativeProbeFailureMessage(probe, environment));
       const result = JSON.parse(probe.stdout.trim());
       if (result.grokCredentialRefreshPath) {
         if (!grokCredential?.home || typeof result.runtimeDirectory !== "string"
