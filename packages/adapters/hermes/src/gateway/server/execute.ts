@@ -321,7 +321,11 @@ function buildInput(ctx: AdapterExecutionContext, paperclipApiUrl: string | null
   return lines.filter((line) => line !== null && line !== undefined).join("\n").trim();
 }
 
-function buildRunBody(ctx: AdapterExecutionContext, sessionKey: string | null): Record<string, unknown> {
+function buildRunBody(
+  ctx: AdapterExecutionContext,
+  sessionKey: string | null,
+  paperclipApiKey: string | null,
+): Record<string, unknown> {
   const paperclipApiUrl = nonEmpty(ctx.config.paperclipApiUrl);
   const payloadTemplate = parseObject(ctx.config.payloadTemplate);
   const configuredInput = nonEmpty(payloadTemplate.input);
@@ -337,6 +341,14 @@ function buildRunBody(ctx: AdapterExecutionContext, sessionKey: string | null): 
     input,
     instructions,
     ...(sessionKey ? { session_id: sessionKey } : {}),
+    // A run JWT is minted for this exact Paperclip agent/run. Hermes receives it only
+    // in the accepted request body and exports it for this run's child processes.
+    // Do not fall back to a gateway-global PAPERCLIP_API_KEY: that loses attribution.
+    runtime_env: {
+      PAPERCLIP_RUN_ID: ctx.runId,
+      ...(paperclipApiUrl ? { PAPERCLIP_API_URL: paperclipApiUrl } : {}),
+      ...(paperclipApiKey ? { PAPERCLIP_API_KEY: paperclipApiKey } : {}),
+    },
   };
 }
 
@@ -857,7 +869,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     runHeaders.Authorization,
     runHeaders["X-Hermes-Session-Key"],
   ]);
-  const body = buildRunBody(ctx, sessionKey);
+  const body = buildRunBody(ctx, sessionKey, ctx.authToken ?? null);
   const createRunUrl = apiUrl(baseUrl, "/v1/runs");
 
   await ctx.onMeta?.({
