@@ -2480,12 +2480,66 @@ export const usageSchema = {
     "runDeltaAvailable": {
       "type": "boolean"
     },
+    "billing": {
+      "$ref": "#/$defs/billing"
+    },
     "runDelta": {
       "$ref": "#/$defs/measurement"
     }
   },
   "additionalProperties": false,
   "$defs": {
+    "billing": {
+      "type": "object",
+      "required": [
+        "schema",
+        "source",
+        "biller",
+        "currency",
+        "complete",
+        "requestCount",
+        "reportedRequestCount",
+        "amountUsd",
+        "amountUsdExact"
+      ],
+      "properties": {
+        "schema": {
+          "const": "paperclip.usage.billing/v1"
+        },
+        "source": {
+          "const": "provider_reported"
+        },
+        "biller": {
+          "const": "openrouter"
+        },
+        "currency": {
+          "const": "USD"
+        },
+        "complete": {
+          "type": "boolean"
+        },
+        "requestCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "reportedRequestCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "amountUsd": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1000000
+        },
+        "amountUsdExact": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,6})\\.[0-9]{9}$"
+        }
+      },
+      "additionalProperties": false
+    },
     "measurement": {
       "type": "object",
       "required": [
@@ -3905,6 +3959,68 @@ export const eventSchema = {
       "if": {
         "properties": {
           "eventType": {
+            "const": "usage.reported"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "properties": {
+              "billing": {
+                "$ref": "https://paperclip.dev/schemas/prp/v1/usage.schema.json#/$defs/billing"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "required": [
+              "kind",
+              "usage"
+            ],
+            "properties": {
+              "kind": {
+                "const": "usage"
+              },
+              "usage": {
+                "type": "object",
+                "required": [
+                  "billing"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "properties": {
+              "usage": {
+                "type": "object",
+                "properties": {
+                  "billing": {
+                    "$ref": "https://paperclip.dev/schemas/prp/v1/usage.schema.json#/$defs/billing"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "eventType": {
             "const": "plan.updated"
           }
         }
@@ -4587,6 +4703,68 @@ export const eventV2Schema = {
     }
   },
   "allOf": [
+    {
+      "if": {
+        "properties": {
+          "eventType": {
+            "const": "usage.reported"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "properties": {
+              "billing": {
+                "$ref": "https://paperclip.dev/schemas/prp/v1/usage.schema.json#/$defs/billing"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "required": [
+              "kind",
+              "usage"
+            ],
+            "properties": {
+              "kind": {
+                "const": "usage"
+              },
+              "usage": {
+                "type": "object",
+                "required": [
+                  "billing"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "properties": {
+              "usage": {
+                "type": "object",
+                "properties": {
+                  "billing": {
+                    "$ref": "https://paperclip.dev/schemas/prp/v1/usage.schema.json#/$defs/billing"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     {
       "if": {
         "properties": {

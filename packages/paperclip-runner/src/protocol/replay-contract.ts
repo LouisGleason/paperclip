@@ -16,6 +16,7 @@ import {
   sessionGoalSchema,
   stopReasonSchema,
   terminalSchema,
+  usageSchema,
 } from "./generated/schema-bundle.js";
 import {
   eventValidator as standaloneEventV1Validator,
@@ -36,8 +37,9 @@ type EventReferences = [
   typeof stopReasonSchema,
   typeof terminalSchema,
   typeof resultSchema,
+  typeof usageSchema,
 ];
-type EventV2References = [typeof sessionGoalSchema];
+type EventV2References = [typeof sessionGoalSchema, typeof usageSchema];
 type CapabilitiesV2References = [typeof sessionGoalSchema];
 export type PrpIdentity = FromSchema<typeof identitySchema>;
 export type PrpCapabilities = FromSchema<typeof capabilitiesSchema>;
