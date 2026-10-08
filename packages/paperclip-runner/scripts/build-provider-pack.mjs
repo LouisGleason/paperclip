@@ -166,7 +166,15 @@ try {
   mkdirSync(dirname(stableNodeCommand), { recursive: true, mode: 0o755 });
   copyFileSync(process.execPath, stableNodeCommand);
   chmodSync(stableNodeCommand, 0o755);
-  const relocatedNode = spawnSync(stableNodeCommand, ["--version"], {
+  // A freshly copied x64 Mach-O can stall when launched directly from a
+  // translated Node process. Select Rosetta explicitly for this build probe;
+  // native Intel and every other platform still execute the copied bytes directly.
+  const translated = process.platform === "darwin" && process.arch === "x64"
+    && spawnSync("/usr/sbin/sysctl", ["-n", "sysctl.proc_translated"], {
+      encoding: "utf8", timeout: 1_000,
+    }).stdout?.trim() === "1";
+  const relocatedNode = spawnSync(translated ? "/usr/bin/arch" : stableNodeCommand,
+    translated ? ["-x86_64", stableNodeCommand, "--version"] : ["--version"], {
     cwd: temporaryRoot, env: { PATH: "/usr/bin:/bin" }, encoding: "utf8", timeout: buildNodeStartupTimeout(),
   });
   if (relocatedNode.status !== 0 || relocatedNode.stdout.trim() !== `v${process.versions.node}`) {
@@ -181,7 +189,7 @@ try {
       || !/^sha256:[a-f0-9]{64}$/.test(metadata.profileDigest)
       || !/^sha256:[a-f0-9]{64}$/.test(metadata.closureDigest)) throw new Error("Candidate builder omitted its pinned identity");
     candidateProviders[provider] = { version: metadata.version, profileDigest: metadata.profileDigest,
-      closureDigest: metadata.closureDigest, qualification: provider === "cursor" ? "qualified" : "pending", path: assetPath,
+      closureDigest: metadata.closureDigest, qualification: ["cursor", "copilot"].includes(provider) ? "qualified" : "pending", path: assetPath,
       sha256: sha256Tree(join(temporaryRoot, assetPath)) };
   }
 
@@ -209,6 +217,17 @@ try {
   );
   writePortableExecutableShim("node", "node/bin/node");
   writePortableExecutableShim("opencode", "opencode-ai/bin/opencode.exe");
+  // Optional Copilot platform packages expose native .bin entries too. Make
+  // each installed entry portable without executing it during the build.
+  for (const platform of ["darwin-arm64", "darwin-x64", "linux-x64"]) {
+    const name = `copilot-${platform}`;
+    if (!existsSync(join(temporaryRoot, "node_modules", ".bin", name))) continue;
+    const executable = packRequire.resolve(`@github/${name}`);
+    writePortableExecutableShim(
+      name,
+      relative(realpathSync(join(temporaryRoot, "node_modules")), realpathSync(executable)),
+    );
+  }
   writePortableNodeShim("acpx", "acpx/dist/cli.js");
   writePortableNodeShim(
     "claude-agent-acp",
