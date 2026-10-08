@@ -63,6 +63,63 @@ beforeAll(async () => {
 afterAll(async () => { await database?.cleanup(); vi.unstubAllEnvs(); if (home) await rm(home, { recursive: true, force: true }); });
 
 describe("managed AI connections", () => {
+  it.each(["create", "hire", "edit"])("refuses unavailable Copilot models before %s persists configuration", async action => {
+    const { unprocessable } = await import("../errors.js");
+    const { errorHandler } = await import("../middleware/index.js");
+    const owner = `copilot-model-${action}`, id = randomUUID();
+    const savedConfig = { provider: "acpx", acpxAgent: "copilot", model: "gpt-5.6-luna" };
+    const aiConnection = { provider: "github", method: "api_key", mode: "responsible_user" } as const;
+    await db.insert(companyMemberships).values({ companyId, principalId: owner, principalType: "user", status: "active", membershipRole: "member" });
+    await db.insert(agents).values({ id, companyId, name: `Copilot ${action} fixture`, adapterType: "paperclip_runner", adapterConfig: savedConfig, runtimeConfig: { aiConnection } });
+    const token = `github_pat_fixture_model_${action}`;
+    const account = await service.save(companyId, owner, { provider: "github", method: "api_key", ownership: "personal", name: `Model ${action}`, apiKey: token, agentIds: [id], allAgents: false }, token);
+    await service.setDefault(companyId, owner, account.grantId);
+    const [company] = await db.select().from(companies).where(eq(companies.id, companyId));
+    await db.update(companies).set({ requireBoardApprovalForNewAgents: false }).where(eq(companies.id, companyId));
+    const before = await db.select({ id: agents.id }).from(agents).where(eq(agents.companyId, companyId));
+    const probe = vi.spyOn(copilotProbe, "probeCopilotExecutionTarget").mockRejectedValue(unprocessable("The selected Copilot model is unavailable for this account.", { code: "COPILOT_MODEL_UNAVAILABLE" }));
+    const app = express(); app.use(express.json());
+    app.use((req, _res, next) => { req.actor = { type: "board", source: "local_implicit", userId: owner, companyIds: [companyId], isInstanceAdmin: true }; next(); });
+    app.use("/api", agentRoutes(db)); app.use(errorHandler);
+    const config = { ...savedConfig, model: "unavailable-copilot-model" };
+    try {
+      const response = action === "edit"
+        ? await request(app).patch(`/api/agents/${id}`).send({ adapterConfig: config })
+        : await request(app).post(`/api/companies/${companyId}/${action === "hire" ? "agent-hires" : "agents"}`).send({ name: `Unavailable ${action}`, role: "general", adapterType: "paperclip_runner", adapterConfig: config, runtimeConfig: { aiConnection } });
+      expect(response.status, JSON.stringify(response.body)).toBe(422);
+      expect(response.body).toMatchObject({ error: "The selected Copilot model is unavailable for this account." });
+      expect(probe).toHaveBeenCalledExactlyOnceWith(token, null, "unavailable-copilot-model");
+      expect((await db.select().from(agents).where(eq(agents.id, id)))[0].adapterConfig).toEqual(savedConfig);
+      expect(await db.select({ id: agents.id }).from(agents).where(eq(agents.companyId, companyId))).toHaveLength(before.length);
+      expect(JSON.stringify(response.body)).not.toContain(token);
+    } finally {
+      probe.mockRestore();
+      await db.update(companies).set({ requireBoardApprovalForNewAgents: company.requireBoardApprovalForNewAgents }).where(eq(companies.id, companyId));
+    }
+  });
+
+  it("verifies the exact available Copilot model before a model-only edit with an unchanged connection", async () => {
+    const { errorHandler } = await import("../middleware/index.js");
+    const owner = "copilot-model-valid", id = randomUUID();
+    const aiConnection = { provider: "github", method: "api_key", mode: "responsible_user" } as const;
+    const config = { provider: "acpx", acpxAgent: "copilot", model: "gpt-5.6-luna" };
+    await db.insert(companyMemberships).values({ companyId, principalId: owner, principalType: "user", status: "active", membershipRole: "member" });
+    await db.insert(agents).values({ id, companyId, name: "Copilot available model", adapterType: "paperclip_runner", adapterConfig: { ...config, model: "previous-model" }, runtimeConfig: { aiConnection } });
+    const token = "github_pat_fixture_model_valid";
+    const account = await service.save(companyId, owner, { provider: "github", method: "api_key", ownership: "personal", name: "Valid model", apiKey: token, agentIds: [id], allAgents: false }, token);
+    await service.setDefault(companyId, owner, account.grantId);
+    const probe = vi.spyOn(copilotProbe, "probeCopilotExecutionTarget").mockResolvedValue({ status: "verified", version: "1.0.88", profileDigest: "fixture-profile", promptSent: false, models: [{ id: config.model, label: "GPT" }] });
+    const app = express(); app.use(express.json());
+    app.use((req, _res, next) => { req.actor = { type: "board", source: "local_implicit", userId: owner, companyIds: [companyId], isInstanceAdmin: true }; next(); });
+    app.use("/api", agentRoutes(db)); app.use(errorHandler);
+    try {
+      const response = await request(app).patch(`/api/agents/${id}`).send({ adapterConfig: config });
+      expect(response.status, JSON.stringify(response.body)).toBe(200);
+      expect(probe).toHaveBeenCalledExactlyOnceWith(token, null, config.model);
+      expect((await db.select().from(agents).where(eq(agents.id, id)))[0].adapterConfig).toMatchObject(config);
+      expect(response.body.runtimeConfig.aiConnection).toEqual(aiConnection);
+    } finally { probe.mockRestore(); }
+  });
   it("passes the live sandbox worker manager to Copilot connection verification", async () => {
     const pluginWorkerManager = {} as PluginWorkerManager;
     const probe = vi.spyOn(copilotProbe, "probeCopilotConnection").mockResolvedValue({
