@@ -58,6 +58,20 @@ checks installed dependency pins and agreement with Cursor's distribution manife
 and immutable release attestation (`cursor-contract.json`). Cursor's per-platform
 closure pins are generated from `cursor-distributions.json`.
 
+Packaged Codex startup and browser login resolve the Codex CLI from the installed
+ACP bridge dependency graph. They verify the qualified version and the executable
+path before launch. An explicit execution command still takes precedence. A
+missing or mismatched bundled runtime returns an installation error; it does not
+borrow a different Codex installation from `PATH`. Linux ARM64 retains its
+existing legacy login path because native execution is not qualified there.
+
+Release packages stage the qualified Codex dependency graph and native platform
+artifacts. The Linux artifact digest is recorded in
+`src/drivers/acpx/qualified-runtime-artifacts.json`. macOS payloads must match the
+pinned package version and host architecture. Release assembly also checks the
+source revision and runner binary identities before publication. This packaging
+does not change agent defaults or the selected runner of an existing agent.
+
 Every ACPX harness accepts an explicit caller-selected model without a Paperclip
 model allowlist. The adapter sends that ID unchanged and verifies the provider's
 effective model before prompting. An incomplete discovery catalog does not block

@@ -1,12 +1,15 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   existsSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -20,11 +23,58 @@ import cliEsbuildConfig from "../cli/esbuild.config.mjs";
 import { bundledCliNpmDependencies } from "./cli-bundled-npm-dependencies.mjs";
 import {
   createBundledInstallManifest,
+  configureBundledProviderOverrides,
+  dockerBundledProviderTarget,
+  inspectBundledNativeArtifact,
   materializePublishManifest,
+  mergeBundledProviderGraph,
   selectBundledDependencyPatches,
+  stageBundledEsbuildOptionalDependencies,
+  stageBundledProviderOptionalDependencies,
 } from "./prepare-bundled-package.mjs";
 
 const rootPackage = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+const profileData = JSON.parse(await readFile(new URL("../packages/paperclip-runner/acpx-profiles.json", import.meta.url), "utf8"));
+const runtimeData = JSON.parse(await readFile(new URL("../packages/paperclip-runner/src/drivers/acpx/qualified-runtime-artifacts.json", import.meta.url), "utf8"));
+const nativeTargets = ["linux-x64", "darwin-arm64", "darwin-x64"];
+function esbuildFixture(t) {
+  const directory = realpathSync(mkdtempSync(join(tmpdir(), "paperclip-bundled-esbuild-")));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const graph = join(directory, "node_modules");
+  const writePackage = (location, metadata) => {
+    mkdirSync(location, { recursive: true });
+    writeFileSync(join(location, "package.json"), JSON.stringify(metadata));
+    return location;
+  };
+  const acpx = writePackage(join(graph, "acpx"), { name: "acpx", version: "0.13.1" });
+  const esbuild = writePackage(join(acpx, "node_modules/esbuild"), {
+    name: "esbuild", version: "0.28.2", scripts: { postinstall: "node install.js" },
+    optionalDependencies: Object.fromEntries([...nativeTargets, "win32-x64"].map(target => [`@esbuild/${target}`, "0.28.2"])),
+  });
+  const producerBinary = writePackage(join(graph, "@esbuild/linux-x64"), {
+    name: "@esbuild/linux-x64", version: "0.28.2", os: ["linux"], cpu: ["x64"],
+  });
+  writePackage(join(graph, "unrelated-linux-x64"), { name: "unrelated-linux-x64", version: "1.0.0" });
+  const publish = { name: "@paperclipai/adapter-utils", version: "0.3.1", bundleDependencies: ["acpx"],
+    dependencies: { acpx: "0.13.1" }, optionalDependencies: { unrelated: "1.0.0" } };
+  return { directory, graph, esbuild, producerBinary, publish, writePackage };
+}
+function nativeFixture(directory, profile, target, data) {
+  const [os, cpu] = target.split("-");
+  const name = `${profile.agentRuntimePackage}-${target}`;
+  const packageRoot = join(directory, name);
+  mkdirSync(packageRoot, { recursive: true });
+  writeFileSync(join(packageRoot, "package.json"), JSON.stringify({ name, version: `${profile.agentRuntimeVersion}-${target}`, os: [os], cpu: [cpu] }));
+  const qualification = data[profile.agent].platforms[target];
+  const executable = qualification?.relativeExecutable ?? `vendor/${cpu === "arm64" ? "aarch64" : "x86_64"}-apple-darwin/bin/codex`;
+  const bytes = Buffer.alloc(32);
+  if (os === "linux") { bytes.set([0x7f, 0x45, 0x4c, 0x46, 2, 1]); bytes.writeUInt16LE(62, 18); }
+  else { bytes.writeUInt32LE(0xfeedfacf, 0); bytes.writeUInt32LE(cpu === "arm64" ? 0x0100000c : 0x01000007, 4); }
+  mkdirSync(join(packageRoot, executable, ".."), { recursive: true });
+  writeFileSync(join(packageRoot, executable), bytes, { mode: 0o755 });
+  if (qualification) qualification.executableDigest = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+  return packageRoot;
+}
 const adapterUtilsPackage = JSON.parse(
   await readFile(new URL("../packages/adapter-utils/package.json", import.meta.url), "utf8"),
 );
@@ -40,6 +90,7 @@ const dbPackage = JSON.parse(
 const releaseScript = await readFile(new URL("./release.sh", import.meta.url), "utf8");
 const releaseLib = await readFile(new URL("./release-lib.sh", import.meta.url), "utf8");
 const buildNpmScript = await readFile(new URL("./build-npm.sh", import.meta.url), "utf8");
+
 const acpxRuntimePatch = await readFile(
   new URL("../patches/acpx@0.13.1.patch", import.meta.url),
   "utf8",
@@ -122,6 +173,186 @@ test("published packages preserve the patched ACPX runtime", () => {
   assert.ok(serverPackage.bundleDependencies.includes("acpx"));
   assert.equal(bundledCliNpmDependencies.has("acpx"), true);
   assert.equal(cliEsbuildConfig.external.includes("acpx"), false);
+});
+
+test("published Codex bridge uses its qualified producer closure without consumer overrides", () => {
+  const published = materializePublishManifest(serverPackage);
+  const { installManifest, profiles } = configureBundledProviderOverrides(
+    createBundledInstallManifest(published, serverPackage.bundleDependencies),
+    serverPackage.bundleDependencies, rootPackage, profileData,
+  );
+  assert.equal(profiles.length, 1);
+  for (const profile of profiles) {
+    assert.equal(published.dependencies[profile.agentServerPackage], profile.agentServerVersion);
+    assert.ok(published.bundleDependencies.includes(profile.agentServerPackage));
+    assert.equal(installManifest.overrides[`${profile.agentServerPackage}@${profile.agentServerVersion}`][profile.agentRuntimePackage], profile.agentRuntimeVersion);
+  }
+  assert.equal(published.overrides, undefined);
+  assert.equal(installManifest.overrides.rollup, undefined);
+  const bad = structuredClone(rootPackage);
+  bad.pnpm.overrides["@agentclientprotocol/codex-acp@1.6.2>@openai/codex"] = "0.156.1";
+  assert.throws(() => configureBundledProviderOverrides(installManifest, serverPackage.bundleDependencies, bad, profileData), /runtime override must match/);
+  const unpinned = createBundledInstallManifest(published, serverPackage.bundleDependencies);
+  unpinned.dependencies["@agentclientprotocol/codex-acp"] = "^1.6.2";
+  assert.throws(() => configureBundledProviderOverrides(unpinned, serverPackage.bundleDependencies, rootPackage, profileData), /exact qualified profile/);
+  const conflict = createBundledInstallManifest(published, serverPackage.bundleDependencies);
+  conflict.overrides = { "@agentclientprotocol/codex-acp@1.6.2": { "@openai/codex": "0.156.1" } };
+  assert.throws(() => configureBundledProviderOverrides(conflict, serverPackage.bundleDependencies, rootPackage, profileData), /conflicting producer override/);
+});
+
+test("Linux-produced Codex bridge tarballs retain all three contained artifacts and preserve runtime declarations", (t) => {
+  const destination = mkdtempSync(join(tmpdir(), "paperclip-bundled-provider-"));
+  t.after(() => rmSync(destination, { recursive: true, force: true }));
+  const graph = join(destination, "node_modules");
+  const artifacts = join(destination, "artifacts"), data = structuredClone(runtimeData);
+  mkdirSync(artifacts);
+  const { profiles } = configureBundledProviderOverrides(
+    createBundledInstallManifest(serverPackage, serverPackage.bundleDependencies), serverPackage.bundleDependencies, rootPackage, profileData,
+  );
+  const writePackage = (name, metadata) => {
+    const directory = join(graph, name);
+    mkdirSync(directory, { recursive: true });
+    writeFileSync(join(directory, "package.json"), JSON.stringify({ name, ...metadata }));
+    return directory;
+  };
+  for (const profile of profiles) {
+    writePackage(profile.agentServerPackage, { version: profile.agentServerVersion,
+      dependencies: { [profile.agentRuntimePackage]: profile.agentRuntimeVersion } });
+    const optional = Object.fromEntries(nativeTargets.map(target => [`${profile.agentRuntimePackage}-${target}`,
+      `npm:@openai/codex@${profile.agentRuntimeVersion}-${target}`]));
+    writePackage(profile.agentRuntimePackage, { version: profile.agentRuntimeVersion, optionalDependencies: optional });
+    writePackage(`${profile.agentRuntimePackage}-linux-x64`, { version: "0.160.0-linux-x64" });
+    for (const target of nativeTargets) nativeFixture(artifacts, profile, target, data);
+  }
+  writePackage("unrelated-linux-x64", { version: "1.0.0" });
+  const before = readFileSync(join(graph, "@agentclientprotocol/codex-acp/package.json"), "utf8");
+  const stage = manifest => stageBundledProviderOptionalDependencies(destination, manifest, profiles, data, { nativeArtifactsDirectory: artifacts });
+  const staged = stage(serverPackage);
+  assert.equal(staged.overrides, undefined);
+  assert.equal(staged.optionalDependencies["@openai/codex-darwin-arm64"], "npm:@openai/codex@0.160.0-darwin-arm64");
+  for (const profile of profiles) {
+    for (const target of nativeTargets) {
+      assert.equal(existsSync(join(graph, `${profile.agentRuntimePackage}-${target}`)), true);
+      assert.ok(staged.bundleDependencies.includes(`${profile.agentRuntimePackage}-${target}`));
+    }
+    assert.equal(existsSync(join(graph, profile.agentRuntimePackage, "package.json")), true);
+  }
+  assert.equal(existsSync(join(graph, "unrelated-linux-x64")), true);
+  assert.equal(readFileSync(join(graph, "@agentclientprotocol/codex-acp/package.json"), "utf8"), before);
+  const sdkPath = join(graph, "@openai/codex/package.json");
+  const sdk = JSON.parse(readFileSync(sdkPath, "utf8"));
+  writeFileSync(sdkPath, JSON.stringify({ ...sdk, version: "0.156.1" }));
+  assert.throws(() => stage(serverPackage), /runtime version mismatch/);
+  writeFileSync(sdkPath, JSON.stringify(sdk));
+  assert.throws(() => stage({ ...serverPackage,
+    optionalDependencies: { "@openai/codex-darwin-arm64": "npm:@openai/codex@0.156.1-darwin-arm64" } }), /conflicts with published/);
+  writeFileSync(sdkPath, JSON.stringify({ ...sdk, optionalDependencies: { "@openai/codex-untrusted": "0.160.0" } }));
+  assert.throws(() => stage(serverPackage), /not qualified/);
+  writeFileSync(sdkPath, JSON.stringify(sdk));
+  const codex = profiles.find(value => value.agent === "codex");
+  const artifact = join(artifacts, "@openai/codex-linux-x64");
+  assert.equal(inspectBundledNativeArtifact(artifact, codex, "linux-x64", data).target, "linux-x64");
+  writeFileSync(join(artifact, "package.json"), JSON.stringify({ name: "@openai/codex-linux-x64", version: "0.160.0-linux-x64", os: ["darwin"], cpu: ["x64"] }));
+  assert.throws(() => inspectBundledNativeArtifact(artifact, codex, "linux-x64", data), /identity mismatch/);
+});
+
+test("Linux-produced esbuild bundles publish exact consumer platform dependencies and retain their hooks", (t) => {
+  const { directory, graph, esbuild, producerBinary, publish, writePackage } = esbuildFixture(t);
+  const original = readFileSync(join(esbuild, "package.json"), "utf8");
+  const issuer = createRequire(join(esbuild, "package.json"));
+  // The original producer-only topology cannot resolve a Mac binary. The
+  // public optional declaration lets npm obtain it before offline hooks run.
+  assert.throws(() => issuer.resolve("@esbuild/darwin-arm64/bin/esbuild"), /Cannot find module/);
+  const staged = stageBundledEsbuildOptionalDependencies(directory, publish);
+  for (const target of [...nativeTargets, "win32-x64"]) assert.equal(staged.optionalDependencies[`@esbuild/${target}`], "0.28.2");
+  assert.equal(staged.optionalDependencies.unrelated, "1.0.0");
+  assert.deepEqual(staged.bundleDependencies, ["acpx"]);
+  assert.deepEqual(staged.dependencies, publish.dependencies);
+  assert.equal(publish.optionalDependencies["@esbuild/darwin-arm64"], undefined);
+  assert.equal(existsSync(producerBinary), false);
+  assert.equal(existsSync(join(graph, "unrelated-linux-x64")), true);
+  assert.equal(readFileSync(join(esbuild, "package.json"), "utf8"), original);
+  assert.deepEqual(stageBundledEsbuildOptionalDependencies(directory, staged), staged);
+  for (const target of ["darwin-arm64", "darwin-x64"]) {
+    const artifact = writePackage(join(graph, `@esbuild/${target}`), {
+      name: `@esbuild/${target}`, version: staged.optionalDependencies[`@esbuild/${target}`], os: ["darwin"], cpu: [target.slice(7)],
+    });
+    mkdirSync(join(artifact, "bin")); writeFileSync(join(artifact, "bin/esbuild"), "consumer-selected fixture; never executed");
+    assert.equal(issuer.resolve(`@esbuild/${target}/bin/esbuild`), join(artifact, "bin/esbuild"));
+  }
+});
+
+test("bundled esbuild rejects conflicting published or nested platform versions without removing the producer", (t) => {
+  const { directory, graph, producerBinary, publish, writePackage } = esbuildFixture(t);
+  assert.throws(() => stageBundledEsbuildOptionalDependencies(directory, {
+    ...publish, optionalDependencies: { "@esbuild/darwin-arm64": "0.27.0" },
+  }), /platform version conflicts/);
+  assert.equal(existsSync(producerBinary), true);
+  writePackage(join(graph, "esbuild"), { name: "esbuild", version: "0.27.0",
+    optionalDependencies: Object.fromEntries(nativeTargets.map(target => [`@esbuild/${target}`, "0.27.0"])) });
+  assert.throws(() => stageBundledEsbuildOptionalDependencies(directory, publish), /platform version conflicts|installed platform identity mismatch/);
+  assert.equal(existsSync(producerBinary), true);
+});
+
+test("bundled esbuild rejects missing targets, altered declarations and incorrect platform identity", (t) => {
+  const { directory, esbuild, producerBinary, publish } = esbuildFixture(t);
+  const path = join(esbuild, "package.json"), metadata = JSON.parse(readFileSync(path, "utf8"));
+  writeFileSync(path, JSON.stringify({ ...metadata, optionalDependencies: { "@esbuild/linux-x64": "0.28.2" } }));
+  assert.throws(() => stageBundledEsbuildOptionalDependencies(directory, publish), /omitted a supported platform/);
+  writeFileSync(path, JSON.stringify({ ...metadata, optionalDependencies: { ...metadata.optionalDependencies, "@esbuild/win32-x64": "^0.28.2" } }));
+  assert.throws(() => stageBundledEsbuildOptionalDependencies(directory, publish), /exact package version/);
+  writeFileSync(path, JSON.stringify(metadata));
+  writeFileSync(join(producerBinary, "package.json"), JSON.stringify({ name: "@esbuild/linux-x64", version: "0.27.0" }));
+  assert.throws(() => stageBundledEsbuildOptionalDependencies(directory, publish), /installed platform identity mismatch/);
+  assert.equal(existsSync(producerBinary), true);
+});
+
+test("bundled esbuild cannot follow a platform payload or package namespace outside its producer graph", (t) => {
+  const { directory, graph, producerBinary, publish, writePackage } = esbuildFixture(t);
+  const external = writePackage(join(directory, "outside"), { name: "@esbuild/linux-x64", version: "0.28.2" });
+  rmSync(producerBinary, { recursive: true }); symlinkSync(external, producerBinary, "dir");
+  assert.throws(() => stageBundledEsbuildOptionalDependencies(directory, publish), /escapes its producer graph/);
+  assert.equal(readFileSync(join(external, "package.json"), "utf8").includes("0.28.2"), true);
+  rmSync(join(graph, "@esbuild"), { recursive: true }); symlinkSync(external, join(graph, "@esbuild"), "dir");
+  assert.throws(() => stageBundledEsbuildOptionalDependencies(directory, publish), /escapes its producer graph/);
+});
+
+test("Codex runtime artifact data preserves the existing Linux qualification without adding targets", () => {
+  assert.deepEqual(Object.keys(runtimeData).sort(), ["codex", "schema"]);
+  assert.deepEqual(Object.keys(runtimeData.codex.platforms), ["linux-x64"]);
+  assert.equal(runtimeData.codex.platforms["linux-x64"].executableDigest, "sha256:12eb3e81114588aca3b7998f4f19e8997b056aca08e57a7ca7c8a3ec8c652aad");
+  assert.equal(runtimeData.codex.platforms["linux-x64"].environmentVariable, "CODEX_PATH");
+});
+
+test("Docker provider graphs use qualified targets and contain only native entry bindings without changing server dependencies", (t) => {
+  assert.equal(dockerBundledProviderTarget("amd64"), "linux-x64");
+  assert.equal(dockerBundledProviderTarget("arm64"), null, "Unqualified native ARM64 must not break legacy images");
+  assert.throws(() => dockerBundledProviderTarget("x64"), /declared supported target/);
+  const missing = structuredClone(runtimeData); delete missing.codex.platforms["linux-x64"];
+  assert.equal(dockerBundledProviderTarget("amd64", missing), null, "The existing Codex qualification contract is required");
+  const fixture = realpathSync(mkdtempSync(join(tmpdir(), "paperclip-docker-provider-graph-")));
+  t.after(() => rmSync(fixture, { recursive: true, force: true }));
+  const server = join(fixture, "server"), staged = join(fixture, "staged"), store = join(fixture, "workspace-store");
+  for (const directory of [server, staged, store]) mkdirSync(directory);
+  mkdirSync(join(server, "node_modules/@agentclientprotocol"), { recursive: true });
+  writeFileSync(join(server, "package.json"), JSON.stringify(serverPackage));
+  for (const name of ["@agentclientprotocol/codex-acp", "zod"]) {
+    const directory = join(staged, "node_modules", name); mkdirSync(directory, { recursive: true });
+    writeFileSync(join(directory, "package.json"), JSON.stringify({ name, version: serverPackage.dependencies[name] ?? "4.4.3" }));
+    const previous = join(store, name); mkdirSync(previous, { recursive: true });
+    writeFileSync(join(previous, "package.json"), JSON.stringify({ name, version: "previous-version" }));
+    symlinkSync(previous, join(server, "node_modules", name));
+  }
+  writeFileSync(join(staged, "package.json"), JSON.stringify({ name: serverPackage.name }));
+  const before = readFileSync(join(server, "node_modules/zod/package.json"), "utf8");
+  mergeBundledProviderGraph(staged, server);
+  assert.equal(readFileSync(join(server, "node_modules/zod/package.json"), "utf8"), before, "Application dependencies retain the existing workspace binding");
+  for (const name of ["@agentclientprotocol/codex-acp"]) {
+    assert.equal(lstatSync(join(server, "node_modules", name)).isSymbolicLink(), true);
+    assert.equal(realpathSync(join(server, "node_modules", name)), join(server, "node_modules/.paperclip-native-providers/node_modules", name));
+    assert.equal(JSON.parse(readFileSync(join(store, name, "package.json"))).version, "previous-version", "Workspace store must remain untouched");
+  }
+  assert.throws(() => mergeBundledProviderGraph(staged, server), /destination already exists/);
 });
 
 test("Paperclip Runner pins the qualified ACPX host callbacks", () => {
@@ -285,11 +516,14 @@ test("bundled package patch selection rejects an unpatched installed version", (
 });
 
 test("server package staging applies every bundled runtime patch and preserves the vendored runner", (t) => {
-  const fixtureDir = mkdtempSync(join(tmpdir(), "paperclip-bundled-stage-"));
+  const fixtureDir = realpathSync(mkdtempSync(join(tmpdir(), "paperclip-bundled-stage-")));
   const sourceDir = join(fixtureDir, "source");
   const destinationDir = join(fixtureDir, "destination");
   const binDir = join(fixtureDir, "bin");
   const callLog = join(fixtureDir, "calls.log");
+  const fixtureSourceRoot = join(fixtureDir, "repo");
+  const fixtureArtifacts = join(fixtureDir, "native-artifacts");
+  const fixtureRuntimeData = structuredClone(runtimeData);
   mkdirSync(sourceDir);
   mkdirSync(join(sourceDir, "dist"));
   writeFileSync(join(sourceDir, "dist", "index.js"), "export {};\n");
@@ -300,6 +534,18 @@ test("server package staging applies every bundled runtime patch and preserves t
     JSON.stringify({ ...serverPackage, files: ["dist"] }),
   );
   writeFileSync(callLog, "");
+  mkdirSync(fixtureArtifacts);
+  for (const [agent, profile] of Object.entries(profileData.profiles).filter(([agent]) => agent === "codex")) {
+    for (const target of nativeTargets) nativeFixture(fixtureArtifacts, { agent, ...profile }, target, fixtureRuntimeData);
+  }
+  mkdirSync(join(fixtureSourceRoot, "packages/paperclip-runner/src/drivers/acpx"), { recursive: true });
+  writeFileSync(join(fixtureSourceRoot, "package.json"), JSON.stringify(rootPackage));
+  writeFileSync(join(fixtureSourceRoot, "packages/paperclip-runner/acpx-profiles.json"), JSON.stringify(profileData));
+  writeFileSync(join(fixtureSourceRoot, "packages/paperclip-runner/src/drivers/acpx/qualified-runtime-artifacts.json"), JSON.stringify(fixtureRuntimeData));
+  mkdirSync(join(fixtureSourceRoot, "patches"));
+  for (const patchPath of Object.values(rootPackage.pnpm.patchedDependencies)) {
+    writeFileSync(join(fixtureSourceRoot, patchPath), readFileSync(new URL(`../${patchPath}`, import.meta.url)));
+  }
   t.after(() => rmSync(fixtureDir, { recursive: true, force: true }));
 
   const writeExecutable = (name, body) => {
@@ -320,9 +566,11 @@ mkdir -p "$destination/node_modules/.pnpm"
     `#!/usr/bin/env bash
 set -euo pipefail
 printf 'npm %s\\n' "$*" >> "$FAKE_CALL_LOG"
-[ "$*" = "install --omit=dev --ignore-scripts --no-audit --no-fund" ]
-node -e 'const fs = require("node:fs"); const pkg = require("./package.json"); if ("devDependencies" in pkg) process.exit(1); for (const [name, version] of Object.entries(pkg.dependencies)) { const dir = "node_modules/" + name; fs.mkdirSync(dir + "/dist", { recursive: true }); fs.writeFileSync(dir + "/package.json", JSON.stringify({ name, version })); }'
+[ "$*" = "install --omit=dev --ignore-scripts --no-audit --no-fund" ] || [ "$*" = "install --force --omit=dev --ignore-scripts --no-audit --no-fund" ]
+node -e 'const fs = require("node:fs"); const path=require("node:path"); const pkg = require("./package.json"); if ("devDependencies" in pkg) process.exit(1); if(pkg.name === "paperclip-native-artifact-staging"){for(const name of Object.keys(pkg.dependencies)){fs.cpSync(path.join(process.env.FAKE_NATIVE_ARTIFACTS,name),path.join("node_modules",name),{recursive:true});}process.exit(0);} for (const [name, version] of Object.entries(pkg.dependencies)) { const dir = "node_modules/" + name; fs.mkdirSync(dir + "/dist", { recursive: true }); fs.writeFileSync(dir + "/package.json", JSON.stringify({ name, version })); } for (const [bridge, runtimes] of Object.entries(pkg.overrides ?? {})) { for (const [name, version] of Object.entries(runtimes)) { const dir = "node_modules/" + name; fs.mkdirSync(dir, { recursive: true }); const native = name === "@openai/codex"; const optionalDependencies = native ? Object.fromEntries(["linux-x64","darwin-arm64","darwin-x64"].map(target => [name+"-"+target,"npm:"+name+"@"+version+"-"+target])) : undefined; fs.writeFileSync(dir + "/package.json", JSON.stringify({ name, version, optionalDependencies })); } }'
+if [ -f package.json ] && node -e 'process.exit(require("./package.json").name === "paperclip-native-artifact-staging" ? 0 : 1)'; then exit 0; fi
 mkdir -p node_modules/acpx/dist
+node -e 'const fs=require("node:fs");fs.mkdirSync("node_modules/esbuild",{recursive:true});fs.writeFileSync("node_modules/esbuild/package.json",JSON.stringify({name:"esbuild",version:"0.28.2",scripts:{postinstall:"node install.js"},optionalDependencies:Object.fromEntries(["linux-x64","darwin-arm64","darwin-x64"].map(target=>["@esbuild/"+target,"0.28.2"]))}));fs.mkdirSync("node_modules/@esbuild/linux-x64",{recursive:true});fs.writeFileSync("node_modules/@esbuild/linux-x64/package.json",JSON.stringify({name:"@esbuild/linux-x64",version:"0.28.2",os:["linux"],cpu:["x64"]}));'
 printf 'unpatched runtime\\n' > node_modules/acpx/dist/runtime.js
 printf '{"name":"acpx","version":"0.13.1"}\\n' > node_modules/acpx/package.json
 `,
@@ -356,9 +604,11 @@ printf 'patched spawnEnvironment runtime\\n' > "$target/dist/runtime.js"
   execFileSync(
     process.execPath,
     [
-      new URL("./prepare-bundled-package.mjs", import.meta.url).pathname,
+      "--input-type=module", "-e",
+      `import { prepareBundledPackage } from ${JSON.stringify(new URL("./prepare-bundled-package.mjs", import.meta.url).href)}; prepareBundledPackage(process.argv[1], process.argv[2], { sourceRoot: process.argv[3] });`,
       sourceDir,
       destinationDir,
+      fixtureSourceRoot,
     ],
     {
       env: {
@@ -366,6 +616,7 @@ printf 'patched spawnEnvironment runtime\\n' > "$target/dist/runtime.js"
         PATH: `${binDir}:${process.env.PATH}`,
         FAKE_CALL_LOG: callLog,
         FAKE_SOURCE_PACKAGE: join(sourceDir, "package.json"),
+        FAKE_NATIVE_ARTIFACTS: fixtureArtifacts,
       },
       stdio: "pipe",
     },
@@ -375,6 +626,11 @@ printf 'patched spawnEnvironment runtime\\n' > "$target/dist/runtime.js"
   assert.equal(lstatSync(stagedAcpxDir).isDirectory(), true);
   assert.equal(lstatSync(stagedAcpxDir).isSymbolicLink(), false);
   assert.equal(existsSync(join(destinationDir, "node_modules/.pnpm")), false);
+  const stagedManifest = JSON.parse(readFileSync(join(destinationDir, "package.json"), "utf8"));
+  assert.equal(stagedManifest.optionalDependencies["@esbuild/darwin-arm64"], "0.28.2");
+  assert.equal(stagedManifest.optionalDependencies["@esbuild/darwin-x64"], "0.28.2");
+  assert.equal(existsSync(join(destinationDir, "node_modules/@esbuild/linux-x64")), false);
+  assert.equal(JSON.parse(readFileSync(join(destinationDir, "node_modules/esbuild/package.json"))).scripts.postinstall, "node install.js");
   assert.match(
     readFileSync(join(stagedAcpxDir, "dist/runtime.js"), "utf8"),
     /spawnEnvironment/,
@@ -383,13 +639,14 @@ printf 'patched spawnEnvironment runtime\\n' > "$target/dist/runtime.js"
     readFileSync(callLog, "utf8"),
     /patch -p1 --forward -d .*node_modules\/acpx/,
   );
+  const patchedBundledDependencies = serverPackage.bundleDependencies.filter(name => rootPackage.pnpm.patchedDependencies[`${name}@${serverPackage.dependencies[name]}`]);
   assert.equal(
     readFileSync(callLog, "utf8")
       .split("\n")
       .filter((line) => line.startsWith("patch ")).length,
-    serverPackage.bundleDependencies.length,
+    patchedBundledDependencies.length,
   );
-  for (const name of serverPackage.bundleDependencies) {
+  for (const name of patchedBundledDependencies) {
     const specifier = `${name}@${serverPackage.dependencies[name]}`;
     const patchPath = rootPackage.pnpm.patchedDependencies[specifier];
     assert.equal(
@@ -400,6 +657,23 @@ printf 'patched spawnEnvironment runtime\\n' > "$target/dist/runtime.js"
       `${readFileSync(new URL(`../${patchPath}`, import.meta.url), "utf8").trimEnd()}\n`,
       `${specifier} receives its own full configured patch`,
     );
+  }
+
+  const imageServer = join(fixtureDir, "image-server");
+  mkdirSync(join(imageServer, "node_modules"), { recursive: true });
+  writeFileSync(join(imageServer, "package.json"), JSON.stringify(serverPackage));
+  writeFileSync(join(imageServer, "node_modules/unrelated-marker"), "keep existing application graph");
+  const imageReceipt = JSON.parse(execFileSync(process.execPath, ["--input-type=module", "-e",
+    `import { materializeDockerProviderGraph } from ${JSON.stringify(new URL("./prepare-bundled-package.mjs", import.meta.url).href)};
+      console.log(JSON.stringify(materializeDockerProviderGraph(process.argv[1], 'amd64', { sourceRoot: process.argv[2] })));`,
+    imageServer, fixtureSourceRoot], { env: { ...process.env, PATH: `${binDir}:${process.env.PATH}`,
+      FAKE_CALL_LOG: callLog, FAKE_NATIVE_ARTIFACTS: fixtureArtifacts }, encoding: "utf8" }).trim().split("\n").at(-1));
+  assert.equal(imageReceipt.materialized, true);
+  assert.equal(imageReceipt.artifacts.artifacts.length, 1, "Image must stage only its existing qualified Linux target");
+  assert.equal(imageReceipt.artifacts.artifacts.every(artifact => artifact.target === "linux-x64"), true);
+  assert.equal(readFileSync(join(imageServer, "node_modules/unrelated-marker"), "utf8"), "keep existing application graph");
+  for (const name of ["@agentclientprotocol/codex-acp"]) {
+    assert.match(realpathSync(join(imageServer, "node_modules", name)), /image-server\/node_modules\/\.paperclip-native-providers\/node_modules/);
   }
 });
 
