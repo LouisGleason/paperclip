@@ -538,6 +538,19 @@ function OnboardingWizardInner({
   const initialStep = effectiveOnboardingOptions.initialStep ?? 1;
   const existingCompanyId = effectiveOnboardingOptions.companyId;
 
+  // A route supplies a default landing step, not a fresh instruction on reload.
+  // The outer gate has authorized this draft; keep its progress for this first
+  // matching route request. Explicit dialog options and later navigation still
+  // start their requested step. Retain the path through repeated mount effects
+  // so StrictMode cannot turn the same resume into a reset.
+  const resumedRoutePathRef = useRef<string | null>(
+    saved && effectiveOnboardingOpen && !onboardingOpen &&
+    (!existingCompanyId || existingCompanyId === saved.createdCompanyId) &&
+    (!companyPrefix || existingCompanyId)
+      ? location.pathname
+      : null,
+  );
+
   const [step, setStep] = useState<Step>((saved?.step as Step) ?? initialStep);
   // The step this run *entered* on, which bounds how far back it can walk.
   // Captured once, when the wizard opens, for the same reason the step itself
@@ -775,8 +788,8 @@ function OnboardingWizardInner({
   // query does: a retry, a background refetch, a cache invalidation. An effect that
   // depended on it would re-run on every such change and call setStep, moving
   // a customer who is already mid-flow. Reading it through a ref breaks that
-  // dependency, so the effect runs when the wizard *opens* or when the company
-  // changes, and takes whatever the step is at that moment.
+  // dependency, so the effect runs when the wizard *opens* or when the route
+  // or company changes, and takes whatever the step is at that moment.
   const initialStepRef = useRef<Step | undefined>(undefined);
   initialStepRef.current = effectiveOnboardingOptions.initialStep;
 
@@ -813,18 +826,25 @@ function OnboardingWizardInner({
   //
   // The step belongs to the request that opened the wizard, not to the latest
   // value of the expression that produced it - see `initialStepRef` above for
-  // why those differ. This effect is therefore keyed on the two things that
-  // make a *new* request: the wizard opening, and the company changing.
+  // why those differ. This effect is therefore keyed on what makes a *new*
+  // request: the wizard opening, the route changing, and the company changing.
   // Navigating from one company's onboarding path to another re-decides the
   // step; the same request re-deriving a fresher value does not.
   useEffect(() => {
+    const routeCompanyId = effectiveOnboardingOptions.companyId ?? null;
+    if (
+      !effectiveOnboardingOpen || onboardingOpen ||
+      resumedRoutePathRef.current !== location.pathname ||
+      (routeCompanyId && routeCompanyId !== saved?.createdCompanyId)
+    ) {
+      resumedRoutePathRef.current = null;
+    }
     if (!effectiveOnboardingOpen) return;
-    // If explicit options are provided, they take precedence over saved state
-    if (initialStepRef.current) {
+    // Explicit requests take precedence; a matching initial route resumes.
+    if (initialStepRef.current && resumedRoutePathRef.current === null) {
       setStep(initialStepRef.current);
       setEntryStep(initialStepRef.current);
     }
-    const routeCompanyId = effectiveOnboardingOptions.companyId ?? null;
     if (routeCompanyId) {
       // Claim ownership only when the route *introduces* a company. A route
       // that merely names the one already in hand - the wizard created it,
@@ -874,7 +894,7 @@ function OnboardingWizardInner({
       routeCompanyIdRef.current = null;
       clearCompanyScopedState();
     }
-  }, [effectiveOnboardingOpen, effectiveOnboardingOptions.companyId]);
+  }, [effectiveOnboardingOpen, effectiveOnboardingOptions.companyId, onboardingOpen, location.pathname]);
 
   // Backfill issue prefix for an existing company once companies are loaded.
   useEffect(() => {

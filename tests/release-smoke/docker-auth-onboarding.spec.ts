@@ -135,6 +135,8 @@ test.describe("Docker authenticated onboarding smoke", () => {
     await expect(sources.getByRole("radio", { name: /Paperclip Runner/ })).toHaveCount(0);
     await page.reload();
     await expect(page.getByRole("heading", { name: "Connect a model" })).toBeVisible();
+    await expect(sources.getByRole("radio", { name: /^OpenAI/ })).toBeVisible();
+    await expect(sources.getByRole("radio", { name: /Paperclip Runner/ })).toHaveCount(0);
     const companies = await getJson<Array<{ id: string }>>(page, "/api/companies");
     expect(companies).toHaveLength(1);
     expect(await getJson<unknown[]>(page, `/api/companies/${companies[0]!.id}/agents`)).toEqual([]);

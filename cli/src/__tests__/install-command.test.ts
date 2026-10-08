@@ -274,6 +274,108 @@ describe("managed install commands", () => {
     expect(runCommand.mock.calls[serverStage][2]?.cwd).toBe(uiCalls[0][2]?.cwd);
   });
 
+  it("packs the built Git stage without source-only hooks and preserves consumer install hooks", async () => {
+    const sha = "9".repeat(40);
+    const checkoutCommands = createGitCheckoutRunCommand(sha, { bundledServer: true });
+    let packedFiles: string[] = [];
+    let negativeControlPassed = false;
+    const npmEnv = {
+      ...process.env,
+      PATH: ORIGINAL_ENV.PATH,
+      npm_config_cache: path.join(root, "npm-cache"),
+      npm_config_userconfig: path.join(root, ".npmrc"),
+      npm_config_offline: "true",
+      npm_config_ignore_scripts: "false",
+    };
+    fs.writeFileSync(npmEnv.npm_config_userconfig, "");
+    const runCommand = vi.fn(async (file: string, args: string[], options?: Parameters<CommandRunner>[2]) => {
+      if (file === process.execPath && args[0]?.endsWith("prepare-bundled-package.mjs") && args[1]?.endsWith(path.sep + "server")) {
+        const result = await checkoutCommands(file, args, options);
+        const stagedManifest = path.join(args[2], "package.json");
+        const packageJson = JSON.parse(fs.readFileSync(stagedManifest, "utf8"));
+        // The real bundler preserves scripts but stages only declared runtime files.
+        packageJson.scripts = {
+          prepack: "node ../scripts/source-prepack.cjs",
+          postpack: "node ../scripts/source-postpack.cjs",
+          postinstall: "node dist/consumer-install.cjs",
+        };
+        packageJson.dependencies["@paperclipai/db"] = "0.3.1";
+        fs.writeFileSync(stagedManifest, JSON.stringify(packageJson));
+        fs.writeFileSync(path.join(args[2], "dist", "consumer-install.cjs"), "process.stdout.write('consumer hook retained');\n");
+        for (const hook of ["source-prepack", "source-postpack"]) {
+          fs.writeFileSync(path.join(options!.cwd as string, "scripts", `${hook}.cjs`), "process.stdout.write('source workspace hook');\n");
+        }
+        return result;
+      }
+      if (file === "npm" && args[0] === "pack" && args[1]?.includes("workspace-package-")) {
+        const manifest = JSON.parse(fs.readFileSync(path.join(args[1], "package.json"), "utf8")) as { name: string };
+        if (manifest.name === "@paperclipai/server") {
+          const realOptions = { ...options, env: npmEnv, timeout: 20_000 };
+          // Removing the lifecycle boundary must reproduce the actual staged
+          // packaging failure, without any provider, build, or network access.
+          await expect(runCommandWithDiagnostics("npm", [...args.filter((arg) => arg !== "--ignore-scripts"), "--json"], realOptions))
+            .rejects.toThrow("source-prepack.cjs");
+          negativeControlPassed = true;
+          const result = await runCommandWithDiagnostics("npm", [...args, "--json"], realOptions);
+          const packed = JSON.parse(result.stdout) as Array<{ files: Array<{ path: string }> }>;
+          packedFiles = packed[0].files.map((entry) => entry.path);
+          expect(fs.existsSync(path.join(args[1], "ui-dist", "index.html"))).toBe(true);
+          expect(JSON.parse(fs.readFileSync(path.join(args[1], "package.json"), "utf8")).scripts.postinstall)
+            .toBe("node dist/consumer-install.cjs");
+          return result;
+        }
+      }
+      return checkoutCommands(file, args, options);
+    });
+
+    await expect(installGitPayload("paperclipai/paperclip", sha, runCommand, resolveInstallStorePaths()))
+      .resolves.toMatchObject({ version: "0.3.1", reused: false });
+    expect(negativeControlPassed).toBe(true);
+    expect(packedFiles).toEqual(expect.arrayContaining([
+      "dist/index.js", "dist/consumer-install.cjs", "ui-dist/index.html",
+      "skills/paperclip/SKILL.md", "skills/paperclip/scripts/helper.mjs",
+    ]));
+    const consumerInstall = runCommand.mock.calls.find(([file, args]) => file === "npm" && args[0] === "install");
+    expect(consumerInstall?.[1]).not.toContain("--ignore-scripts");
+    expect(consumerInstall?.[2]?.env?.npm_config_ignore_scripts).toBeUndefined();
+    const sourcePack = runCommand.mock.calls.find(([file, args]) => file === "npm" && args[0] === "pack" && args[1] === "--pack-destination");
+    expect(sourcePack?.[1]).not.toContain("--ignore-scripts");
+  });
+
+  it.each(["source build", "staged pack", "consumer install"])("preserves the active Git install after a failed %s", async (phase) => {
+    const previousSha = "a".repeat(40);
+    await installCommand({ ref: previousSha, yes: true }, { runCommand: createGitCheckoutRunCommand(previousSha) });
+    const paths = resolveInstallStorePaths();
+    const previousManifest = fs.readFileSync(paths.manifestPath, "utf8");
+    const previousTarget = fs.readlinkSync(paths.currentPath);
+    const previousShim = fs.readFileSync(paths.shimPath, "utf8");
+    const sha = "e".repeat(40);
+    const checkoutCommands = createGitCheckoutRunCommand(sha, { bundledServer: true });
+    let failedCheckout: string | undefined;
+    const runCommand = vi.fn(async (file: string, args: string[], options?: Parameters<CommandRunner>[2]) => {
+      if (file === "tar") failedCheckout = args[args.indexOf("-C") + 1];
+      const failedPhase = phase === "source build"
+        ? file === "corepack" && args.includes("-r") && args.includes("build")
+        : phase === "staged pack"
+          ? file === "npm" && args[0] === "pack" && args[1]?.includes("workspace-package-")
+          : file === "npm" && args[0] === "install";
+      if (failedPhase) throw new Error(`${phase} failed`);
+      return checkoutCommands(file, args, options);
+    });
+
+    await expect(installCommand({ ref: sha, yes: true }, { runCommand })).rejects.toThrow(`${phase} failed`);
+    expect(failedCheckout).toBeDefined();
+    expect(fs.existsSync(path.dirname(failedCheckout!))).toBe(false);
+    expect(fs.readdirSync(path.join(paths.installsRoot, "git"))).toEqual([previousSha.slice(0, 12)]);
+    if (phase === "source build") expect(runCommand.mock.calls.some(([file]) => file === "npm")).toBe(false);
+    if (phase === "staged pack") expect(runCommand.mock.calls.some(([file, args]) => file === "npm" && args[0] === "install")).toBe(false);
+    expect(fs.existsSync(paths.lockPath)).toBe(false);
+    expect(fs.readFileSync(paths.manifestPath, "utf8")).toBe(previousManifest);
+    expect(fs.readlinkSync(paths.currentPath)).toBe(previousTarget);
+    expect(fs.readFileSync(paths.shimPath, "utf8")).toBe(previousShim);
+    expect(fs.existsSync(readInstallManifest(paths)!.payloadPath)).toBe(true);
+  });
+
   it("stages same-checkout runtime skills in the release packages before bundled Git packaging", async () => {
     const sha = "6".repeat(40);
     const checkoutCommands = createGitCheckoutRunCommand(sha, { bundledServer: true });

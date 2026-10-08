@@ -6,9 +6,9 @@ import { chmod, cp, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promi
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import test from 'node:test';
-import { GROK_PUBLIC_INSTALL_IMAGE, GROK_PUBLIC_INSTALL_LIFECYCLE, assertMacDeveloperRoot, discoverMacPublicInstallToolchain, grokConsumerDockerArgs, macPublicInstallLifecyclePolicy, prepareMacPublicInstallNodeHeaders, runMacPublicInstallPhase } from '../grok-public-install-sandbox.mjs';
+import { GROK_PUBLIC_INSTALL_IMAGE, GROK_PUBLIC_INSTALL_LIFECYCLE, MAC_PUBLIC_INSTALL_INITIAL_TIMEOUT_MS, assertMacDeveloperRoot, discoverMacPublicInstallToolchain, grokConsumerDockerArgs, macPublicInstallLifecyclePolicy, prepareMacPublicInstallNodeHeaders, runMacPublicInstallPhase } from '../grok-public-install-sandbox.mjs';
 import { assertStandardImageIdentity, inspectInstalledDaemon, inspectInstalledProviderReadiness, inspectInstalledUi, inspectManagedServiceInstall, installedProbeMode, installedProbePaths, standardImageDockerArgs, standardImageRequest } from '../../tests/release-smoke/installed-cli-probe.mjs';
 
 const paths = { assets: '/private/staging/assets', consumer: '/private/staging/consumer', cache: '/private/staging/cache', uid: 1001, gid: 1001 };
@@ -110,6 +110,19 @@ test('hosted Mac lifecycle reads only the selected Apple developer root', () => 
   }
 });
 
+test('selected Xcode lifecycle can read its runtime frameworks without granting other app contents', () => {
+  const developerRoot = '/Applications/Xcode_16.4.app/Contents/Developer';
+  const policy = macPublicInstallLifecyclePolicy({ ownedRoot: '/private/tmp/owned', npmRoot: '/Users/runner/node/npm', developerRoot });
+  assert.ok(policy.includes('(subpath "/Applications/Xcode_16.4.app/Contents/SharedFrameworks")'));
+  assert.ok(policy.includes('(subpath "/Applications/Xcode_16.4.app/Contents/Frameworks")'));
+  assert.doesNotMatch(policy, /\(subpath "\/Applications(?:"|\/Xcode_16\.4\.app"|\/Xcode_16\.4\.app\/Contents")/);
+  assert.doesNotMatch(policy, /PlugIns|Xcode_15|\(allow network|\(allow default/);
+  assert.match(policy, /\(allow file-write\* \(subpath "\/private\/tmp\/owned"\) \(literal "\/dev\/null"\)\)/);
+  const commandLineTools = macPublicInstallLifecyclePolicy({ ownedRoot: '/private/tmp/owned', npmRoot: '/Users/runner/node/npm',
+    developerRoot: '/Library/Developer/CommandLineTools' });
+  assert.doesNotMatch(commandLineTools, /Frameworks|\(subpath "\/Applications/);
+});
+
 test('offline Node headers must come from the selected distribution and match its exact version', async () => {
   const root = realpathSync(await mkdtemp(join(tmpdir(), 'paperclip-mac-headers-test-')));
   const distribution = join(root, 'node'), headers = join(distribution, 'include/node'), executable = join(distribution, 'bin/node');
@@ -146,10 +159,34 @@ test('failed Mac install phases retain bounded npm debug tails before owned cach
     events.length = 0;
     assert.throws(() => runMacPublicInstallPhase({ ...options, args: ['-e', 'setTimeout(() => {}, 60_000)'], timeout: 100 }), error => error.code === 'ETIMEDOUT');
     assert.equal(events[1].code, 'ETIMEDOUT'); assert.equal(events[2].status, 'npm-diagnostic');
-    assert.throws(() => runMacPublicInstallPhase({ ...options, args: [], timeout: 180_001 }), /bounded timeout/);
+    assert.throws(() => runMacPublicInstallPhase({ ...options, args: [], timeout: 480_001 }), /bounded timeout/);
     events.length = 0;
     assert.equal(runMacPublicInstallPhase({ ...options, args: ['-e', 'console.log("done")'] }).toString().trim(), 'done');
     assert.deepEqual(events.map(event => event.status), ['started', 'passed']);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('only the initial Mac package resolution can use the fixed eight-minute diagnostic budget', async () => {
+  const root = realpathSync(await mkdtemp(join(tmpdir(), 'paperclip-mac-budget-test-'))), events = [];
+  const options = { command: process.execPath, args: ['-e', 'console.log("bounded initial phase")'], cwd: root,
+    env: { PATH: '/usr/bin:/bin' }, cache: root, log: value => events.push(JSON.parse(value)) };
+  try {
+    assert.equal(MAC_PUBLIC_INSTALL_INITIAL_TIMEOUT_MS, 480_000);
+    for (const stage of ['offline-lifecycle', 'other-phase']) {
+      assert.throws(() => runMacPublicInstallPhase({ ...options, stage, timeout: 180_001 }), /bounded timeout/);
+      assert.throws(() => runMacPublicInstallPhase({ ...options, stage, timeout: MAC_PUBLIC_INSTALL_INITIAL_TIMEOUT_MS }), /bounded timeout/);
+    }
+    assert.throws(() => runMacPublicInstallPhase({ ...options, stage: 'scripts-disabled-install', timeout: 480_001 }), /bounded timeout/);
+    assert.equal(runMacPublicInstallPhase({ ...options, stage: 'scripts-disabled-install', timeout: MAC_PUBLIC_INSTALL_INITIAL_TIMEOUT_MS })
+      .toString().trim(), 'bounded initial phase');
+    assert.deepEqual(events.map(event => [event.status, event.timeoutMs]), [['started', 480_000], ['passed', 480_000]]);
+    events.length = 0;
+    runMacPublicInstallPhase({ ...options, stage: 'offline-lifecycle' });
+    assert.deepEqual(events.map(event => event.timeoutMs), [180_000, 180_000]);
+    const source = readFileSync(new URL('../verify-grok-npm-install.mjs', import.meta.url), 'utf8');
+    assert.match(source, /stage: 'scripts-disabled-install',[\s\S]*?cache, timeout: MAC_PUBLIC_INSTALL_INITIAL_TIMEOUT_MS \}\)/);
+    assert.equal(source.split('timeout: MAC_PUBLIC_INSTALL_INITIAL_TIMEOUT_MS').length - 1, 1);
+    assert.doesNotMatch(source, /process\.env\.[A-Z_]*(?:TIMEOUT|BUDGET)/);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
@@ -179,6 +216,21 @@ test('hosted Mac lifecycle starts standalone Node 24 while denying other homes a
     const pythonVersion = execFileSync('/usr/bin/sandbox-exec', ['-f', policy, toolchain.python, '-c', 'import sys; print("%s.%s.%s" % sys.version_info[:3])'], {
       ...compilerOptions, input: undefined, env: { ...compilerOptions.env, SDKROOT: toolchain.sdk, PYTHONDONTWRITEBYTECODE: '1' } }).trim();
     assert.match(pythonVersion, /^3\.\d+\.\d+$/);
+    assert.match(execFileSync('/usr/bin/sandbox-exec', ['-f', policy, '/usr/bin/make', '--version'], {
+      ...compilerOptions, input: undefined }).trim(), /^GNU Make/, 'The make shim must load the selected Apple build tools');
+    if (developerRoot.startsWith('/Applications/')) {
+      const framework = join(dirname(developerRoot), 'SharedFrameworks/DVTSystemPrerequisites.framework/Versions/A/DVTSystemPrerequisites');
+      const frameworkRead = `require('node:fs').closeSync(require('node:fs').openSync(${JSON.stringify(framework)},'r'))`;
+      const developerOnlyPolicy = join(root, 'developer-only.sb');
+      let withoutFrameworks = macPublicInstallLifecyclePolicy({ ownedRoot: root, npmRoot: join(root, 'npm'), developerRoot });
+      for (const name of ['Frameworks', 'SharedFrameworks']) {
+        withoutFrameworks = withoutFrameworks.replace(`(subpath ${JSON.stringify(join(dirname(developerRoot), name))})`, '');
+      }
+      await writeFile(developerOnlyPolicy, withoutFrameworks);
+      assert.throws(() => execFileSync('/usr/bin/sandbox-exec', ['-f', developerOnlyPolicy, node, '-e', frameworkRead], {
+        ...compilerOptions, input: undefined }), /EPERM/, 'The previous developer-only policy denies this runtime framework');
+      execFileSync('/usr/bin/sandbox-exec', ['-f', policy, node, '-e', frameworkRead], { ...compilerOptions, input: undefined });
+    }
     const readCompiler = `const fs=require('node:fs');try{fs.closeSync(fs.openSync(${JSON.stringify(compiler)},'r'));console.log('ALLOWED')}catch(e){console.log(e.code)}`;
     assert.equal(execFileSync('/usr/bin/sandbox-exec', ['-f', oldPolicy, node, '-e', readCompiler], {
       ...compilerOptions, input: undefined }).trim(), 'EPERM', 'The old policy denies selected toolchain file reads');

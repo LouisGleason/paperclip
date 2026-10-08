@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { materializePublishManifest, prepareBundledPackage } from './prepare-bundled-package.mjs';
-import { GROK_PUBLIC_INSTALL_IMAGE, GROK_PUBLIC_INSTALL_LIFECYCLE, discoverMacPublicInstallToolchain, grokConsumerDockerArgs, macPublicInstallLifecyclePolicy, prepareMacPublicInstallNodeHeaders, runMacPublicInstallPhase } from './grok-public-install-sandbox.mjs';
+import { GROK_PUBLIC_INSTALL_IMAGE, GROK_PUBLIC_INSTALL_LIFECYCLE, MAC_PUBLIC_INSTALL_INITIAL_TIMEOUT_MS, discoverMacPublicInstallToolchain, grokConsumerDockerArgs, macPublicInstallLifecyclePolicy, prepareMacPublicInstallNodeHeaders, runMacPublicInstallPhase } from './grok-public-install-sandbox.mjs';
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const [mode, requestedOutput, ...extraArguments] = process.argv.slice(2);
 assert.ok(mode === undefined || ['--pack-only', '--consume-pack'].includes(mode) && requestedOutput && !extraArguments.length,
@@ -87,7 +87,7 @@ try {
     writeFileSync(join(consumer, 'package.json'), JSON.stringify({ private: true, type: 'module' }));
     runMacPublicInstallPhase({ stage: 'scripts-disabled-install', command: join(bin, 'node'),
       args: [npmCli, 'install', '--ignore-scripts', '--omit=dev', ...inputs.map(input => join(consumePack, input.name))],
-      cwd: consumer, env: isolatedEnv, cache });
+      cwd: consumer, env: isolatedEnv, cache, timeout: MAC_PUBLIC_INSTALL_INITIAL_TIMEOUT_MS });
     const sentinel = join(consumer, 'node_modules/paperclip-verification-lifecycle-sentinel/lifecycle-ran');
     assert.equal(existsSync(sentinel), false, 'Transfer download must not run dependency hooks');
     const lock = readFileSync(join(consumer, 'package-lock.json'));

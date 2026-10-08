@@ -11,6 +11,9 @@ export const GROK_PUBLIC_INSTALL_IMAGE =
 export const GROK_PUBLIC_INSTALL_LIFECYCLE = [
   'npm', 'rebuild', '--offline', '--ignore-scripts=false', '--dangerously-allow-all-scripts',
 ];
+// The cold Intel consumer parses the same large local release tarballs before
+// any lifecycle hook. Give only this initial phase one fixed diagnostic budget.
+export const MAC_PUBLIC_INSTALL_INITIAL_TIMEOUT_MS = 480_000;
 
 export function assertMacDeveloperRoot(developerRoot) {
   assert.ok(typeof developerRoot === 'string' && resolve(developerRoot) === developerRoot &&
@@ -65,9 +68,10 @@ export function prepareMacPublicInstallNodeHeaders({ nodeExecutable, nodeVersion
 // Preserve evidence before the consumer's finally removes its isolated npm
 // cache. In particular, a timed-out install may have no child stdout/stderr.
 export function runMacPublicInstallPhase({ stage, command, args, cwd, env, cache, timeout = 180_000, log = console.error }) {
-  assert.ok(Number.isSafeInteger(timeout) && timeout > 0 && timeout <= 180_000, 'Mac install phase must retain its bounded timeout');
+  const limit = stage === 'scripts-disabled-install' ? MAC_PUBLIC_INSTALL_INITIAL_TIMEOUT_MS : 180_000;
+  assert.ok(Number.isSafeInteger(timeout) && timeout > 0 && timeout <= limit, 'Mac install phase must retain its bounded timeout');
   const started = Date.now();
-  const emit = details => log(JSON.stringify({ stage, elapsedMs: Date.now() - started, ...details }));
+  const emit = details => log(JSON.stringify({ stage, timeoutMs: timeout, elapsedMs: Date.now() - started, ...details }));
   emit({ status: 'started' });
   try {
     const output = execFileSync(command, args, { cwd, env, stdio: 'pipe', maxBuffer: 32 * 1024 * 1024, timeout });
@@ -107,6 +111,11 @@ export function macPublicInstallLifecyclePolicy({ ownedRoot, npmRoot, developerR
   }
   if (developerRoot !== undefined) assertMacDeveloperRoot(developerRoot);
   const owned = JSON.stringify(ownedRoot), npm = JSON.stringify(npmRoot);
+  // Apple's make shim invokes xcodebuild, whose runtime frameworks live beside
+  // Contents/Developer. Bind reads to this selected app's framework directory;
+  // Command Line Tools has no corresponding app framework dependency.
+  const appFrameworks = developerRoot?.startsWith('/Applications/')
+    ? ['Frameworks', 'SharedFrameworks'].map(name => join(dirname(developerRoot), name)) : [];
   return `(version 1)
 (deny default)
 (deny network*)
@@ -119,6 +128,7 @@ export function macPublicInstallLifecyclePolicy({ ownedRoot, npmRoot, developerR
 (allow file-read-data file-test-existence (literal "/"))
 (allow file-read-data (subpath ${owned}) (subpath ${npm})
   ${developerRoot === undefined ? '' : `(subpath ${JSON.stringify(developerRoot)})`}
+  ${appFrameworks.map(path => `(subpath ${JSON.stringify(path)})`).join('\n  ')}
   (subpath "/usr") (subpath "/bin") (subpath "/System") (subpath "/Library/Apple")
   (literal "/dev/null") (literal "/dev/urandom") (literal "/dev/random"))
 (allow file-write* (subpath ${owned}) (literal "/dev/null"))
