@@ -2,7 +2,27 @@
 
 Current release checklist, updated 2026-10-08 (America/Chicago).
 
-## Current release gate: v31
+## Current release gate: v32
+
+Fresh review identified two release blockers: arbitrary unavailable Copilot models could be saved, and independently decoding transport chunks could corrupt multibyte provider text. Creation, hiring, edits and environment changes now require the existing bounded authenticated metadata probe; the UI accepts only discovered models. The three protocol readers now retain a UTF-8 decoder across chunks.
+
+Current runtime source is `c049102fba12850b755a962d74e22635c8585724`, profile **v32**, `sha256:3dcc8de3034e32001b0a819a614beca345d314266a70a09e0050a9f5f58275fc`, Copilot **1.0.88**, exact **gpt-5.6-luna**. Compared with v31, only the metadata decoder hash, historical revision decoder hash and profile version change in the bound declaration. Earlier results remain historical; they do not qualify changed v32 bytes.
+
+| Current gate | Result |
+|---|---|
+| Model adoption | 53 setup UI tests and eight focused API cases pass; rejection prevents create/hire/edit, exact available models remain unchanged |
+| Split UTF-8 transport | 117 metadata/profile/installation/input tests and 13 credential-free protocol fixtures pass; Runner, server and UI TypeScript checks and token gates pass |
+| Maintained master | The stack retains master `d6df12cef69fcaf2d2fe66a393168931d5b8b4e7` and the merged CI-owned dependency prerequisite #15572 |
+| Fresh CI and review | All four repaired heads require exact-head CI and clean Greptile review; a separate code-owner approval is required for the runtime PR |
+| Frozen package and image | Freeze after review, then build and scan the repaired source. The unpublished v31 image request is superseded; it is not the current release image |
+| Live release gate | Verify the frozen packaged profile, exact saved-token model, ordinary local and Daytona paths and independent cleanup before rollout |
+| Shipping | Pending qualification, code-owner approval, normal merges and shipped canary proof |
+
+The approved budget has **$30.68 remaining** with no active hold. Provider USD stays unknown and GitHub-attributed; no budget reset or billing setting change occurred. The current record is `2026-10-08-copilot-qualification-v32.json`.
+
+## Historical compatibility canary: v31
+
+The following is the retained v31 state before the final review repairs. Its local canary and platform evidence remain valid for those exact bytes; v31 publication and remote launch are superseded by v32.
 
 The normal installed v31 local canary passes on source `d99959f00b62ad2099b5cdaca3f7656dcb88a8e8`, runtime source `4acb084fc5b6805a483bf419c2cdc6de3f7ec13d`, profile `sha256:4a22e4c50fd213c79cd02fd3c5369aef2256ac719762c62f5b70c691cd47e76b`, Copilot 1.0.88 and exact gpt-5.6-luna. Saved-token metadata, UI model selection, save/reopen, one final response, accepted normalized receipt, 30 downloaded bytes and independent process/scratch cleanup pass without qualification overrides. All three installed platform smokes pass; Linux is emulated locally pending the native Daytona canary.
 
