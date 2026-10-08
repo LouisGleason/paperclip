@@ -31,7 +31,7 @@ profile, model qualification, environment, task, or ranking-snapshot change
 must change that fingerprint automatically so the dashboard can annotate the
 boundary instead of silently joining unlike totals.
 
-Pi native definition 20 supplies one ordinary JSON write with the nonce followed
+Pi native definition 21 supplies one ordinary JSON write with the nonce followed
 by exactly one LF, then asks for a complete native read. The independently
 checked outcome remains 33 bytes, saved through the public managed-file API
 and copied into a fresh task after controller restart. Missing LF, extra LF,
@@ -40,7 +40,10 @@ parent seed, permissions, deadlines and zero automatic retries remain required.
 Both runs also require a completed, untruncated native-read receipt containing
 the exact memory text and a withheld private-root target, and reject shell
 execution. Named workspace reads and unrelated/bootstrap text cannot substitute;
-the first Sonnet measurement passed the byte/restart checks but used a shell read
+Remote observer admission also waits for the public executing stage; an active
+lease alone cannot prove that provider preparation has finished. The existing
+readiness and case deadlines remain unchanged.
+The first Sonnet measurement passed the byte/restart checks but used a shell read
 in the fresh task. Its original grade remains preserved.
 The user approved Sonnet 4.6 through OpenRouter as the explicit Pi qualification
 model; production model selection stays caller-controlled. Earlier DeepSeek

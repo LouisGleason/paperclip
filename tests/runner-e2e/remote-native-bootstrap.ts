@@ -173,7 +173,10 @@ export function createRemoteNativeBootstrap(input: {
             if (lastReadError !== undefined) throw lastReadError;
             return state;
           },
-          accept: state => !state.rejection && state.owned && state.run?.status === "running" && Boolean(state.lease)
+          // An active lease precedes provider artifact preparation. Wait for the
+          // public executing stage before starting the bounded readiness RPC.
+          accept: state => !state.rejection && state.owned && state.run?.status === "running"
+            && state.run.executionStage === "executing" && Boolean(state.lease)
             && Date.now() < admissionDeadlineAt,
           reject: state => state.rejection,
           timeoutDetail: () => JSON.stringify(lastState),
