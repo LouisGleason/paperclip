@@ -1,3 +1,4 @@
+import { StringDecoder } from "node:string_decoder";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -90,6 +91,7 @@ export async function probeCopilotMetadata(token: string, model?: string): Promi
 }
 
 export function createMetadataRpc(child: ChildProcessWithoutNullStreams) {
+  const decoder = new StringDecoder("utf8");
   const pending = new Map<number, { resolve(value: unknown): void; reject(error: Error): void }>();
   let nextId = 0, bytes = 0, buffer = "", failure: Error | undefined;
   const fail = (error: Error) => { failure ??= error; for (const call of pending.values()) call.reject(failure); pending.clear(); };
@@ -100,7 +102,7 @@ export function createMetadataRpc(child: ChildProcessWithoutNullStreams) {
   child.stdout.on("data", (chunk: Buffer) => {
     bytes += chunk.length;
     if (bytes > 2 * 1024 * 1024) { fail(new Error("Copilot metadata exceeded its bound")); child.kill("SIGTERM"); return; }
-    buffer += chunk.toString();
+    buffer += decoder.write(chunk);
     while (buffer.includes("\n")) {
       const end = buffer.indexOf("\n"), line = buffer.slice(0, end); buffer = buffer.slice(end + 1);
       if (!line.trim()) continue;
