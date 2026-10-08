@@ -28,6 +28,7 @@ import { resolveCliVersion } from "../version.js";
 import { systemdServiceName } from "../services/service-manager.js";
 
 const ORIGINAL_ENV = { ...process.env };
+const SERVER_PACKAGE_FILES = (JSON.parse(fs.readFileSync(new URL("../../../server/package.json", import.meta.url), "utf8")) as { files: string[] }).files;
 
 describe("managed install commands", () => {
   let root: string;
@@ -114,7 +115,7 @@ describe("managed install commands", () => {
         const packages = [
           { dir: "packages/shared", name: "@paperclipai/shared", packageJson: { name: "@paperclipai/shared", version: "0.3.1" } },
           { dir: "packages/db", name: "@paperclipai/db", packageJson: { name: "@paperclipai/db", version: "0.3.1", dependencies: { "@paperclipai/shared": "workspace:*" }, bundleDependencies: ["embedded-postgres"] } },
-          { dir: "server", name: "@paperclipai/server", packageJson: { name: "@paperclipai/server", version: "0.3.1", dependencies: { "@paperclipai/db": "workspace:*" }, ...(bundledServer ? { bundleDependencies: ["acpx"], files: ["dist", "ui-dist"] } : {}) } },
+          { dir: "server", name: "@paperclipai/server", packageJson: { name: "@paperclipai/server", version: "0.3.1", dependencies: { "@paperclipai/db": "workspace:*" }, ...(bundledServer ? { bundleDependencies: ["acpx"], files: SERVER_PACKAGE_FILES } : {}) } },
         ];
         fs.mkdirSync(path.join(checkout, "cli"), { recursive: true });
         fs.writeFileSync(path.join(checkout, "cli", "package.json"), JSON.stringify({ version: "0.3.1" }));
@@ -125,9 +126,23 @@ describe("managed install commands", () => {
           fs.mkdirSync(path.join(checkout, workspacePackage.dir), { recursive: true });
           fs.writeFileSync(path.join(checkout, workspacePackage.dir, "package.json"), JSON.stringify(workspacePackage.packageJson));
         }
+        const skill = path.join(checkout, "skills", "paperclip");
+        fs.mkdirSync(path.join(skill, "scripts"), { recursive: true });
+        fs.writeFileSync(path.join(skill, "SKILL.md"), "Skill from this Git checkout\n");
+        fs.writeFileSync(path.join(skill, "scripts", "helper.mjs"), "export const sameCheckout = true;\n");
+        for (const packageDir of ["server", "packages/adapters/claude-local", "packages/adapters/codex-local"]) {
+          const stale = path.join(checkout, packageDir, "skills");
+          fs.mkdirSync(stale, { recursive: true });
+          fs.writeFileSync(path.join(stale, "stale.md"), "stale package-local skills\n");
+        }
         return { stdout: "", stderr: "" };
       }
       if (file === "corepack") {
+        if (args.includes("build")) {
+          const dist = path.join(_options!.cwd as string, "server", "dist");
+          fs.mkdirSync(dist, { recursive: true });
+          fs.writeFileSync(path.join(dist, "index.js"), "export const builtServer = true;\n");
+        }
         if (args.includes("prepare:ui-dist")) {
           const ui = path.join(_options!.cwd as string, "server", "ui-dist");
           fs.mkdirSync(ui, { recursive: true });
@@ -155,18 +170,24 @@ describe("managed install commands", () => {
         if (packageName === "paperclipai-server") {
           expect(fs.readFileSync(path.join(args[1], "ui-dist", "index.html"), "utf8"))
             .toBe("<html>Built from this Git checkout</html>");
+          expect(fs.readFileSync(path.join(args[1], "skills", "paperclip", "SKILL.md"), "utf8"))
+            .toBe("Skill from this Git checkout\n");
+          expect(fs.readFileSync(path.join(args[1], "dist", "index.js"), "utf8"))
+            .toBe("export const builtServer = true;\n");
         }
         fs.writeFileSync(path.join(args[args.indexOf("--pack-destination") + 1], `${packageName}-0.3.1.tgz`), "package");
         return { stdout: "", stderr: "" };
       }
       if (file === "npm" && args[0] === "install") { const prefix = args[args.indexOf("--prefix") + 1]; const packageRoot = path.join(prefix, "node_modules", "paperclipai"); fs.mkdirSync(path.join(packageRoot, "dist"), { recursive: true }); fs.writeFileSync(path.join(packageRoot, "package.json"), JSON.stringify({ version: "0.3.1" })); fs.writeFileSync(path.join(packageRoot, "dist", "index.js"), "#!/usr/bin/env node\n"); return { stdout: "", stderr: "" }; }
       if (file === process.execPath && args[0]?.endsWith("prepare-bundled-package.mjs")) {
-        const packageJson = JSON.parse(fs.readFileSync(path.join(args[1], "package.json"), "utf8")) as { name: string; version: string };
+        const packageJson = JSON.parse(fs.readFileSync(path.join(args[1], "package.json"), "utf8")) as { name: string; version: string; files?: string[] };
         fs.mkdirSync(args[2], { recursive: true });
         if (packageJson.name === "@paperclipai/server") {
-          // Match the real bundler's declared-file copy: absent UI must fail
-          // before npm packs or activates an incomplete server payload.
-          fs.cpSync(path.join(args[1], "ui-dist"), path.join(args[2], "ui-dist"), { recursive: true });
+          // Match the real bundler's complete declared-file copy. Missing
+          // runtime assets must fail before packing an incomplete payload.
+          for (const entry of packageJson.files ?? []) {
+            fs.cpSync(path.join(args[1], entry), path.join(args[2], entry), { recursive: true });
+          }
         }
         fs.writeFileSync(path.join(args[2], "package.json"), JSON.stringify(packageJson));
         return { stdout: "", stderr: "" };
@@ -251,6 +272,65 @@ describe("managed install commands", () => {
       file === process.execPath && args[0]?.endsWith("prepare-bundled-package.mjs") && args[1]?.endsWith(path.sep + "server"));
     expect(serverStage).toBeGreaterThan(runCommand.mock.calls.indexOf(uiCalls[0]));
     expect(runCommand.mock.calls[serverStage][2]?.cwd).toBe(uiCalls[0][2]?.cwd);
+  });
+
+  it("stages same-checkout runtime skills in the release packages before bundled Git packaging", async () => {
+    const sha = "6".repeat(40);
+    const checkoutCommands = createGitCheckoutRunCommand(sha, { bundledServer: true });
+    let checkedSkills = false;
+    const runCommand = vi.fn(async (file: string, args: string[], options?: Parameters<CommandRunner>[2]) => {
+      if (file === process.execPath && args[0]?.endsWith("prepare-bundled-package.mjs")) {
+        const checkout = options!.cwd as string;
+        for (const packageDir of ["server", "packages/adapters/claude-local", "packages/adapters/codex-local"]) {
+          const skills = path.join(checkout, packageDir, "skills");
+          expect(fs.readdirSync(skills)).toEqual(["paperclip"]);
+          for (const file of ["SKILL.md", "scripts/helper.mjs"]) {
+            expect(fs.readFileSync(path.join(skills, "paperclip", file), "utf8"))
+              .toBe(fs.readFileSync(path.join(checkout, "skills", "paperclip", file), "utf8"));
+          }
+        }
+        // Other adapters' optional skills keep their established pack behavior.
+        expect(fs.existsSync(path.join(checkout, "packages/adapters/cursor-local/skills"))).toBe(false);
+        checkedSkills = true;
+      }
+      return checkoutCommands(file, args, options);
+    });
+
+    await expect(installGitPayload("paperclipai/paperclip", sha, runCommand, resolveInstallStorePaths()))
+      .resolves.toMatchObject({ version: "0.3.1", reused: false });
+    expect(checkedSkills).toBe(true);
+  });
+
+  it("cleans missing Git runtime skills and preserves the active installed payload", async () => {
+    const previousSha = "7".repeat(40);
+    await installCommand({ ref: previousSha, yes: true }, { runCommand: createGitCheckoutRunCommand(previousSha) });
+    const paths = resolveInstallStorePaths();
+    const previousManifest = fs.readFileSync(paths.manifestPath, "utf8");
+    const previousTarget = fs.readlinkSync(paths.currentPath);
+    const previousShim = fs.readFileSync(paths.shimPath, "utf8");
+    const sha = "8".repeat(40);
+    const checkoutCommands = createGitCheckoutRunCommand(sha, { bundledServer: true });
+    let failedCheckout: string | undefined;
+    const runCommand = vi.fn(async (file: string, args: string[], options?: Parameters<CommandRunner>[2]) => {
+      const result = await checkoutCommands(file, args, options);
+      if (file === "tar") {
+        failedCheckout = args[args.indexOf("-C") + 1];
+        fs.rmSync(path.join(failedCheckout, "skills"), { recursive: true });
+      }
+      return result;
+    });
+
+    await expect(installCommand({ ref: sha, yes: true }, { runCommand }))
+      .rejects.toThrow(/ENOENT.*skills/);
+    expect(failedCheckout).toBeDefined();
+    expect(fs.existsSync(path.dirname(failedCheckout!))).toBe(false);
+    expect(fs.readdirSync(path.join(paths.installsRoot, "git"))).toEqual([previousSha.slice(0, 12)]);
+    expect(runCommand.mock.calls.some(([file, args]) => file === "npm" || (file === process.execPath && args[0]?.endsWith("prepare-bundled-package.mjs")))).toBe(false);
+    expect(fs.existsSync(paths.lockPath)).toBe(false);
+    expect(fs.readFileSync(paths.manifestPath, "utf8")).toBe(previousManifest);
+    expect(fs.readlinkSync(paths.currentPath)).toBe(previousTarget);
+    expect(fs.readFileSync(paths.shimPath, "utf8")).toBe(previousShim);
+    expect(fs.existsSync(readInstallManifest(paths)!.payloadPath)).toBe(true);
   });
 
   it("cleans a failed Git UI build and preserves the active installed payload", async () => {

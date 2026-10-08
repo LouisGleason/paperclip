@@ -284,6 +284,13 @@ export async function installGitPayload(repo: string, sha: string, runCommand: C
     // Bundled package staging bypasses the server's prepack hook. Produce its
     // declared UI files from this same checkout before staging that package.
     await runCommand("corepack", ["pnpm", "--dir", "server", "prepare:ui-dist"], { cwd: checkoutPath, env: buildEnv(), maxBuffer: 32 * 1024 * 1024 });
+    // Match release.sh's runtime-skill preparation. These packages declare
+    // skills separately from their build output; bundled staging bypasses it.
+    for (const packageDir of ["server", "packages/adapters/claude-local", "packages/adapters/codex-local"]) {
+      const destination = path.join(checkoutPath, packageDir, "skills");
+      fs.rmSync(destination, { recursive: true, force: true });
+      fs.cpSync(path.join(checkoutPath, "skills"), destination, { recursive: true });
+    }
     const metadata = JSON.parse(fs.readFileSync(path.join(checkoutPath, "cli", "package.json"), "utf8")) as { version: string };
     const workspacePackages = resolveGitInstallWorkspacePackages(checkoutPath);
     for (const [index, workspacePackage] of workspacePackages.entries()) {
