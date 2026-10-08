@@ -40,9 +40,10 @@ parent seed, permissions, deadlines and zero automatic retries remain required.
 Both runs also require a completed, untruncated native-read receipt containing
 the exact memory text and a withheld private-root target, and reject shell
 execution. Named workspace reads and unrelated/bootstrap text cannot substitute;
-Remote observer admission also waits for the public executing stage; an active
-lease alone cannot prove that provider preparation has finished. The existing
-readiness and case deadlines remain unchanged.
+Remote observer admission keeps the owned-run and active-lease checks. Its
+existing readiness RPC verifies the pinned native daemon before installation;
+legacy executionStage can remain preparing for a native run. Readiness and case
+deadlines remain unchanged.
 The first Sonnet measurement passed the byte/restart checks but used a shell read
 in the fresh task. Its original grade remains preserved.
 The user approved Sonnet 4.6 through OpenRouter as the explicit Pi qualification

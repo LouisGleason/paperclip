@@ -12,7 +12,7 @@ afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); });
 function harness(timeoutMs = REMOTE_FIXTURE_MIN_SETUP_BUDGET_MS + 18_000) {
   const order: string[] = [];
   const issue = { id: "issue", companyId: "company", assigneeAgentId: "agent" };
-  const run = { id: "run", companyId: "company", agentId: "agent", status: "running", executionStage: "executing" };
+  const run = { id: "run", companyId: "company", agentId: "agent", status: "running", executionStage: "preparing", runtimeMode: "native", nativePhase: "provider_running" };
   const leases = [{ id: "lease", heartbeatRunId: "run", issueId: "issue", status: "active", providerLeaseId: "sandbox" }];
   const api = { get: vi.fn(async (path: string) => path === "/api/issues/issue" ? issue : path === "/api/heartbeat-runs/run" ? run : leases) };
   const fixture = {
@@ -120,15 +120,10 @@ it("waits through queued admission without publishing early", async () => {
   expect(count).toBe(2); expect(h.fixture.publishAction).toHaveBeenCalledTimes(1);
 });
 
-it("waits for execution while an owned lease is active and artifacts are preparing", async () => {
-  vi.useFakeTimers(); vi.setSystemTime(0);
-  const h = harness(); h.bootstrap.prompt("preparing"); h.run.executionStage = "preparing";
-  const pending = h.bootstrap.bindAndRelease(h.request);
-  await vi.advanceTimersByTimeAsync(1000);
-  expect(h.bind).not.toHaveBeenCalled(); expect(h.fixture.publishAction).not.toHaveBeenCalled();
-  h.run.executionStage = "executing";
-  await vi.advanceTimersByTimeAsync(1000);
-  await expect(pending).resolves.toBe(h.fixture);
+it.each(["provider_running", "observed"])("admits a native %s run while its legacy stage stays preparing", async nativePhase => {
+  const h = harness(); h.bootstrap.prompt("native-ready"); h.run.nativePhase = nativePhase;
+  await expect(h.bootstrap.bindAndRelease(h.request)).resolves.toBe(h.fixture);
+  expect(h.run.executionStage).toBe("preparing");
   expect(h.bind).toHaveBeenCalledTimes(1); expect(h.fixture.publishAction).toHaveBeenCalledTimes(1);
 });
 

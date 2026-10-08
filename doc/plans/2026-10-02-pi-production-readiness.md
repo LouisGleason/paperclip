@@ -2273,9 +2273,9 @@ Keep rollout held until every release gate is proven.
    both native reads, exact LF, restart persistence, denial and cleanup:
    23 retained files, 4,150,531 bytes. Definition 21 binds both read receipts
    to exact memory contents and rejects shell execution and workspace-file
-   substitution. It also waits for public `executing` admission before the
-   unchanged bounded observer-readiness RPC. All 171 focused memory, bootstrap
-   and installed CLI/plugin checks pass without provider calls. Missing-LF and
+   substitution. The observer uses its unchanged bounded native-readiness RPC;
+   a native run can keep the legacy stage at `preparing`. All 172 focused memory,
+   bootstrap and installed CLI/plugin checks pass after this correction. Missing-LF and
    historical DeepSeek evidence remain unchanged.
 2. Complete all 26 Product and seven Runner cases on Sonnet 4.6 with native low
    thinking and the frozen profile-18 package/image set. Definition source

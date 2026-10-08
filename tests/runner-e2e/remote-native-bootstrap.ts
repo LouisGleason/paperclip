@@ -173,10 +173,9 @@ export function createRemoteNativeBootstrap(input: {
             if (lastReadError !== undefined) throw lastReadError;
             return state;
           },
-          // An active lease precedes provider artifact preparation. Wait for the
-          // public executing stage before starting the bounded readiness RPC.
-          accept: state => !state.rejection && state.owned && state.run?.status === "running"
-            && state.run.executionStage === "executing" && Boolean(state.lease)
+          // Native runs can retain the legacy "preparing" stage. The observer's
+          // runtime-ready RPC proves the actual pinned daemon before installation.
+          accept: state => !state.rejection && state.owned && state.run?.status === "running" && Boolean(state.lease)
             && Date.now() < admissionDeadlineAt,
           reject: state => state.rejection,
           timeoutDetail: () => JSON.stringify(lastState),
