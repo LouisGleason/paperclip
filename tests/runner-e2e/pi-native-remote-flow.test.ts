@@ -43,7 +43,16 @@ it.each([
     if (/\/api\/heartbeat-runs\/run-[12]$/.test(path)) return runs.find(row => path.endsWith(row.id));
     if (path.endsWith("/interactions") || path.endsWith("/comments")) return [];
     if (path.includes("instructions-bundle/file?")) return { content: decodeURIComponent(path.split("?path=")[1]!) === PI_NATIVE_MEMORY_PARENT_SEED_PATH ? PI_NATIVE_MEMORY_PARENT_SEED_CONTENT : personal };
-    if (path.includes("/events?")) return path.includes("run-1/") ? [{ eventType: "instruction_save", seq: 1, payload: { state: "saved" } }, { eventType: "tool.execution.completed", seq: 2, payload: { prpEvent: { payload: { schema: "paperclip.tool.execution.v1", transport: "builtin", operation: "edit", name: "write", status: "failed", target: null, executionId: "tool-1", output: "Pi tool path is outside its assigned workspace and agent files" } } } }] : [];
+    if (path.includes("/events?")) {
+      const nativeRead = { eventType: "tool.execution.completed", seq: 3, payload: { prpEvent: { payload: {
+        schema: "paperclip.tool.execution.v1", transport: "builtin", name: "read", operation: "read", status: "completed",
+        target: null, readOnly: true, outputTruncated: false, executionId: path.includes("run-1/") ? "read-1" : "read-2",
+        // Missing-LF controls still model the intended complete native read;
+        // their independent persisted bytes fail the existing byte assertion.
+        output: JSON.stringify({ content: [{ type: "text", text: personal.endsWith("\n") ? personal : `${personal}\n` }] }),
+      } } } };
+      return path.includes("run-1/") ? [{ eventType: "instruction_save", seq: 1, payload: { state: "saved" } }, { eventType: "tool.execution.completed", seq: 2, payload: { prpEvent: { payload: { schema: "paperclip.tool.execution.v1", transport: "builtin", operation: "edit", name: "write", status: "failed", target: null, executionId: "tool-1", output: "Pi tool path is outside its assigned workspace and agent files" } } } }, nativeRead] : [nativeRead];
+    }
     throw new Error(`Unexpected fixture path ${path}`);
   } };
   const remoteBootstrap = { prompt: (nonce: string) => `Read only bootstrap-${nonce}`, bindAndRelease: async (input: any) => {

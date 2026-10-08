@@ -29,14 +29,24 @@ export function gradePiNativeMemory(actual: unknown, nonce: string): boolean {
   return typeof actual === "string" && actual === `${nonce}\n`;
 }
 
-/** Pair the independent byte oracle with one actual native read and no shell shortcut. */
-export function hasPiNativeMemoryRead(events: readonly Record<string, any>[]): boolean {
+/** Agent-file paths are withheld from public targets. Bind the private-root read
+ * to exact memory text as well as the independent saved-file/readback oracles.
+ * Named workspace reads and unrelated/bootstrap text cannot substitute. */
+export function hasPiNativeMemoryRead(events: readonly Record<string, any>[], nonce: string): boolean {
   const tools = events.filter(row => row.eventType === "tool.execution.completed")
     .map(row => row.payload?.prpEvent?.payload)
     .filter(payload => payload?.schema === "paperclip.tool.execution.v1" && payload.transport === "builtin");
-  return !tools.some(payload => payload.operation === "execute")
-    && tools.filter(payload => payload.name === "read" && payload.operation === "read"
-      && payload.status === "completed" && typeof payload.executionId === "string" && payload.executionId.length > 0).length === 1;
+  const memoryReads = tools.filter(payload => {
+    if (payload.name !== "read" || payload.operation !== "read" || payload.status !== "completed"
+      || payload.target !== null || payload.readOnly !== true || payload.outputTruncated !== false
+      || typeof payload.executionId !== "string" || payload.executionId.length === 0 || typeof payload.output !== "string") return false;
+    try {
+      const result = JSON.parse(payload.output);
+      return Array.isArray(result.content) && result.content.length === 1
+        && result.content[0]?.type === "text" && gradePiNativeMemory(result.content[0].text, nonce);
+    } catch { return false; }
+  });
+  return !tools.some(payload => payload.operation === "execute") && memoryReads.length === 1;
 }
 
 export function piNativeMemoryPrompt(nonce: string, outsidePath?: string): string {

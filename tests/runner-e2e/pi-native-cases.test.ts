@@ -28,13 +28,15 @@ describe("Pi native Product qualification", () => {
     }
   });
   it("requires a completed native read and rejects a shell shortcut or missing receipt", () => {
+    const nonce = "0123456789abcdef0123456789abcdef";
     const read = { eventType: "tool.execution.completed", payload: { prpEvent: { payload: {
-      schema: "paperclip.tool.execution.v1", transport: "builtin", name: "read", operation: "read", status: "completed", executionId: "read-1",
+      schema: "paperclip.tool.execution.v1", transport: "builtin", name: "read", operation: "read", status: "completed", executionId: "read-1", target: null, readOnly: true, outputTruncated: false, output: JSON.stringify({ content: [{ type: "text", text: `${nonce}\n` }] }),
     } } } };
-    expect(hasPiNativeMemoryRead([read])).toBe(true);
+    expect(hasPiNativeMemoryRead([read], nonce)).toBe(true);
     const change = (patch: Record<string, unknown>) => ({ ...read, payload: { prpEvent: { payload: { ...read.payload.prpEvent.payload, ...patch } } } });
-    for (const rows of [[], [{}], [read, read], [change({ status: "failed" })], [change({ transport: "mcp" })], [change({ executionId: "" })], [change({ schema: "untrusted" })], [change({ name: "bash", operation: "execute" })], [read, change({ name: "bash", operation: "execute" })]]) {
-      expect(hasPiNativeMemoryRead(rows)).toBe(false);
+    expect(hasPiNativeMemoryRead([change({ target: "bootstrap.md", output: JSON.stringify({ content: [{ type: "text", text: "bootstrap instructions" }] }) }), read], nonce)).toBe(true);
+    for (const rows of [[], [{}], [read, read], [change({ target: undefined })], [change({ status: "failed" })], [change({ transport: "mcp" })], [change({ executionId: "" })], [change({ schema: "untrusted" })], [change({ target: "another-file.txt" })], [change({ output: "malformed" })], [change({ outputTruncated: true })], [change({ readOnly: false })], [change({ output: JSON.stringify({ content: [{ type: "text", text: "unrelated-file" }] }) })], [change({ output: JSON.stringify({ content: [{ type: "text", text: nonce }] }) })], [change({ name: "bash", operation: "execute" })], [read, change({ name: "bash", operation: "execute" })]]) {
+      expect(hasPiNativeMemoryRead(rows, nonce)).toBe(false);
     }
   });
 

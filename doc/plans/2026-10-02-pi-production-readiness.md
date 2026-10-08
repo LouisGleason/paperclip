@@ -81,10 +81,10 @@ bytes. The source must be rebuilt and admitted before another paid attempt. All
 | Normal Linux build and public installation | Source `06a3d9739` passes normal workspace/public builds, npm installation and lifecycle hooks, full graph audits, Pi setup and real server/UI admission. All 20 archives and exact installed daemon bytes are retained and verified. |
 | Normal ARM Mac installation | [Native hosted ARM check](https://github.com/paperclipai/paperclip/actions/runs/37694650556) passes on shipping `06a3d9739`: normal workspace/public builds, npm lifecycle, graph audits, Pi setup and packaged admission. All 18 archives and logs are retained and hash-verified; no provider prompts. |
 | Normal Intel Mac installation | [Native Intel continuation](https://github.com/paperclipai/paperclip/actions/runs/37700732418) passes normal npm lifecycle, Pi setup, signed native daemon, graph audits and closed admission in 24,770 ms using the exact 18 retained archives. The original cancelled attempt remains retained; no Rosetta or provider prompts. |
-| Final Product acceptance | Current definition-17 catalog has 2/26 passing unchanged controls, one failed memory cell and 23 unexecuted cells. Native questions passed definition 16 and remain historical. All three memory failures remain unchanged; the Unicode-encoding attempt still observes 32 bytes instead of 33 and reaches the unchanged 120-second deadline. No automatic retries. |
-| Final Runner acceptance | Current shipping coverage is 0/7. All seven cases, model, low thinking, 120-second limits and scoring rules are pinned to definition revision `d38ebc67`. |
+| Final Product acceptance | Sonnet 4.6 qualification uses native definition 20. Coverage is 0/26 for that definition until its live attempts pass. Earlier definition-18 and definition-19 Sonnet memory measurements remain canonical passes for their recorded fixtures; definition 19 proves exact LF, both native reads, restart persistence, denial and cleanup. The content-bound native-read guard in definition 20 also passes calibration on those retained receipts. DeepSeek passes/failures remain historical and are not counted toward Sonnet. |
+| Final Runner acceptance | Sonnet coverage is 0/7 on definitions `bf8c509d`. The first get-task-context attempt passed all semantic assertions but retained canonical `accounting_failure/provider_budget_coverage_unknown`: the installed evaluation SDK has no Sonnet 4.6 price entry. The six remaining cases did not run. Native low, 120-second limits and scoring rules remain required; no automatic retries. |
 | Cloud image | [Hosted Linux build](https://github.com/paperclipai/paperclip/actions/runs/37676853634) passes for source `06a3d9739`. Immutable image `sha256:5e62c8e294cd9d663316ba09b0aae1d7358a8938fe37d17936ef394cf1723ab2` passes anonymous OCI verification and actual credential-free Daytona guest admission; probe deletion is confirmed. No local Docker is used. |
-| PR CI and review | Fixture head `5ccb4a346` passes 54 applicable checks with two skips; Greptile is 5/5 with zero unresolved threads. Evals `d38ebc67` passes discovery and review. Prerequisite #14921 retains the valid premature-admission finding; #14922–14924 have no unresolved threads. Verify latest documentation-head CI separately. No merge, release or rollout is authorized. |
+| PR CI and review | Head `dabe81bef` passes 53 checks with two skips; Greptile findings require current-facing Sonnet instructions, updated remote native-read fixtures and a content-bound read check. The fixes are being validated. Earlier green heads remain history. Prerequisite #14921 retains the valid premature-admission finding. No merge, release or rollout is authorized. |
 
 The earlier cancellation defect and all failed attempts remain retained. Pi omits
 service-failure metadata only for its authoritative cancelled terminal, preserving
@@ -2265,19 +2265,21 @@ Keep rollout held until every release gate is proven.
 
 ## Remaining work in order
 
-1. Complete the corrected Sonnet memory fixture (native definition 19). Its first
+1. Complete the corrected Sonnet memory fixture (native definition 20). Its first
    Sonnet measurement on harness `0104942b0` passed exact LF, saved memory,
    controller restart, fresh-task bytes, denied cross-root write and cleanup.
    Its canonical pass remains preserved: 23 files, 4,180,889 bytes. The fresh
-   task used a shell read, so definition 19 explicitly requires native read in
-   both runs and rejects shell execution. Missing-LF and historical DeepSeek
-   evidence remain unchanged.
+   task used a shell read. The next measurement on harness `dabe81bef` passed
+   both native reads, exact LF, restart persistence, denial and cleanup:
+   23 retained files, 4,150,531 bytes. Definition 20 binds both read receipts
+   to exact memory contents and rejects shell execution and workspace-file
+   substitution. Missing-LF and historical DeepSeek evidence remain unchanged.
 2. Complete all 26 Product and seven Runner cases on Sonnet 4.6 with native low
    thinking and the frozen profile-18 package/image set. Definition source
    `bf8c509df49a40e72509e8732b77516aea02bbbd` changes only qualification model,
    its matching test declaration and estimated pricing; all seven case bodies,
    scoring rules and 120-second limits remain unchanged. Seven free definitions
-   and 63 eval-program/roster tests pass. Definition-19 coverage starts at zero;
+   and 63 eval-program/roster tests pass. Definition-20 coverage starts at zero;
    historical model/fixture passes are not transferred. Preserve spending caps,
    zero automatic retries and independent cleanup. Normal Linux, native ARM and
    native Intel installation already pass for shipping `06a3d9739`; their own
@@ -2391,7 +2393,7 @@ and receipts throughout that operation.
    ```
 
 4. After all release gates pass, begin with one operator-owned Linux Pi company using profile 18,
-   the accepted qualification model `openrouter/deepseek/deepseek-v4-flash-0731`
+   the accepted qualification model `openrouter/anthropic/claude-sonnet-4.6`
    and explicit low thinking. This canary input is not a production model
    allowlist: later companies may select any model acknowledged by their native
    provider or explicit custom-provider configuration. Check normal startup, one question and answer, Stop, three warm turns,
