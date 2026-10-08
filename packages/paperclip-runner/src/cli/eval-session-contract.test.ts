@@ -7,7 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createCapabilityFixtureState } from "../mock-core/capability-control-plane-types.js";
 
 import { parseNativeRuntimeContext } from "../contracts/runtime-context.js";
-import { resolveQualifiedAcpxProfile } from "../drivers/acpx/qualified-profiles.js";
+
 import type { CapabilityLiveSessionSnapshot } from "../live/live-session.js";
 import { resolveQualifiedAcpxProfile } from "../drivers/acpx/qualified-profiles.js";
 import {
