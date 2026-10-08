@@ -585,12 +585,32 @@ interface AdapterPickerItem {
 function importedAdapterConfigValues(agent: AdapterPickerItem | undefined, selectedType: string): CreateConfigValues {
   const sameHarness = agent && agentHarnessType(selectedType, agent.adapterConfig)
     === agentHarnessType(agent.adapterType, agent.adapterConfig);
+  const legacyConfig = sameHarness && selectedType !== "paperclip_runner" ? agent.adapterConfig ?? {} : {};
+  const text = (key: string) => typeof legacyConfig[key] === "string" ? legacyConfig[key] : "";
   return {
     ...defaultCreateValues,
     adapterType: selectedType,
     runner: sameHarness ? agent.runner : "auto",
     adapterSchemaValues: sameHarness ? agent.adapterConfig : {},
     model: sameHarness ? String(agent.adapterConfig?.model ?? "") : "",
+    cwd: text("cwd"),
+    instructionsFilePath: text("instructionsFilePath"),
+    promptTemplate: text("promptTemplate"),
+    command: text("command"),
+    args: Array.isArray(legacyConfig.args) ? legacyConfig.args.join(", ") : "",
+    extraArgs: Array.isArray(legacyConfig.extraArgs) ? legacyConfig.extraArgs.join(", ") : "",
+    thinkingEffort: text("modelReasoningEffort") || text("effort") || text("reasoningEffort") || text("variant"),
+    chrome: legacyConfig.chrome === true,
+    dangerouslySkipPermissions: legacyConfig.dangerouslySkipPermissions !== false,
+    search: legacyConfig.search === true,
+    fastMode: legacyConfig.fastMode === true,
+    dangerouslyBypassSandbox: selectedType === "gemini_local" ? legacyConfig.sandbox === false
+      : legacyConfig.dangerouslyBypassApprovalsAndSandbox === true || legacyConfig.dangerouslyBypassSandbox === true,
+    maxTurnsPerRun: typeof legacyConfig.maxTurnsPerRun === "number" ? legacyConfig.maxTurnsPerRun : defaultCreateValues.maxTurnsPerRun,
+    envBindings: legacyConfig.env && typeof legacyConfig.env === "object" && !Array.isArray(legacyConfig.env)
+      ? legacyConfig.env as Record<string, unknown> : {},
+    url: text("url"),
+    bootstrapPrompt: text("bootstrapPrompt"),
   };
 }
 
@@ -1650,7 +1670,21 @@ export function CompanyImport() {
           adapterConfig: agent.adapterConfig,
           runner: configVals.runner ?? agent.runner ?? "auto",
         }).adapterConfig : {};
-        override.adapterConfig = { ...sourceConfig, ...uiAdapter.buildAdapterConfig(configVals) };
+        const editedConfig = uiAdapter.buildAdapterConfig(configVals);
+        if (sameHarness && configVals.adapterType !== "paperclip_runner") {
+          // Legacy builders also emit creation defaults. Apply only actual edits
+          // so an unrelated change preserves imported policy and credentials.
+          const initialConfig = uiAdapter.buildAdapterConfig(importedAdapterConfigValues(agent, configVals.adapterType));
+          const nextConfig = { ...sourceConfig };
+          for (const key of new Set([...Object.keys(initialConfig), ...Object.keys(editedConfig)])) {
+            if (JSON.stringify(initialConfig[key]) === JSON.stringify(editedConfig[key])) continue;
+            if (editedConfig[key] === undefined) delete nextConfig[key];
+            else nextConfig[key] = editedConfig[key];
+          }
+          override.adapterConfig = nextConfig;
+        } else {
+          override.adapterConfig = { ...sourceConfig, ...editedConfig };
+        }
       } else if (!sameSelectedHarness) {
         override.adapterConfig = {};
       }

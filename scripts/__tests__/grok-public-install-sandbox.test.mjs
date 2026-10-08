@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { readFileSync, realpathSync } from 'node:fs';
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, cp, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { tmpdir } from 'node:os';
@@ -81,8 +82,9 @@ test('hosted Mac lifecycle denies OS networking and writes only owned temporary 
   const policy = macPublicInstallLifecyclePolicy({ ownedRoot: '/private/tmp/owned-qualification', npmRoot: '/Users/runner/node/npm' });
   assert.match(policy, /\(deny default\)/);
   assert.match(policy, /\(deny network\*\)/);
+  assert.match(policy, /\(allow file-read-data file-test-existence \(literal "\/"\)\)/);
   assert.match(policy, /\(allow file-write\* \(subpath "\/private\/tmp\/owned-qualification"\) \(literal "\/dev\/null"\)\)/);
-  assert.doesNotMatch(policy, /allow default|allow network|mach-lookup|syscall/);
+  assert.doesNotMatch(policy, /allow default|allow network|mach-lookup|syscall|\(subpath "\/"\)/);
   for (const ownedRoot of ['/', '../home', '/private/tmp/../other', '/private/tmp/owned\n(allow default)']) {
     assert.throws(() => macPublicInstallLifecyclePolicy({ ownedRoot, npmRoot: '/Users/runner/node/npm' }), /absolute owned/);
   }
@@ -93,6 +95,42 @@ test('hosted Mac lifecycle denies OS networking and writes only owned temporary 
   assert.match(source, /sandbox-exec.*\[.*'-f', policy,[\s\S]*?GROK_PUBLIC_INSTALL_LIFECYCLE\.slice\(1\)/);
   assert.match(source, /Hosted Mac lifecycle qualification requires OS network isolation/);
   assert.doesNotMatch(source, /no OS egress assertion/);
+});
+
+test('hosted Mac lifecycle starts standalone Node 24 while denying other homes and loopback networking', {
+  skip: process.platform !== 'darwin' || !process.versions.node.startsWith('24.')
+    ? 'The hosted macOS lifecycle fixture selects standalone Node 24' : false,
+}, async () => {
+  const root = realpathSync(await mkdtemp(join(tmpdir(), 'paperclip-mac-lifecycle-test-')));
+  const outside = realpathSync(await mkdtemp(join(tmpdir(), 'paperclip-mac-other-home-test-')));
+  try {
+    const bin = join(root, 'bin'), node = join(bin, 'node'), policy = join(root, 'lifecycle.sb');
+    await mkdir(bin);
+    await cp(process.execPath, node);
+    await chmod(node, 0o755);
+    await writeFile(join(outside, 'fixture.txt'), 'harmless other-home control');
+    await writeFile(policy, macPublicInstallLifecyclePolicy({ ownedRoot: root, npmRoot: join(root, 'npm') }));
+    const code = `const fs=require('node:fs'),net=require('node:net');
+      const r={node:process.version};
+      fs.writeFileSync(${JSON.stringify(join(root, 'owned-write'))},'ok');r.ownedWrite='ok';
+      try{fs.readFileSync(${JSON.stringify(join(outside, 'fixture.txt'))});r.outsideRead='ALLOWED'}catch(e){r.outsideRead=e.code}
+      try{fs.writeFileSync(${JSON.stringify(join(outside, 'output.txt'))},'control');r.outsideWrite='ALLOWED'}catch(e){r.outsideWrite=e.code}
+      const s=net.connect({host:'127.0.0.1',port:9});
+      s.on('connect',()=>{r.network='ALLOWED';console.log(JSON.stringify(r));s.destroy()});
+      s.on('error',e=>{r.network=e.code;console.log(JSON.stringify(r))});`;
+    const output = execFileSync('/usr/bin/sandbox-exec', ['-f', policy, node, '-e', code], {
+      cwd: root, timeout: 10_000, maxBuffer: 65_536,
+      env: { HOME: root, TMPDIR: root, PATH: `${bin}:/usr/bin:/bin`, NODE_PATH: '' },
+      stdio: 'pipe',
+    }).toString().trim();
+    assert.deepEqual(JSON.parse(output), { node: process.version, ownedWrite: 'ok',
+      outsideRead: 'EPERM', outsideWrite: 'EPERM', network: 'EPERM' });
+    assert.equal(readFileSync(join(root, 'owned-write'), 'utf8'), 'ok');
+    assert.equal(readFileSync(join(outside, 'fixture.txt'), 'utf8'), 'harmless other-home control');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  }
 });
 
 test('a root or malformed host identity cannot run lifecycle scripts', () => {

@@ -1149,11 +1149,17 @@ describe("CompanyImport", () => {
     expect(payload).not.toContain('"provider":"codex"');
   });
 
-  it("preserves the imported legacy runner and account while configuring the same harness", async () => {
+  it.each([true, false])("preserves imported legacy Codex settings and secret references on a command edit (flags=%s)", async (enabled) => {
     const preview = buildMixedAdapterPreviewResult();
+    const adapterConfig = {
+      model: "codex-specific-model", command: "/source/codex", modelReasoningEffort: "high",
+      search: enabled, fastMode: enabled, dangerouslyBypassApprovalsAndSandbox: enabled,
+      timeoutSec: 120, graceSec: 30, customPolicy: { retained: true },
+      env: { CODEX_HOME: "/source/account", OPENAI_API_KEY: { type: "secret_ref", secretId: "company-1-openai", version: "latest" } },
+    };
     preview.manifest.agents[0] = {
       ...preview.manifest.agents[0], adapterType: "codex_local", runner: "legacy",
-      adapterConfig: { model: "codex-specific-model", env: { CODEX_HOME: "/source/account" } },
+      adapterConfig,
     };
     mockCompaniesApi.importPreview.mockResolvedValue(preview);
     await renderPage();
@@ -1161,18 +1167,69 @@ describe("CompanyImport", () => {
     await clickButton((text) => text === "Preview import");
     await clickButton((text) => text === "configure adapter");
     await clickButton((text) => text === "Advanced");
+    for (const label of ["Enable search", "Fast mode", "Bypass sandbox"]) {
+      expect(container.querySelector(`[role="switch"][aria-label="${label}"]`)?.getAttribute("aria-checked")).toBe(String(enabled));
+    }
     const command = container.querySelector<HTMLInputElement>('input[placeholder="codex"]');
     expect(command).toBeTruthy();
+    expect(command!.value).toBe("/source/codex");
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(command, "/qa/codex");
       command!.dispatchEvent(new Event("input", { bubbles: true }));
     });
     await clickButton((text) => text.startsWith("Import 3 file"));
     await settle();
-    expect(lastImportMeta().adapterOverrides).toMatchObject({ coder: {
-      adapterType: "codex_local", runner: "legacy", adapterConfig: {
-        command: "/qa/codex", model: "codex-specific-model", env: { CODEX_HOME: "/source/account" },
-      },
+    expect(lastImportMeta().adapterOverrides).toEqual({ coder: {
+      adapterType: "codex_local", runner: "legacy", adapterConfig: { ...adapterConfig, command: "/qa/codex" },
+    } });
+  });
+
+  it.each([
+    ["Enable search", "search"], ["Fast mode", "fastMode"], ["Bypass sandbox", "dangerouslyBypassApprovalsAndSandbox"],
+  ])("honors an explicit imported legacy Codex toggle edit for %s", async (label, field) => {
+    const preview = buildMixedAdapterPreviewResult();
+    const adapterConfig = { model: "codex-specific-model", search: true, fastMode: true, dangerouslyBypassApprovalsAndSandbox: true };
+    preview.manifest.agents[0] = { ...preview.manifest.agents[0], adapterType: "codex_local", runner: "legacy", adapterConfig };
+    mockCompaniesApi.importPreview.mockResolvedValue(preview);
+    await renderPage();
+    await enterGithubUrl();
+    await clickButton((text) => text === "Preview import");
+    await clickButton((text) => text === "configure adapter");
+    await clickButton((text) => text === "Advanced");
+    const toggle = container.querySelector<HTMLButtonElement>(`[role="switch"][aria-label="${label}"]`);
+    expect(toggle?.getAttribute("aria-checked")).toBe("true");
+    await act(async () => { toggle!.click(); });
+    expect(toggle?.getAttribute("aria-checked")).toBe("false");
+    await clickButton((text) => text.startsWith("Import 3 file"));
+    await settle();
+    expect(lastImportMeta().adapterOverrides).toEqual({ coder: {
+      adapterType: "codex_local", runner: "legacy", adapterConfig: { ...adapterConfig, [field]: false },
+    } });
+  });
+
+  it("preserves imported Claude permission and turn limits when editing its command", async () => {
+    const preview = buildMixedAdapterPreviewResult();
+    const adapterConfig = { model: "claude-sonnet-5", command: "/source/claude", chrome: true,
+      dangerouslySkipPermissions: false, maxTurnsPerRun: 3, timeoutSec: 120, graceSec: 30 };
+    preview.manifest.agents[0] = { ...preview.manifest.agents[0], adapterType: "claude_local", runner: "legacy", adapterConfig };
+    mockCompaniesApi.importPreview.mockResolvedValue(preview);
+    await renderPage();
+    await enterGithubUrl();
+    await clickButton((text) => text === "Preview import");
+    await clickButton((text) => text === "configure adapter");
+    await clickButton((text) => text === "Advanced");
+    expect(container.querySelector('[role="switch"][aria-label="Skip permissions"]')?.getAttribute("aria-checked")).toBe("false");
+    expect(container.querySelector('[role="switch"][aria-label="Enable Chrome"]')?.getAttribute("aria-checked")).toBe("true");
+    const command = container.querySelector<HTMLInputElement>('input[placeholder="claude"]');
+    expect(command?.value).toBe("/source/claude");
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(command, "/qa/claude");
+      command!.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await clickButton((text) => text.startsWith("Import 3 file"));
+    await settle();
+    expect(lastImportMeta().adapterOverrides).toEqual({ coder: {
+      adapterType: "claude_local", runner: "legacy", adapterConfig: { ...adapterConfig, command: "/qa/claude" },
     } });
   });
 

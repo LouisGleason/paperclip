@@ -16,7 +16,7 @@ One owner carries implementation, verification and relevant review fixes through
 - Evidence task: http://127.0.0.1:3114/RUN/issues/RUN-2
 - Test-drive: keep user instance3104 unchanged. The owned3114 checkout health follows mutable HEAD and cannot establish compiled runtime identity. Final local acceptance uses the hosted assembled package graph outside Git, with source and byte verification; staging uses the exact immutable image/migrator and qualified managed image.
 - Supporting tested runtime: `2dbe43a43021add337de07b7fb68c99388874d39`. Its green CI and public image/migrator pair remain evidence for that source. Current master changes the runner protocol, daemon and migration; the integrated candidate requires fresh artifacts and checks.
-- Next action: finish the installation, first-run invite and native setup diagnostic repairs; freeze the integrated candidate and qualify fresh hosted artifacts, then complete the final live matrix. The isolated3114 API is currently down; restore it only from the verified assembled package graph. Merge, production deployment and default promotion require separate authorization.
+- Next action: finish the import-edit preservation and narrow macOS loader sandbox repairs, freeze the candidate, and qualify fresh hosted artifacts. Then complete the final live matrix. The isolated3114 API is currently down; restore it only from the verified assembled package graph. Merge, production deployment and default promotion require separate authorization.
 
 ## Implemented
 
@@ -26,7 +26,7 @@ Live testing and regression review fixed historical-adapter SQL projection, buil
 
 ## Historical verification state (2026-10-07)
 
-The active state is the [candidate reconciliation checkpoint](#candidate-reconciliation-checkpoint-2026-10-07-1937-cdt). Historical results below remain supporting evidence; they do not close its failed or blocked gates.
+The active state is the [qualification repair checkpoint](#qualification-repair-checkpoint-2026-10-07-1957-cdt). Historical results below remain supporting evidence; they do not close its failed or blocked gates.
 
 - Workspace typecheck, production build, Storybook build and token gates passed after the functional review fixes. Server typecheck passed after the credential-routing guard fix.
 - Focused review regressions: 422 passed, then 66 passed after correcting the AgentCore test's step label. Credential inheritance, connection pools and permission suites: 183 passed after the security fix. Session/revision tests: 9 passed. Pinned Grok setup probes: 6 passed.
@@ -387,3 +387,20 @@ The entire failed Codex5USD allowance remains held. Existing250USD ceiling and u
 
 
 Final repair set: invoke the existing UI producer before bundled Git installation; wait for invite data before automatic human acceptance; use the existing bootstrap button label in release smoke; preserve bounded redacted remote setup errors for all five native harnesses. Extend existing suites only. UI typecheck passes. CLI typecheck is incomplete because local runner declarations precede master's Dot/PRP changes; fresh hosted build/typecheck is required. The final source commit and artifact identities will be recorded in the PR and evidence receipts after freezing this repair set.
+
+
+### Qualification repair checkpoint (2026-10-07, 19:57 CDT)
+
+Candidate `af62662502b14288ffd9d8951f1d53db14fcbe1d` passes hosted workspace typecheck, production build and every general test shard. Its installed-package Canary gate fails because Rust daemon metadata advertises protocol2 while the execution contract is protocol3. [CI37709038142](https://github.com/paperclipai/paperclip/actions/runs/37709038142) remains failed until the repaired source passes. The [preview37709175501](https://github.com/paperclipai/paperclip/actions/runs/37709175501) has a verified exact-source migrator; its image is still building. These results remain supporting if the source changes.
+
+Fresh review found one relevant P1: an imported legacy agent can lose true flags or stored runtime settings when only a command is edited. The repair initializes stored controls and applies only actual field edits, preserving flags, limits, timeouts and secret references. All36 existing production import tests pass; substituting the prior source fails all six relevant regressions. UI typecheck and token gates pass. No existing-agent runner conversion is permitted.
+
+Both historical macOS consumers stop before installed runtime startup: arm64 offline lifecycle aborts with SIGABRT and no output, while Intel scripts-disabled installation times out. A seconds-long standalone Node24.19 diagnostic reproduces the loader abort locally. Apple's installed dyld-support.sb explicitly requires libignition to open the literal root directory as its openat root. Adding only literal-root file-read-data/file-test-existence makes Node start; negative controls still reject reads and writes outside the disposable directory and reject a loopback socket with EPERM. No Mach, syscall, general filesystem or network allowance is added. This diagnoses the local loader failure; fresh hosted consumers remain required.
+
+Read-only Railway inspection through the embedded browser confirms the managed Codex test-environment request at19:23:38CDT returns HTTP200, which carries the failed setup result. Host logs omit adapter-result details; native and error filters have no matching logs. The lost native error cannot be recovered from those retained logs, and its cause remains unclassified. No provider call, sandbox wake or deployment occurred during inspection. Paid expansion remains held.
+
+The production admin browser has no existing authenticated session. The staging credential belongs a separate registry and is not sent to production. Actual production image/distribution identity remains unavailable for rollback qualification. Preserve that gate; staging identities are supporting only.
+
+Rust daemon metadata now uses canonical durable protocol constants and its existing Rust metadata test asserts the complete range. All14 existing protocol-contract checks pass; substituting the stale daemon fails the new drift assertion. Rust formatting passes; native compilation and the metadata unit execution remain hosted checks. The actual installed oracle remains unchanged. The macOS helper suite passes18 cases; removing its literal-root allowance reproduces the actual Node SIGABRT while two controls pass.
+
+All three narrow repairs and focused controls are complete. Next: commit one candidate, run its normal CI/review, publish its immutable pair and execute the existing release-smoke cases. Restore owned3114 only after exact-source installed readiness. Then resolve managed native setup with bounded diagnostics and complete the live matrix within unchanged reservations. Human review, actual private composition, production rollback and rollout gates remain open. No merge, production deployment or provisioning-default promotion has occurred.

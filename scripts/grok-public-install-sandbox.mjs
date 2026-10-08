@@ -23,6 +23,9 @@ export function macPublicInstallLifecyclePolicy({ ownedRoot, npmRoot }) {
 (allow process-fork)
 (allow sysctl-read)
 (allow file-read-metadata)
+; Apple's dyld-support.sb requires libignition to open this exact directory
+; as an openat root. A literal does not grant reads of its children.
+(allow file-read-data file-test-existence (literal "/"))
 (allow file-read-data (subpath ${owned}) (subpath ${npm})
   (subpath "/usr") (subpath "/bin") (subpath "/System") (subpath "/Library/Apple")
   (literal "/dev/null") (literal "/dev/urandom") (literal "/dev/random"))

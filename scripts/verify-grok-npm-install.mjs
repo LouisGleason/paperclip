@@ -7,7 +7,7 @@ import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { createServer } from 'node:net';
 import { once } from 'node:events';
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -71,19 +71,26 @@ try {
     cpSync(process.execPath, join(bin, 'node')); chmodSync(join(bin, 'node'), 0o755);
     const npmCli = join(dirname(process.execPath), '../lib/node_modules/npm/bin/npm-cli.js');
     assert.ok(existsSync(npmCli), 'The selected hosted Node distribution must include npm');
+    const npmRoot = realpathSync(dirname(dirname(npmCli)));
+    const nodeIdentity = path => ({ path, realpath: realpathSync(path), symlink: lstatSync(path).isSymbolicLink() });
+    console.error(JSON.stringify({ schema: 'paperclip.hosted-macos.public-npm-prerequisites.v1',
+      sourceRevision, consumerPlatform: `${process.platform}-${process.arch}`, nodeVersion: process.version,
+      sourceNode: nodeIdentity(process.execPath), copiedNode: nodeIdentity(join(bin, 'node')), npmRoot }));
     const isolatedEnv = { PATH: `${bin}:/usr/bin:/bin`, HOME: home, TMPDIR: temporary,
       NODE_PATH: '', npm_config_cache: cache, npm_config_audit: 'false', npm_config_fund: 'false',
       PAPERCLIP_TELEMETRY_DISABLED: '1', PAPERCLIP_UPDATE_CHECK: '0', PAPERCLIP_OPEN_ON_LISTEN: 'false' };
     const npm = args => execFileSync(join(bin, 'node'), [npmCli, ...args], { cwd: consumer, env: isolatedEnv,
       stdio: 'pipe', maxBuffer: 32 * 1024 * 1024, timeout: 180_000 });
     writeFileSync(join(consumer, 'package.json'), JSON.stringify({ private: true, type: 'module' }));
+    console.error(JSON.stringify({ stage: 'scripts-disabled-install', status: 'started' }));
     npm(['install', '--ignore-scripts', '--omit=dev', ...inputs.map(input => join(consumePack, input.name))]);
     const sentinel = join(consumer, 'node_modules/paperclip-verification-lifecycle-sentinel/lifecycle-ran');
     assert.equal(existsSync(sentinel), false, 'Transfer download must not run dependency hooks');
     const lock = readFileSync(join(consumer, 'package-lock.json'));
     assert.ok(existsSync('/usr/bin/sandbox-exec'), 'Hosted Mac lifecycle qualification requires OS network isolation; npm offline alone is insufficient');
     const policy = join(root, 'lifecycle.sb');
-    writeFileSync(policy, macPublicInstallLifecyclePolicy({ ownedRoot: root, npmRoot: realpathSync(dirname(dirname(npmCli))) }), { mode: 0o600 });
+    writeFileSync(policy, macPublicInstallLifecyclePolicy({ ownedRoot: root, npmRoot }), { mode: 0o600 });
+    console.error(JSON.stringify({ stage: 'offline-lifecycle', status: 'started' }));
     execFileSync('/usr/bin/sandbox-exec', ['-f', policy, join(bin, 'node'), npmCli, ...GROK_PUBLIC_INSTALL_LIFECYCLE.slice(1)],
       { cwd: consumer, env: isolatedEnv, stdio: 'pipe', maxBuffer: 32 * 1024 * 1024, timeout: 180_000 });
     assert.equal(readFileSync(sentinel, 'utf8'), 'ok');
