@@ -61,16 +61,18 @@ closure pins are generated from `cursor-distributions.json`.
 Packaged Codex startup and browser login resolve the Codex CLI from the installed
 ACP bridge dependency graph. They verify the qualified version and the executable
 path before launch. An explicit execution command still takes precedence. A
-missing or mismatched bundled runtime returns an installation error; it does not
+missing or mismatched installed runtime returns an installation error; it does not
 borrow a different Codex installation from `PATH`. Linux ARM64 retains its
 existing legacy login path because native execution is not qualified there.
 
-Release packages stage the qualified Codex dependency graph and native platform
-artifacts. The Linux artifact digest is recorded in
-`src/drivers/acpx/qualified-runtime-artifacts.json`. macOS payloads must match the
-pinned package version and host architecture. Release assembly also checks the
-source revision and runner binary identities before publication. This packaging
-does not change agent defaults or the selected runner of an existing agent.
+Release packages retain the pinned Codex JavaScript dependency graph, but do not
+bundle Codex native binaries. The published manifest declares the official,
+exact-version platform packages as optional dependencies. npm installs the
+package for the consumer's operating system and architecture. Docker images
+preinstall their qualified runtime dependencies during the image build.
+Release assembly checks the source revision and Paperclip runner binary
+identities before publication. This packaging does not change agent defaults or
+the selected runner of an existing agent.
 
 The npm Linux daemon is built for `x86_64-unknown-linux-musl` with static linking.
 Release validation rejects an ELF interpreter or required shared libraries, then

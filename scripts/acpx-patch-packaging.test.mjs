@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import {
   existsSync,
   lstatSync,
@@ -25,7 +24,6 @@ import {
   createBundledInstallManifest,
   configureBundledProviderOverrides,
   dockerBundledProviderTarget,
-  inspectBundledNativeArtifact,
   materializePublishManifest,
   mergeBundledProviderGraph,
   selectBundledDependencyPatches,
@@ -35,7 +33,6 @@ import {
 
 const rootPackage = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
 const profileData = JSON.parse(await readFile(new URL("../packages/paperclip-runner/acpx-profiles.json", import.meta.url), "utf8"));
-const runtimeData = JSON.parse(await readFile(new URL("../packages/paperclip-runner/src/drivers/acpx/qualified-runtime-artifacts.json", import.meta.url), "utf8"));
 const nativeTargets = ["linux-x64", "darwin-arm64", "darwin-x64"];
 function esbuildFixture(t) {
   const directory = realpathSync(mkdtempSync(join(tmpdir(), "paperclip-bundled-esbuild-")));
@@ -59,21 +56,27 @@ function esbuildFixture(t) {
     dependencies: { acpx: "0.13.1" }, optionalDependencies: { unrelated: "1.0.0" } };
   return { directory, graph, esbuild, producerBinary, publish, writePackage };
 }
-function nativeFixture(directory, profile, target, data) {
-  const [os, cpu] = target.split("-");
-  const name = `${profile.agentRuntimePackage}-${target}`;
-  const packageRoot = join(directory, name);
-  mkdirSync(packageRoot, { recursive: true });
-  writeFileSync(join(packageRoot, "package.json"), JSON.stringify({ name, version: `${profile.agentRuntimeVersion}-${target}`, os: [os], cpu: [cpu] }));
-  const qualification = data[profile.agent].platforms[target];
-  const executable = qualification?.relativeExecutable ?? `vendor/${cpu === "arm64" ? "aarch64" : "x86_64"}-apple-darwin/bin/codex`;
-  const bytes = Buffer.alloc(32);
-  if (os === "linux") { bytes.set([0x7f, 0x45, 0x4c, 0x46, 2, 1]); bytes.writeUInt16LE(62, 18); }
-  else { bytes.writeUInt32LE(0xfeedfacf, 0); bytes.writeUInt32LE(cpu === "arm64" ? 0x0100000c : 0x01000007, 4); }
-  mkdirSync(join(packageRoot, executable, ".."), { recursive: true });
-  writeFileSync(join(packageRoot, executable), bytes, { mode: 0o755 });
-  if (qualification) qualification.executableDigest = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
-  return packageRoot;
+const codexTargets = ["linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64", "win32-x64", "win32-arm64"];
+const codexOptional = Object.fromEntries(codexTargets.map(target => [`@openai/codex-${target}`, `npm:@openai/codex@0.160.0-${target}`]));
+function codexFixture(t) {
+  const directory = realpathSync(mkdtempSync(join(tmpdir(), "paperclip-bundled-codex-")));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const graph = join(directory, "node_modules");
+  const writePackage = (location, metadata) => {
+    mkdirSync(location, { recursive: true }); writeFileSync(join(location, "package.json"), JSON.stringify(metadata)); return location;
+  };
+  const bridge = writePackage(join(graph, "@agentclientprotocol/codex-acp"), { name: "@agentclientprotocol/codex-acp", version: "1.6.2", dependencies: { "@openai/codex": "0.160.0" } });
+  writeFileSync(join(bridge, "index.js"), "export {};\n");
+  const runtime = writePackage(join(graph, "@openai/codex"), { name: "@openai/codex", version: "0.160.0", bin: { codex: "bin/codex.js" }, optionalDependencies: codexOptional });
+  mkdirSync(join(runtime, "bin")); writeFileSync(join(runtime, "bin/codex.js"), "// official JavaScript fixture, never executed\n");
+  mkdirSync(join(runtime, "vendor")); writeFileSync(join(runtime, "vendor/codex"), "producer fallback binary fixture, never executed");
+  const producer = writePackage(join(graph, "@openai/codex-linux-x64"), { name: "@openai/codex", version: "0.160.0-linux-x64", os: ["linux"], cpu: ["x64"] });
+  mkdirSync(join(producer, "vendor")); writeFileSync(join(producer, "vendor/codex"), "producer optional binary fixture, never executed");
+  const nested = writePackage(join(bridge, "node_modules/@openai/codex-darwin-arm64"), { name: "@openai/codex", version: "0.160.0-darwin-arm64", os: ["darwin"], cpu: ["arm64"] });
+  writePackage(join(graph, "unrelated-linux-x64"), { name: "unrelated-linux-x64", version: "1.0.0" });
+  const profiles = [{ agent: "codex", ...profileData.profiles.codex }];
+  const publish = { name: "paperclip-codex-pack-fixture", version: "1.0.0", dependencies: { "@agentclientprotocol/codex-acp": "1.6.2" }, bundleDependencies: ["@agentclientprotocol/codex-acp"] };
+  return { directory, graph, bridge, runtime, producer, nested, profiles, publish, writePackage };
 }
 const adapterUtilsPackage = JSON.parse(
   await readFile(new URL("../packages/adapter-utils/package.json", import.meta.url), "utf8"),
@@ -200,60 +203,51 @@ test("published Codex bridge uses its qualified producer closure without consume
   assert.throws(() => configureBundledProviderOverrides(conflict, serverPackage.bundleDependencies, rootPackage, profileData), /conflicting producer override/);
 });
 
-test("Linux-produced Codex bridge tarballs retain all three contained artifacts and preserve runtime declarations", (t) => {
-  const destination = mkdtempSync(join(tmpdir(), "paperclip-bundled-provider-"));
-  t.after(() => rmSync(destination, { recursive: true, force: true }));
-  const graph = join(destination, "node_modules");
-  const artifacts = join(destination, "artifacts"), data = structuredClone(runtimeData);
-  mkdirSync(artifacts);
-  const { profiles } = configureBundledProviderOverrides(
-    createBundledInstallManifest(serverPackage, serverPackage.bundleDependencies), serverPackage.bundleDependencies, rootPackage, profileData,
-  );
-  const writePackage = (name, metadata) => {
-    const directory = join(graph, name);
-    mkdirSync(directory, { recursive: true });
-    writeFileSync(join(directory, "package.json"), JSON.stringify({ name, ...metadata }));
-    return directory;
-  };
-  for (const profile of profiles) {
-    writePackage(profile.agentServerPackage, { version: profile.agentServerVersion,
-      dependencies: { [profile.agentRuntimePackage]: profile.agentRuntimeVersion } });
-    const optional = Object.fromEntries(nativeTargets.map(target => [`${profile.agentRuntimePackage}-${target}`,
-      `npm:@openai/codex@${profile.agentRuntimeVersion}-${target}`]));
-    writePackage(profile.agentRuntimePackage, { version: profile.agentRuntimeVersion, optionalDependencies: optional });
-    writePackage(`${profile.agentRuntimePackage}-linux-x64`, { version: "0.160.0-linux-x64" });
-    for (const target of nativeTargets) nativeFixture(artifacts, profile, target, data);
-  }
-  writePackage("unrelated-linux-x64", { version: "1.0.0" });
-  const before = readFileSync(join(graph, "@agentclientprotocol/codex-acp/package.json"), "utf8");
-  const stage = manifest => stageBundledProviderOptionalDependencies(destination, manifest, profiles, data, { nativeArtifactsDirectory: artifacts });
-  const staged = stage(serverPackage);
-  assert.equal(staged.overrides, undefined);
-  assert.equal(staged.optionalDependencies["@openai/codex-darwin-arm64"], "npm:@openai/codex@0.160.0-darwin-arm64");
-  for (const profile of profiles) {
-    for (const target of nativeTargets) {
-      assert.equal(existsSync(join(graph, `${profile.agentRuntimePackage}-${target}`)), true);
-      assert.ok(staged.bundleDependencies.includes(`${profile.agentRuntimePackage}-${target}`));
-    }
-    assert.equal(existsSync(join(graph, profile.agentRuntimePackage, "package.json")), true);
-  }
+test("Codex bundles retain pinned JavaScript and publish all official consumer platform aliases without native payloads", (t) => {
+  const { directory, graph, bridge, runtime, producer, nested, profiles, publish } = codexFixture(t);
+  const before = [bridge, runtime].map(path => readFileSync(join(path, "package.json"), "utf8"));
+  const staged = stageBundledProviderOptionalDependencies(directory, publish, profiles);
+  assert.deepEqual(staged.optionalDependencies, codexOptional);
+  assert.deepEqual(staged.bundleDependencies, publish.bundleDependencies);
+  assert.equal(staged.paperclipProviderArtifacts, undefined);
+  assert.equal(existsSync(producer), false);
+  assert.equal(existsSync(nested), false, "Transitive producer platform packages must also be removed");
+  assert.equal(existsSync(join(runtime, "vendor")), false, "Wrapper fallback native payload must be removed");
   assert.equal(existsSync(join(graph, "unrelated-linux-x64")), true);
-  assert.equal(readFileSync(join(graph, "@agentclientprotocol/codex-acp/package.json"), "utf8"), before);
-  const sdkPath = join(graph, "@openai/codex/package.json");
-  const sdk = JSON.parse(readFileSync(sdkPath, "utf8"));
-  writeFileSync(sdkPath, JSON.stringify({ ...sdk, version: "0.156.1" }));
-  assert.throws(() => stage(serverPackage), /runtime version mismatch/);
-  writeFileSync(sdkPath, JSON.stringify(sdk));
-  assert.throws(() => stage({ ...serverPackage,
-    optionalDependencies: { "@openai/codex-darwin-arm64": "npm:@openai/codex@0.156.1-darwin-arm64" } }), /conflicts with published/);
-  writeFileSync(sdkPath, JSON.stringify({ ...sdk, optionalDependencies: { "@openai/codex-untrusted": "0.160.0" } }));
-  assert.throws(() => stage(serverPackage), /not qualified/);
-  writeFileSync(sdkPath, JSON.stringify(sdk));
-  const codex = profiles.find(value => value.agent === "codex");
-  const artifact = join(artifacts, "@openai/codex-linux-x64");
-  assert.equal(inspectBundledNativeArtifact(artifact, codex, "linux-x64", data).target, "linux-x64");
-  writeFileSync(join(artifact, "package.json"), JSON.stringify({ name: "@openai/codex-linux-x64", version: "0.160.0-linux-x64", os: ["darwin"], cpu: ["x64"] }));
-  assert.throws(() => inspectBundledNativeArtifact(artifact, codex, "linux-x64", data), /identity mismatch/);
+  assert.deepEqual([bridge, runtime].map(path => readFileSync(join(path, "package.json"), "utf8")), before);
+  assert.deepEqual(stageBundledProviderOptionalDependencies(directory, staged, profiles), staged);
+  writeFileSync(join(directory, "package.json"), JSON.stringify(staged));
+  const packs = JSON.parse(execFileSync("npm", ["pack", "--ignore-scripts", "--offline", "--json"], {
+    cwd: directory, encoding: "utf8", timeout: 30_000,
+    env: { ...process.env, HOME: directory, npm_config_cache: join(directory, "cache"), npm_config_update_notifier: "false" },
+  }));
+  const paths = packs[0].files.map(file => file.path);
+  assert.ok(paths.some(path => path.endsWith("@openai/codex/bin/codex.js")), "The actual npm tarball retains its pinned JS runtime");
+  assert.equal(paths.some(path => /@openai\/codex-(?:linux|darwin|win32)-|@openai\/codex\/vendor\//.test(path)), false,
+    "Actual npm pack must contain no native Codex payload on any platform");
+});
+
+test("Codex bundle validation fails before deleting producer binaries for altered pins or optional declarations", (t) => {
+  const { directory, runtime, producer, profiles, publish } = codexFixture(t);
+  const file = join(runtime, "package.json"), original = JSON.parse(readFileSync(file, "utf8"));
+  writeFileSync(file, JSON.stringify({ ...original, version: "0.156.1" }));
+  assert.throws(() => stageBundledProviderOptionalDependencies(directory, publish, profiles), /runtime version mismatch/);
+  writeFileSync(file, JSON.stringify({ ...original, optionalDependencies: { ...codexOptional, "@openai/codex-untrusted": "0.160.0" } }));
+  assert.throws(() => stageBundledProviderOptionalDependencies(directory, publish, profiles), /not qualified/);
+  writeFileSync(file, JSON.stringify(original));
+  assert.throws(() => stageBundledProviderOptionalDependencies(directory, { ...publish,
+    optionalDependencies: { "@openai/codex-darwin-arm64": "npm:@openai/codex@0.156.1-darwin-arm64" } }, profiles), /conflicts with published/);
+  assert.equal(existsSync(producer), true);
+});
+
+test("Codex stripping rejects linked native payloads and wrapper fallback directories without touching external files", (t) => {
+  const { directory, runtime, producer, profiles, publish, writePackage } = codexFixture(t);
+  const outside = writePackage(join(directory, "outside"), { name: "@openai/codex", version: "0.160.0-linux-x64", os: ["linux"], cpu: ["x64"] });
+  rmSync(producer, { recursive: true }); symlinkSync(outside, producer, "dir");
+  assert.throws(() => stageBundledProviderOptionalDependencies(directory, publish, profiles), /escapes its producer graph/);
+  rmSync(producer); rmSync(join(runtime, "vendor"), { recursive: true }); symlinkSync(outside, join(runtime, "vendor"), "dir");
+  assert.throws(() => stageBundledProviderOptionalDependencies(directory, publish, profiles), /escapes its producer graph/);
+  assert.equal(existsSync(join(outside, "package.json")), true);
 });
 
 test("Linux-produced esbuild bundles publish exact consumer platform dependencies and retain their hooks", (t) => {
@@ -317,19 +311,10 @@ test("bundled esbuild cannot follow a platform payload or package namespace outs
   assert.throws(() => stageBundledEsbuildOptionalDependencies(directory, publish), /escapes its producer graph/);
 });
 
-test("Codex runtime artifact data preserves the existing Linux qualification without adding targets", () => {
-  assert.deepEqual(Object.keys(runtimeData).sort(), ["codex", "schema"]);
-  assert.deepEqual(Object.keys(runtimeData.codex.platforms), ["linux-x64"]);
-  assert.equal(runtimeData.codex.platforms["linux-x64"].executableDigest, "sha256:12eb3e81114588aca3b7998f4f19e8997b056aca08e57a7ca7c8a3ec8c652aad");
-  assert.equal(runtimeData.codex.platforms["linux-x64"].environmentVariable, "CODEX_PATH");
-});
-
 test("Docker provider graphs use qualified targets and contain only native entry bindings without changing server dependencies", (t) => {
   assert.equal(dockerBundledProviderTarget("amd64"), "linux-x64");
   assert.equal(dockerBundledProviderTarget("arm64"), null, "Unqualified native ARM64 must not break legacy images");
   assert.throws(() => dockerBundledProviderTarget("x64"), /declared supported target/);
-  const missing = structuredClone(runtimeData); delete missing.codex.platforms["linux-x64"];
-  assert.equal(dockerBundledProviderTarget("amd64", missing), null, "The existing Codex qualification contract is required");
   const fixture = realpathSync(mkdtempSync(join(tmpdir(), "paperclip-docker-provider-graph-")));
   t.after(() => rmSync(fixture, { recursive: true, force: true }));
   const server = join(fixture, "server"), staged = join(fixture, "staged"), store = join(fixture, "workspace-store");
@@ -523,7 +508,6 @@ test("server package staging applies every bundled runtime patch and preserves t
   const callLog = join(fixtureDir, "calls.log");
   const fixtureSourceRoot = join(fixtureDir, "repo");
   const fixtureArtifacts = join(fixtureDir, "native-artifacts");
-  const fixtureRuntimeData = structuredClone(runtimeData);
   mkdirSync(sourceDir);
   mkdirSync(join(sourceDir, "dist"));
   writeFileSync(join(sourceDir, "dist", "index.js"), "export {};\n");
@@ -535,13 +519,13 @@ test("server package staging applies every bundled runtime patch and preserves t
   );
   writeFileSync(callLog, "");
   mkdirSync(fixtureArtifacts);
-  for (const [agent, profile] of Object.entries(profileData.profiles).filter(([agent]) => agent === "codex")) {
-    for (const target of nativeTargets) nativeFixture(fixtureArtifacts, { agent, ...profile }, target, fixtureRuntimeData);
-  }
+  const nativePackage = join(fixtureArtifacts, "@openai/codex-linux-x64");
+  mkdirSync(join(nativePackage, "vendor"), { recursive: true });
+  writeFileSync(join(nativePackage, "package.json"), JSON.stringify({ name: "@openai/codex", version: "0.160.0-linux-x64", os: ["linux"], cpu: ["x64"] }));
+  writeFileSync(join(nativePackage, "vendor/codex"), "npm-installed Docker host fixture; never executed");
   mkdirSync(join(fixtureSourceRoot, "packages/paperclip-runner/src/drivers/acpx"), { recursive: true });
   writeFileSync(join(fixtureSourceRoot, "package.json"), JSON.stringify(rootPackage));
   writeFileSync(join(fixtureSourceRoot, "packages/paperclip-runner/acpx-profiles.json"), JSON.stringify(profileData));
-  writeFileSync(join(fixtureSourceRoot, "packages/paperclip-runner/src/drivers/acpx/qualified-runtime-artifacts.json"), JSON.stringify(fixtureRuntimeData));
   mkdirSync(join(fixtureSourceRoot, "patches"));
   for (const patchPath of Object.values(rootPackage.pnpm.patchedDependencies)) {
     writeFileSync(join(fixtureSourceRoot, patchPath), readFileSync(new URL(`../${patchPath}`, import.meta.url)));
@@ -566,9 +550,10 @@ mkdir -p "$destination/node_modules/.pnpm"
     `#!/usr/bin/env bash
 set -euo pipefail
 printf 'npm %s\\n' "$*" >> "$FAKE_CALL_LOG"
-[ "$*" = "install --omit=dev --ignore-scripts --no-audit --no-fund" ] || [ "$*" = "install --force --omit=dev --ignore-scripts --no-audit --no-fund" ]
-node -e 'const fs = require("node:fs"); const path=require("node:path"); const pkg = require("./package.json"); if ("devDependencies" in pkg) process.exit(1); if(pkg.name === "paperclip-native-artifact-staging"){for(const name of Object.keys(pkg.dependencies)){fs.cpSync(path.join(process.env.FAKE_NATIVE_ARTIFACTS,name),path.join("node_modules",name),{recursive:true});}process.exit(0);} for (const [name, version] of Object.entries(pkg.dependencies)) { const dir = "node_modules/" + name; fs.mkdirSync(dir + "/dist", { recursive: true }); fs.writeFileSync(dir + "/package.json", JSON.stringify({ name, version })); } for (const [bridge, runtimes] of Object.entries(pkg.overrides ?? {})) { for (const [name, version] of Object.entries(runtimes)) { const dir = "node_modules/" + name; fs.mkdirSync(dir, { recursive: true }); const native = name === "@openai/codex"; const optionalDependencies = native ? Object.fromEntries(["linux-x64","darwin-arm64","darwin-x64"].map(target => [name+"-"+target,"npm:"+name+"@"+version+"-"+target])) : undefined; fs.writeFileSync(dir + "/package.json", JSON.stringify({ name, version, optionalDependencies })); } }'
-if [ -f package.json ] && node -e 'process.exit(require("./package.json").name === "paperclip-native-artifact-staging" ? 0 : 1)'; then exit 0; fi
+[ "$*" = "install --omit=dev --ignore-scripts --no-audit --no-fund" ]
+node -e 'const fs = require("node:fs"); const path=require("node:path"); const pkg = require("./package.json"); if ("devDependencies" in pkg) process.exit(1); if(pkg.name === "paperclip-docker-codex-runtime"){for(const name of Object.keys(pkg.dependencies)){fs.cpSync(path.join(process.env.FAKE_NATIVE_ARTIFACTS,name),path.join("node_modules",name),{recursive:true});}process.exit(0);} for (const [name, version] of Object.entries(pkg.dependencies)) { const dir = "node_modules/" + name; fs.mkdirSync(dir + "/dist", { recursive: true }); fs.writeFileSync(dir + "/package.json", JSON.stringify({ name, version })); } for (const [bridge, runtimes] of Object.entries(pkg.overrides ?? {})) { for (const [name, version] of Object.entries(runtimes)) { const dir = "node_modules/" + name; fs.mkdirSync(dir, { recursive: true }); const native = name === "@openai/codex"; const optionalDependencies = native ? Object.fromEntries(["linux-x64","linux-arm64","darwin-x64","darwin-arm64","win32-x64","win32-arm64"].map(target => [name+"-"+target,"npm:"+name+"@"+version+"-"+target])) : undefined; fs.writeFileSync(dir + "/package.json", JSON.stringify({ name, version, optionalDependencies })); } }'
+if [ -f package.json ] && node -e 'process.exit(require("./package.json").name === "paperclip-docker-codex-runtime" ? 0 : 1)'; then exit 0; fi
+node -e 'const fs=require("node:fs");fs.cpSync(process.env.FAKE_NATIVE_ARTIFACTS+"/@openai/codex-linux-x64","node_modules/@openai/codex-linux-x64",{recursive:true});fs.mkdirSync("node_modules/@openai/codex/vendor",{recursive:true});fs.writeFileSync("node_modules/@openai/codex/vendor/codex","producer fallback fixture");'
 mkdir -p node_modules/acpx/dist
 node -e 'const fs=require("node:fs");fs.mkdirSync("node_modules/esbuild",{recursive:true});fs.writeFileSync("node_modules/esbuild/package.json",JSON.stringify({name:"esbuild",version:"0.28.2",scripts:{postinstall:"node install.js"},optionalDependencies:Object.fromEntries(["linux-x64","darwin-arm64","darwin-x64"].map(target=>["@esbuild/"+target,"0.28.2"]))}));fs.mkdirSync("node_modules/@esbuild/linux-x64",{recursive:true});fs.writeFileSync("node_modules/@esbuild/linux-x64/package.json",JSON.stringify({name:"@esbuild/linux-x64",version:"0.28.2",os:["linux"],cpu:["x64"]}));'
 printf 'unpatched runtime\\n' > node_modules/acpx/dist/runtime.js
@@ -627,6 +612,13 @@ printf 'patched spawnEnvironment runtime\\n' > "$target/dist/runtime.js"
   assert.equal(lstatSync(stagedAcpxDir).isSymbolicLink(), false);
   assert.equal(existsSync(join(destinationDir, "node_modules/.pnpm")), false);
   const stagedManifest = JSON.parse(readFileSync(join(destinationDir, "package.json"), "utf8"));
+  for (const [name, version] of Object.entries(codexOptional)) {
+    assert.equal(stagedManifest.optionalDependencies[name], version);
+    assert.equal(existsSync(join(destinationDir, "node_modules", name)), false);
+    assert.equal(stagedManifest.bundleDependencies.includes(name), false);
+  }
+  assert.equal(existsSync(join(destinationDir, "node_modules/@openai/codex/vendor")), false);
+  assert.equal(stagedManifest.paperclipProviderArtifacts, undefined);
   assert.equal(stagedManifest.optionalDependencies["@esbuild/darwin-arm64"], "0.28.2");
   assert.equal(stagedManifest.optionalDependencies["@esbuild/darwin-x64"], "0.28.2");
   assert.equal(existsSync(join(destinationDir, "node_modules/@esbuild/linux-x64")), false);
@@ -669,8 +661,12 @@ printf 'patched spawnEnvironment runtime\\n' > "$target/dist/runtime.js"
     imageServer, fixtureSourceRoot], { env: { ...process.env, PATH: `${binDir}:${process.env.PATH}`,
       FAKE_CALL_LOG: callLog, FAKE_NATIVE_ARTIFACTS: fixtureArtifacts }, encoding: "utf8" }).trim().split("\n").at(-1));
   assert.equal(imageReceipt.materialized, true);
-  assert.equal(imageReceipt.artifacts.artifacts.length, 1, "Image must stage only its existing qualified Linux target");
-  assert.equal(imageReceipt.artifacts.artifacts.every(artifact => artifact.target === "linux-x64"), true);
+  assert.equal(imageReceipt.installedBy, "npm");
+  assert.equal(imageReceipt.packageName, "@openai/codex-linux-x64");
+  assert.equal(imageReceipt.packageVersion, "0.160.0-linux-x64");
+  const imageGraph = join(imageServer, "node_modules/.paperclip-native-providers/node_modules");
+  assert.equal(existsSync(join(imageGraph, "@openai/codex-linux-x64/vendor/codex")), true);
+  for (const target of codexTargets.filter(target => target !== "linux-x64")) assert.equal(existsSync(join(imageGraph, `@openai/codex-${target}`)), false);
   assert.equal(readFileSync(join(imageServer, "node_modules/unrelated-marker"), "utf8"), "keep existing application graph");
   for (const name of ["@agentclientprotocol/codex-acp"]) {
     assert.match(realpathSync(join(imageServer, "node_modules", name)), /image-server\/node_modules\/\.paperclip-native-providers\/node_modules/);

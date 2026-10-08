@@ -145,8 +145,10 @@ RUN test -f server/dist/index.js || (echo "ERROR: server build output missing" &
 RUN rm -rf packages/paperclip-runner/runner/target
 # Vendored Codex ACPX execution binds package authority to server/node_modules.
 # pnpm links into the workspace store cannot satisfy that boundary. Reuse the
-# public-package producer to materialize only this image's existing qualified
-# native target, with dependency scripts disabled and runtime authority intact.
+# public-package producer for the pinned JavaScript graph, then install only
+# this image's qualified native dependency from npm. Keep dependency scripts
+# disabled and runtime authority intact. npm release tarballs contain no Codex
+# native binaries; the image preinstalls its own runtime dependency.
 # ARM64 remains usable through legacy adapters while native qualification is
 # limited to the source-owned supported targets.
 ARG TARGETARCH

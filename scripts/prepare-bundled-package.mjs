@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
 import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
@@ -9,9 +8,7 @@ import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
-const runtimeDataPath = "packages/paperclip-runner/src/drivers/acpx/qualified-runtime-artifacts.json";
 const nativeTargets = ["linux-x64", "darwin-arm64", "darwin-x64"];
-const digest = bytes => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 
 export function materializePublishManifest(pkg) {
   const publishConfig = pkg.publishConfig ?? {};
@@ -57,8 +54,7 @@ export function createBundledInstallManifest(publishManifest, bundledDependencie
 // npm consumers cannot inherit the workspace's pnpm overrides or patches.
 // Materialize the already-qualified Codex bridge closure in the tarball,
 // with overrides confined to the temporary, scripts-disabled producer graph.
-export function configureBundledProviderOverrides(installManifest, bundledDependencies, rootPackage, profileData,
-  runtimeData = JSON.parse(readFileSync(resolve(repoRoot, runtimeDataPath), "utf8"))) {
+export function configureBundledProviderOverrides(installManifest, bundledDependencies, rootPackage, profileData) {
   const result = structuredClone(installManifest);
   const selected = [];
   for (const [agent, serverPackage, runtimePackage] of [
@@ -92,151 +88,98 @@ const inside = (root, candidate) => {
   return value !== "" && value !== ".." && !value.startsWith(`..${sep}`) && !isAbsolute(value);
 };
 
-export function inspectBundledNativeArtifact(directory, profile, target, runtimeData) {
-  if (profile.agent !== "codex" || !nativeTargets.includes(target) || runtimeData?.schema !== "paperclip.acpx-runtime-artifacts.v1") throw new Error("Bundled native artifact has no supported target contract");
-  const rootStat = lstatSync(directory), manifestStat = lstatSync(resolve(directory, "package.json"));
-  if (!rootStat.isDirectory() || rootStat.isSymbolicLink() || !manifestStat.isFile() || manifestStat.nlink !== 1 || manifestStat.size > 256 * 1024) {
-    throw new Error("Bundled native artifact manifest is not a bounded regular file");
-  }
-  const [platform, architecture] = target.split("-");
-  const metadata = JSON.parse(readFileSync(resolve(directory, "package.json"), "utf8"));
-  const name = `${profile.agentRuntimePackage}-${target}`;
-  const version = `${profile.agentRuntimeVersion}-${target}`;
-  if (![name, profile.agentRuntimePackage].includes(metadata.name) || metadata.version !== version
-    || !Array.isArray(metadata.os) || !metadata.os.includes(platform) || !Array.isArray(metadata.cpu) || !metadata.cpu.includes(architecture)
-    || Object.keys(metadata.dependencies ?? {}).length || Object.keys(metadata.optionalDependencies ?? {}).length || Object.keys(metadata.scripts ?? {}).length) {
-    throw new Error(`Bundled ${profile.agent} native artifact identity mismatch: ${target}`);
-  }
-  const qualification = runtimeData?.[profile.agent]?.platforms?.[target];
-  if (!qualification && !(profile.agent === "codex" && platform === "darwin")) throw new Error("Bundled native artifact omitted its existing executable qualification");
-  const relativeExecutable = qualification?.relativeExecutable ?? (profile.agent === "codex" && platform === "darwin"
-    ? `vendor/${architecture === "arm64" ? "aarch64" : "x86_64"}-apple-darwin/bin/codex` : undefined);
-  if (!relativeExecutable || relativeExecutable.split("/").some(value => !value || value === "..") || isAbsolute(relativeExecutable)) {
-    throw new Error("Bundled native artifact has no recognized executable");
-  }
-  const entries = [];
-  let bytes = 0;
-  const walk = (root, prefix = "") => {
-    if (!lstatSync(root).isDirectory() || lstatSync(root).isSymbolicLink()) throw new Error("Bundled native artifact contains a linked directory");
-    for (const entry of readdirSync(root).sort()) {
-      const path = prefix ? `${prefix}/${entry}` : entry;
-      if (/[\u0000-\u001f\u007f\\]/.test(path)) throw new Error("Bundled native artifact contains an unsafe path");
-      const file = resolve(root, entry), stat = lstatSync(file);
-      if (stat.isDirectory()) walk(file, path);
-      else {
-        if (!stat.isFile() || stat.nlink !== 1 || stat.mode & 0o7000) throw new Error("Bundled native artifact contains links or special files");
-        bytes += stat.size;
-        if (bytes > 1024 * 1024 * 1024 || entries.length >= 4096) throw new Error("Bundled native artifact exceeds size limits");
-        entries.push({ path, size: stat.size, sha256: digest(readFileSync(file)), executable: Boolean(stat.mode & 0o111) });
-      }
+// Bundle the pinned JavaScript closure, never the producer's Codex executable.
+// npm installs the official optional package for the consumer's own platform.
+export function stageBundledProviderOptionalDependencies(destinationDir, publishManifest, profiles) {
+  const graphRoot = resolve(destinationDir, "node_modules");
+  if (realpathSync(graphRoot) !== graphRoot) throw new Error("Bundled Codex graph must be a canonical owned directory");
+  const result = structuredClone(publishManifest), remove = new Set(), optional = {};
+  const profile = profiles.find(value => value.agent === "codex");
+  if (profiles.length !== 1 || !profile) throw new Error("Bundled provider graph must contain its qualified Codex profile");
+  const targets = ["linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64", "win32-x64", "win32-arm64"];
+  const declarations = Object.fromEntries(targets.map(target => [`${profile.agentRuntimePackage}-${target}`,
+    `npm:${profile.agentRuntimePackage}@${profile.agentRuntimeVersion}-${target}`]));
+  const ownedDirectory = directory => {
+    const stat = lstatSync(directory);
+    if (!stat.isDirectory() || stat.isSymbolicLink() || !inside(graphRoot, realpathSync(directory))) {
+      throw new Error("Bundled Codex dependency escapes its producer graph");
     }
   };
-  walk(directory);
-  const executable = entries.find(entry => entry.path === relativeExecutable);
-  if (!executable?.executable) throw new Error("Bundled native artifact has no executable payload");
-  const header = readFileSync(resolve(directory, relativeExecutable));
-  const correctArchitecture = platform === "linux"
-    ? header.length >= 20 && header.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46])) && header[4] === 2 && header[5] === 1 && header.readUInt16LE(18) === 62
-    : header.length >= 8 && header.readUInt32LE(0) === 0xfeedfacf && header.readUInt32LE(4) === (architecture === "arm64" ? 0x0100000c : 0x01000007);
-  if (!correctArchitecture) throw new Error(`Bundled native artifact architecture mismatch: ${target}`);
-  if (qualification && (qualification.packageName !== name || qualification.packageVersion !== version
-    || qualification.runtimePackageName !== profile.agentRuntimePackage || qualification.runtimePackageVersion !== profile.agentRuntimeVersion
-    || qualification.executableDigest !== executable.sha256)) throw new Error(`Bundled native artifact qualified digest mismatch: ${name}`);
-  return { agent: profile.agent, target, packageName: name, packageVersion: version, size: bytes,
-    executable: relativeExecutable, executableDigest: executable.sha256, qualification: qualification ? "existing executable hash" : "native Codex package/version; ACPX qualification unchanged",
-    closureDigest: digest(JSON.stringify(entries)), entries };
-}
-
-export function stageBundledProviderOptionalDependencies(destinationDir, publishManifest, profiles,
-  runtimeData = JSON.parse(readFileSync(resolve(repoRoot, runtimeDataPath), "utf8")), { nativeArtifactsDirectory, targets = nativeTargets } = {}) {
-  if (!Array.isArray(targets) || targets.length === 0 || new Set(targets).size !== targets.length
-    || targets.some(target => !nativeTargets.includes(target))) throw new Error("Invalid bundled native target selection");
-  const result = structuredClone(publishManifest);
-  const graphRoot = realpathSync(resolve(destinationDir, "node_modules"));
-  const artifacts = [], nativeDependencies = {};
-  for (const profile of profiles) {
-    const bridgeManifestPath = resolve(graphRoot, profile.agentServerPackage, "package.json");
-    const bridge = JSON.parse(readFileSync(bridgeManifestPath, "utf8"));
-    if (bridge.name !== profile.agentServerPackage || bridge.version !== profile.agentServerVersion) {
-      throw new Error(`Bundled ${profile.agent} bridge version mismatch`);
+  const manifestAt = directory => {
+    const path = resolve(directory, "package.json"), stat = lstatSync(path);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size > 256 * 1024) {
+      throw new Error("Bundled Codex dependency manifest must be a bounded regular file");
     }
-    const bridgeRequire = createRequire(bridgeManifestPath);
-    const runtimeManifestPath = realpathSync(bridgeRequire.resolve(`${profile.agentRuntimePackage}/package.json`));
-    if (!inside(graphRoot, runtimeManifestPath)) throw new Error("Bundled Codex runtime escapes its producer graph");
-    const runtime = JSON.parse(readFileSync(runtimeManifestPath, "utf8"));
-    if (runtime.name !== profile.agentRuntimePackage || runtime.version !== profile.agentRuntimeVersion) {
-      throw new Error(`Bundled ${profile.agent} runtime version mismatch`);
-    }
-    const optional = Object.entries(runtime.optionalDependencies ?? {});
-    if (optional.length === 0) throw new Error(`Bundled ${profile.agent} runtime omitted platform artifacts`);
-    const runtimeRequire = createRequire(runtimeManifestPath);
-    for (const [name, specifier] of optional) {
-      const suffix = name.slice(profile.agentRuntimePackage.length + 1);
-      const recognized = profile.agent === "codex" && name.startsWith(`${profile.agentRuntimePackage}-`) && /^(linux|darwin|win32)-(x64|arm64)$/.test(suffix);
-      const version = `${runtime.version}-${suffix}`;
-      const expected = `npm:${runtime.name}@${version}`;
-      if (!recognized || specifier !== expected) throw new Error(`Bundled ${profile.agent} platform artifact is not qualified: ${name}`);
-      if (result.optionalDependencies?.[name] !== undefined && result.optionalDependencies[name] !== expected) {
-        throw new Error(`Bundled ${profile.agent} platform artifact conflicts with published dependency: ${name}`);
-      }
-      if (targets.includes(suffix)) {
-        result.optionalDependencies = { ...result.optionalDependencies, [name]: expected };
-        nativeDependencies[name] = expected;
-      }
-      // Remove only recognized producer-platform payloads before staging the
-      // bounded supported target set. Preserve the original runtime manifest.
-      for (const lookup of runtimeRequire.resolve.paths(name) ?? []) {
-        const candidate = resolve(lookup, name);
-        if (!inside(graphRoot, candidate) || !existsSync(candidate)) continue;
-        if (lstatSync(candidate).isSymbolicLink() || !inside(graphRoot, realpathSync(candidate))) {
-          throw new Error(`Bundled ${profile.agent} platform artifact escapes its producer graph`);
+    return JSON.parse(readFileSync(path, "utf8"));
+  };
+  const bridgeDirectory = resolve(graphRoot, profile.agentServerPackage);
+  ownedDirectory(bridgeDirectory);
+  const bridge = manifestAt(bridgeDirectory);
+  if (bridge.name !== profile.agentServerPackage || bridge.version !== profile.agentServerVersion) throw new Error("Bundled Codex bridge version mismatch");
+  const issuer = createRequire(resolve(bridgeDirectory, "package.json"));
+  const runtimeManifest = realpathSync(issuer.resolve(`${profile.agentRuntimePackage}/package.json`));
+  if (!inside(graphRoot, runtimeManifest)) throw new Error("Bundled Codex runtime escapes its producer graph");
+  let runtimeCount = 0, packageCount = 0;
+  const pending = [{ directory: graphRoot, depth: 0 }];
+  while (pending.length) {
+    const { directory, depth } = pending.pop();
+    if (depth > 64) throw new Error("Bundled Codex graph exceeds its depth limit");
+    const packages = [];
+    for (const entry of readdirSync(directory)) {
+      if (entry.startsWith(".")) continue;
+      const candidate = resolve(directory, entry); ownedDirectory(candidate);
+      if (entry.startsWith("@")) {
+        for (const child of readdirSync(candidate)) {
+          const scoped = resolve(candidate, child); ownedDirectory(scoped); packages.push(scoped);
         }
-        const artifact = JSON.parse(readFileSync(resolve(candidate, "package.json"), "utf8"));
-        if (![name, runtime.name].includes(artifact.name) || artifact.version !== version) {
-          throw new Error(`Bundled ${profile.agent} installed platform artifact version mismatch: ${name}`);
-        }
-        rmSync(candidate, { recursive: true, force: true });
-      }
+      } else packages.push(candidate);
     }
-
+    for (const packageDirectory of packages) {
+      if (++packageCount > 20_000) throw new Error("Bundled Codex graph exceeds its package limit");
+      const metadata = manifestAt(packageDirectory);
+      const binding = basename(dirname(packageDirectory)) === "@openai" ? `@openai/${basename(packageDirectory)}` : null;
+      if (binding?.startsWith("@openai/codex-")) {
+        const target = binding.slice("@openai/codex-".length), [os, cpu] = target.split("-");
+        if (!Object.hasOwn(declarations, binding) || ![binding, profile.agentRuntimePackage].includes(metadata.name)
+          || metadata.version !== `${profile.agentRuntimeVersion}-${target}` || !metadata.os?.includes(os) || !metadata.cpu?.includes(cpu)) {
+          throw new Error("Bundled Codex installed platform identity mismatch");
+        }
+        remove.add(packageDirectory);
+        continue;
+      }
+      const nested = resolve(packageDirectory, "node_modules");
+      if (lstatExists(nested)) { ownedDirectory(nested); pending.push({ directory: nested, depth: depth + 1 }); }
+      if (binding !== profile.agentRuntimePackage) continue;
+      if (metadata.name !== profile.agentRuntimePackage || metadata.version !== profile.agentRuntimeVersion) throw new Error("Bundled Codex runtime version mismatch");
+      runtimeCount++;
+      if (Object.keys(metadata.optionalDependencies ?? {}).length !== targets.length
+        || targets.some(target => metadata.optionalDependencies?.[`${profile.agentRuntimePackage}-${target}`] !== declarations[`${profile.agentRuntimePackage}-${target}`])) {
+        throw new Error("Bundled Codex platform declaration is not qualified");
+      }
+      const vendor = resolve(packageDirectory, "vendor");
+      if (lstatExists(vendor)) { ownedDirectory(vendor); remove.add(vendor); }
+    }
   }
-  if (Object.keys(nativeDependencies).length !== profiles.length * targets.length) throw new Error("Bundled provider omitted a supported native target");
-  const temporary = mkdtempSync(resolve(destinationDir, ".paperclip-native-artifacts-"));
-  try {
-    writeFileSync(resolve(temporary, "package.json"), JSON.stringify({ private: true, name: "paperclip-native-artifact-staging", version: "1.0.0", dependencies: nativeDependencies }));
-    if (!nativeArtifactsDirectory) execFileSync("npm", ["install", "--force", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"],
-      { cwd: temporary, stdio: "inherit", timeout: 180_000 });
-    for (const profile of profiles) for (const target of targets) {
-      const name = `${profile.agentRuntimePackage}-${target}`;
-      const input = resolve(nativeArtifactsDirectory ?? resolve(temporary, "node_modules"), name);
-      const artifact = inspectBundledNativeArtifact(input, profile, target, runtimeData);
-      const output = resolve(graphRoot, name);
-      if (existsSync(output)) throw new Error("Bundled native artifact destination already exists");
-      cpSync(input, output, { recursive: true, dereference: false });
-      for (const entry of artifact.entries) chmodSync(resolve(output, entry.path), entry.executable ? 0o755 : 0o644);
-      const copied = inspectBundledNativeArtifact(output, profile, target, runtimeData);
-      if (copied.closureDigest !== artifact.closureDigest) throw new Error("Bundled native artifact changed during staging");
-      artifacts.push(copied);
-      result.bundleDependencies = [...new Set([...(result.bundleDependencies ?? result.bundledDependencies ?? []), name])];
-    }
-    const total = artifacts.reduce((size, artifact) => size + artifact.size, 0);
-    if (total > 2 * 1024 * 1024 * 1024) throw new Error("Bundled native provider payload exceeds release size limit");
-    result.paperclipProviderArtifacts = { schema: "paperclip.bundled-provider-artifacts.v1", providerCalls: 0, lifecycleScriptsRun: false,
-      totalBytes: total, artifacts: artifacts.map(({ entries, ...artifact }) => artifact) };
-  } finally { rmSync(temporary, { recursive: true, force: true }); }
+  if (!runtimeCount) throw new Error("Bundled Codex runtime omitted its platform declarations");
+  for (const [name, specifier] of Object.entries(declarations)) {
+    if (result.optionalDependencies?.[name] !== undefined && result.optionalDependencies[name] !== specifier) throw new Error(`Bundled Codex platform conflicts with published dependency: ${name}`);
+    optional[name] = specifier;
+  }
+  // Validate the complete graph before deleting any producer payload.
+  for (const directory of remove) rmSync(directory, { recursive: true, force: true });
+  result.optionalDependencies = { ...result.optionalDependencies, ...optional };
+  for (const field of ["bundleDependencies", "bundledDependencies"]) {
+    if (Array.isArray(result[field])) result[field] = result[field].filter(name => !Object.hasOwn(declarations, name));
+  }
+  delete result.paperclipProviderArtifacts;
   return result;
 }
 
-export function dockerBundledProviderTarget(architecture,
-  runtimeData = JSON.parse(readFileSync(resolve(repoRoot, runtimeDataPath), "utf8"))) {
-  const architectures = { amd64: "x64", arm64: "arm64" };
-  if (!Object.hasOwn(architectures, architecture) || runtimeData?.schema !== "paperclip.acpx-runtime-artifacts.v1") {
-    throw new Error("Docker provider materialization requires a declared supported target architecture and qualification contract");
-  }
-  const target = `linux-${architectures[architecture]}`;
-  // A Docker target selects an already-qualified artifact; it cannot qualify
-  // a new platform. Unqualified native targets retain their normal legacy CLI.
-  return runtimeData.codex?.platforms?.[target] ? target : null;
+export function dockerBundledProviderTarget(architecture) {
+  if (!["amd64", "arm64"].includes(architecture)) throw new Error("Docker provider materialization requires a declared supported target architecture");
+  // Only Linux x64 has an existing native Codex executable qualification.
+  // The runtime resolver retains that digest authority; ARM64 stays legacy.
+  return architecture === "amd64" ? "linux-x64" : null;
 }
 
 export function mergeBundledProviderGraph(stagedDirectory, serverDirectory) {
@@ -363,8 +306,7 @@ export function stageBundledEsbuildOptionalDependencies(destinationDir, publishM
 }
 
 export function materializeDockerProviderGraph(serverDirectory, architecture, { sourceRoot = repoRoot } = {}) {
-  const runtimeData = JSON.parse(readFileSync(resolve(sourceRoot, runtimeDataPath), "utf8"));
-  const target = dockerBundledProviderTarget(architecture, runtimeData);
+  const target = dockerBundledProviderTarget(architecture);
   if (!target) return { target: `linux-${architecture === "arm64" ? "arm64" : "x64"}`, materialized: false, reason: "Native providers are not qualified for this target; legacy installation preserved" };
   const metadata = JSON.parse(readFileSync(resolve(serverDirectory, "package.json"), "utf8"));
   const names = ["@agentclientprotocol/codex-acp"];
@@ -373,10 +315,25 @@ export function materializeDockerProviderGraph(serverDirectory, architecture, { 
     const source = resolve(temporary, "source"), staged = resolve(temporary, "staged"); mkdirSync(source);
     writeFileSync(resolve(source, "package.json"), JSON.stringify({ name: metadata.name, version: metadata.version, type: "module", files: [],
       dependencies: Object.fromEntries(names.map(name => [name, metadata.dependencies?.[name]])), bundleDependencies: names }));
-    prepareBundledPackage(source, staged, { sourceRoot, targets: [target] });
+    prepareBundledPackage(source, staged, { sourceRoot });
+    const profile = JSON.parse(readFileSync(resolve(sourceRoot, "packages/paperclip-runner/acpx-profiles.json"), "utf8")).profiles.codex;
+    const packageName = `${profile.agentRuntimePackage}-${target}`, packageVersion = `${profile.agentRuntimeVersion}-${target}`;
+    // Docker alone preinstalls its host binary. Keep npm's normal platform check
+    // and isolate this install so it cannot rewrite the pinned JavaScript graph.
+    const native = resolve(temporary, "host-runtime"); mkdirSync(native);
+    writeFileSync(resolve(native, "package.json"), JSON.stringify({ private: true, name: "paperclip-docker-codex-runtime", version: "1.0.0",
+      dependencies: { [packageName]: `npm:${profile.agentRuntimePackage}@${packageVersion}` } }));
+    execFileSync("npm", ["install", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"], { cwd: native, stdio: "inherit", timeout: 180_000 });
+    const installed = resolve(native, "node_modules", packageName), installedManifest = resolve(installed, "package.json");
+    const directoryStat = lstatSync(installed), manifestStat = lstatSync(installedManifest);
+    if (!directoryStat.isDirectory() || directoryStat.isSymbolicLink() || realpathSync(installed) !== installed
+      || !manifestStat.isFile() || manifestStat.isSymbolicLink() || manifestStat.nlink !== 1 || manifestStat.size > 256 * 1024) throw new Error("Docker Codex host package is not an owned npm dependency");
+    const installedMetadata = JSON.parse(readFileSync(installedManifest, "utf8"));
+    if (![packageName, profile.agentRuntimePackage].includes(installedMetadata.name) || installedMetadata.version !== packageVersion
+      || !installedMetadata.os?.includes("linux") || !installedMetadata.cpu?.includes("x64")) throw new Error("Docker Codex host package identity mismatch");
+    cpSync(installed, resolve(staged, "node_modules", packageName), { recursive: true, dereference: false });
     mergeBundledProviderGraph(staged, serverDirectory);
-    const stagedMetadata = JSON.parse(readFileSync(resolve(staged, "package.json"), "utf8"));
-    return { target, materialized: true, artifacts: stagedMetadata.paperclipProviderArtifacts, providerCalls: 0, lifecycleScriptsRun: false };
+    return { target, materialized: true, packageName, packageVersion, installedBy: "npm", providerCalls: 0, lifecycleScriptsRun: false };
   } finally { rmSync(temporary, { recursive: true, force: true }); }
 }
 
@@ -468,7 +425,7 @@ export function applyBundledDependencyPatches(destinationDir, bundledDependencie
   }
 }
 
-export function prepareBundledPackage(sourceDir, destinationDir, { sourceRoot = repoRoot, targets = nativeTargets } = {}) {
+export function prepareBundledPackage(sourceDir, destinationDir, { sourceRoot = repoRoot } = {}) {
   const sourcePackagePath = resolve(sourceDir, "package.json");
   const sourcePackage = JSON.parse(readFileSync(sourcePackagePath, "utf8"));
   const bundledDependencies = sourcePackage.bundleDependencies ?? sourcePackage.bundledDependencies ?? [];
@@ -492,9 +449,8 @@ export function prepareBundledPackage(sourceDir, destinationDir, { sourceRoot = 
   const rootPackage = JSON.parse(readFileSync(resolve(sourceRoot, "package.json"), "utf8"));
   const profileData = bundledDependencies.includes("@agentclientprotocol/codex-acp")
     ? JSON.parse(readFileSync(resolve(sourceRoot, "packages/paperclip-runner/acpx-profiles.json"), "utf8")) : undefined;
-  const runtimeData = profileData ? JSON.parse(readFileSync(resolve(sourceRoot, runtimeDataPath), "utf8")) : undefined;
   const { installManifest, profiles } = configureBundledProviderOverrides(
-    createBundledInstallManifest(publishManifest, bundledDependencies), bundledDependencies, rootPackage, profileData, runtimeData,
+    createBundledInstallManifest(publishManifest, bundledDependencies), bundledDependencies, rootPackage, profileData,
   );
   writeFileSync(deployedPackagePath, `${JSON.stringify(installManifest, null, 2)}\n`);
 
@@ -505,7 +461,7 @@ export function prepareBundledPackage(sourceDir, destinationDir, { sourceRoot = 
   );
   writeFileSync(deployedPackagePath, `${JSON.stringify(publishManifest, null, 2)}\n`);
   applyBundledDependencyPatches(destinationDir, bundledDependencies, sourceRoot);
-  if (profiles.length) writeFileSync(deployedPackagePath, `${JSON.stringify(stageBundledProviderOptionalDependencies(destinationDir, publishManifest, profiles, runtimeData, { targets }), null, 2)}\n`);
+  if (profiles.length) writeFileSync(deployedPackagePath, `${JSON.stringify(stageBundledProviderOptionalDependencies(destinationDir, publishManifest, profiles), null, 2)}\n`);
 
   if (bundledDependencies.includes("acpx")) {
     const acpxPackage = JSON.parse(

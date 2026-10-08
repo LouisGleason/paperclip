@@ -32,13 +32,17 @@ describe("Codex security configuration", () => {
       import { tmpdir } from "node:os";
       import { dirname, join } from "node:path";
       import { resolvePinnedCodexCommand } from ${JSON.stringify(new URL("./codex-command.ts", import.meta.url).href)};
+      import { codexExecutableReadOnlyRoots } from ${JSON.stringify(new URL("./codex-security-config.ts", import.meta.url).href)};
       const root = realpathSync(mkdtempSync(join(tmpdir(), "paperclip-pinned-codex-test-")));
       const issuer = join(root, "node_modules/@paperclipai/server/dist/vendor/paperclip-runner/drivers/codex/codex-command.js");
       const adapter = join(root, "node_modules/@paperclipai/adapter-codex-local");
       const bridge = join(adapter, "node_modules/@agentclientprotocol/codex-acp");
       const codex = join(bridge, "node_modules/@openai/codex");
       const executable = join(codex, "bin/codex.js");
-      const metadata = { name: "@openai/codex", version: "0.160.0", bin: { codex: "bin/codex.js" } };
+      const platformName = "@openai/codex-" + process.platform + "-" + process.arch;
+      const platform = join(root, "node_modules", platformName), vendor = join(platform, "vendor");
+      const metadata = { name: "@openai/codex", version: "0.160.0", bin: { codex: "bin/codex.js" },
+        optionalDependencies: { [platformName]: "npm:@openai/codex@0.160.0-" + process.platform + "-" + process.arch } };
       try {
         mkdirSync(dirname(issuer), { recursive: true });
         mkdirSync(join(codex, "bin"), { recursive: true });
@@ -46,8 +50,13 @@ describe("Codex security configuration", () => {
         writeFileSync(join(adapter, "server.js"), "");
         writeFileSync(join(bridge, "package.json"), JSON.stringify({ name: "@agentclientprotocol/codex-acp", version: "1.6.2" }));
         writeFileSync(join(codex, "package.json"), JSON.stringify(metadata));
+        mkdirSync(vendor, { recursive: true });
+        writeFileSync(join(platform, "package.json"), JSON.stringify({ name: "@openai/codex", version: "0.160.0-" + process.platform + "-" + process.arch }));
         writeFileSync(executable, "#!" + process.execPath + "\\nif (process.argv.slice(2).join(' ') !== '--version') process.exit(9); console.log('codex-cli 0.160.0');\\n", { mode: 0o755 });
         assert.equal(resolvePinnedCodexCommand(issuer), executable);
+        const roots = codexExecutableReadOnlyRoots({ PATH: "/missing-codex-command" }, executable);
+        assert.ok(roots.includes(vendor), "The npm-hoisted native vendor directory remains readable");
+        assert.ok(!roots.includes(platform) && !roots.includes(root), "Hoisting must not expose npm ancestry");
         assert.equal(execFileSync(resolvePinnedCodexCommand(issuer), ["--version"], { env: { PATH: "/missing-codex-command" },
           encoding: "utf8", timeout: 5_000 }).trim(), "codex-cli 0.160.0");
 

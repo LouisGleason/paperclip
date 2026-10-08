@@ -38,6 +38,23 @@ It does not change agent defaults, the harness picker, provider qualification,
 database schema, experimental feature policy, or existing agent configuration.
 The large execution and setup changes stay in the later slices.
 
+### Codex distribution correction, 2026-10-08
+
+The user requested removal of pre-bundled Codex binaries from this PR.
+Retain the pinned Codex JavaScript graph and let npm install the exact official
+platform dependency for the consumer's host. Strip producer-host binaries from
+the prepared package as well as the added cross-platform payloads. Docker images
+still preinstall their own qualified runtime dependencies. Paperclip's own
+runner release assets remain in scope.
+
+Reopen packaging and installed-consumer verification for this correction.
+The green checks at `36d9eb0c3c6b9ca5234432b97349dc7317cfa916` are historical;
+they do not verify the changed dependency distribution. Reuse the existing
+packaging tests and public npm consumer sandbox to prove an empty Codex binary
+payload in Paperclip tarballs, host-only npm resolution, pinned execution, and
+unchanged integrity checks. Record the final revision and hosted results in the
+canonical PR description before handoff.
+
 ## Evidence and gates
 
 | Gate | Status | Evidence |

@@ -7,7 +7,7 @@ import {
   type ChildProcess,
   type SpawnOptionsWithoutStdio,
 } from "node:child_process";
-import { constants, existsSync, realpathSync } from "node:fs";
+import { closeSync, constants, existsSync, fstatSync, openSync, readFileSync, realpathSync } from "node:fs";
 import {
   lstat,
   open,
@@ -345,13 +345,60 @@ export function createAcpxPackageJsonResolver(
     const packageJsonPath = realpathSync(
       resolvePackageJsonFromIssuer(packageName, canonicalIssuer),
     );
-    if (!pathIsInside(canonicalNodeModules, packageJsonPath)) {
+    if (!pathIsInside(canonicalNodeModules, packageJsonPath)
+      && !isDeclaredHoistedCodexPlatform(canonicalRoot, canonicalManifest, canonicalIssuer, packageName, packageJsonPath)) {
       throw new Error(
         `ACPX provider package ${packageName} resolves outside the selected provider root`,
       );
     }
     return packageJsonPath;
   };
+}
+
+// npm installs an optional platform alias outside a bundled server graph.
+// Admit only the qualified executable package through its declared npm slot;
+// all executable bytes still pass the existing digest/no-follow admission.
+function isDeclaredHoistedCodexPlatform(root: string, manifest: string, issuer: string, packageName: string, packageJsonPath: string): boolean {
+  const qualified = QUALIFIED_CODEX_LINUX_X64_RUNTIME;
+  if (packageName !== qualified.packageName || issuer === manifest) return false;
+  try {
+    const selected = readResolverPackageJson(manifest);
+    const runtime = readResolverPackageJson(issuer);
+    const optional = (value: Record<string, unknown>) => value.optionalDependencies as Record<string, unknown> | undefined;
+    if (selected.name !== "@paperclipai/server" || runtime.name !== qualified.runtimePackageName
+      || runtime.version !== qualified.runtimePackageVersion
+      || optional(selected)?.[packageName] !== qualified.dependencyDeclaration
+      || optional(runtime)?.[packageName] !== qualified.dependencyDeclaration) return false;
+    if (realpathSync(resolvePackageJsonFromIssuer(packageName, manifest)) !== packageJsonPath) return false;
+    const declaredSlot = (createRequire(manifest).resolve.paths(packageName) ?? []).some((directory) => {
+      if (!pathIsInside(dirname(directory), root)) return false;
+      try {
+        return realpathSync(directory) === directory
+          && pathIsInside(directory, packageJsonPath)
+          && realpathSync(resolve(directory, packageName, "package.json")) === packageJsonPath
+          && realpathSync(resolve(directory, packageName)) === resolve(directory, packageName);
+      } catch { return false; }
+    });
+    if (!declaredSlot) return false;
+    const platform = readResolverPackageJson(packageJsonPath);
+    return [qualified.packageName, qualified.runtimePackageName].includes(String(platform.name))
+      && platform.version === qualified.packageVersion
+      && Array.isArray(platform.os) && platform.os.includes("linux")
+      && Array.isArray(platform.cpu) && platform.cpu.includes("x64");
+  } catch { return false; }
+}
+
+function readResolverPackageJson(path: string): Record<string, unknown> {
+  const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const before = fstatSync(fd, { bigint: true });
+    if (!before.isFile() || before.size < 1n || before.size > BigInt(MAX_PACKAGE_JSON_BYTES)) throw new Error("Invalid provider package manifest");
+    const bytes = readFileSync(fd), after = fstatSync(fd, { bigint: true });
+    if (bytes.length !== Number(before.size) || !sameIdentity(fileIdentity(before), fileIdentity(after))) throw new Error("Provider package manifest changed during resolution");
+    const value: unknown = JSON.parse(bytes.toString("utf8"));
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid provider package metadata");
+    return value as Record<string, unknown>;
+  } finally { closeSync(fd); }
 }
 
 function resolvePackageJsonFromIssuer(
