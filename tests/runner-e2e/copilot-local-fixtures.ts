@@ -128,7 +128,7 @@ function ownedProcessCommand(pid: number): readonly string[] {
  * and per_turn lifecycle before treating its retirement as run cleanup.
  */
 /** Losing a captured process identity cannot be repaired by a later empty sample. */
-export function retainRunProcessIdentity<T extends { captured: boolean; live: number[]; identityChanged?: boolean }>(previous: T, current: T): T {
+export function retainRunProcessIdentity<T extends { captured: boolean; live: number[]; identityChanged?: boolean }>(previous: T, current: T): T & { identityChanged: boolean } {
   return { ...current, identityChanged: previous.identityChanged === true || current.identityChanged === true };
 }
 

@@ -15,6 +15,7 @@ export interface CopilotSemanticCompletionProof {
   contextRead?: CopilotContextReadProof;
   runId: string; turnId: string; nativeSessionId: string; normalizedSessionId: string; sourceInstanceId: string;
   nativeToolCallId: string; callIdentitySha256: string; inputSha256: string; normalizedInputSha256: string; resultSha256: string;
+  nativePendingSeq: number; nativePendingObservedAtMs: number;
   proposedSeq: number; receiptSeq: number; nativeCompletedSeq: number; turnCompletedSeq: number; acceptedSeq: number;
   summarySha256: string;
 }
@@ -101,6 +102,7 @@ export function readCopilotSemanticCompletion(rows: readonly unknown[], expected
   return { schema: expected.requireContextRead ? "paperclip.e2e.copilot-semantic-completion.v4" : "paperclip.e2e.copilot-semantic-completion.v2", ...(contextRead ? { contextRead } : {}), runId: expected.runId, turnId: expected.turnId, nativeSessionId: expected.nativeSessionId,
     normalizedSessionId: base.normalizedSessionId, sourceInstanceId: base.sourceInstanceId, nativeToolCallId: native.toolCallId,
     callIdentitySha256: fields.callIdentitySha256!, inputSha256: fields.inputSha256!, normalizedInputSha256: fields.normalizedInputSha256!, resultSha256: fields.resultSha256!,
+    nativePendingSeq: pending[0]!.seq, nativePendingObservedAtMs: pending[0]!.observedAtMs,
     proposedSeq: proposedRows[0]!.seq, receiptSeq: authorityRow.seq, nativeCompletedSeq: native.seq, turnCompletedSeq: terminals[0]!.seq, acceptedSeq: acceptedRows[0]!.seq, summarySha256: hash(expected.summary) };
 }
 
@@ -144,9 +146,15 @@ export function onlyCopilotAttachedOperations(notices: readonly CopilotToolNotic
   const shellGroup = [...groups].find(([key]) => key !== command.toolCallId && key !== proof.nativeToolCallId)![1];
   if (!complete(shellGroup)) return false;
   const terminal = shellGroup.at(-1)!;
-  return shellGroup[0]!.seq > started.seq && terminal.seq < proof.turnCompletedSeq
+  return shellGroup[0]!.seq > started.seq && shellGroup[0]!.seq > proof.nativePendingSeq && terminal.seq < proof.turnCompletedSeq
     && terminal.commandToolCallId === command.toolCallId && terminal.shellState === "completed" && terminal.exitCode === 0
     && shellGroup.every(n => n.operation === "read" && n.shellId === started.shellId && n.target === undefined && n.readTargetSha256 === undefined
       && n.commandSha256 === undefined && n.mode === undefined && n.detach === undefined && semanticFree(n)
       && (n === terminal || (n.commandToolCallId === undefined && n.shellState === undefined && n.exitCode === undefined)));
+}
+
+/** The finish origin is producer-stamped on the same host as the independent child observer. */
+export function copilotFinishAttemptBeforeCommandExit(proof: CopilotSemanticCompletionProof, commandExitAtMs: number): boolean {
+  return Number.isFinite(proof.nativePendingObservedAtMs) && proof.nativePendingObservedAtMs >= 0
+    && Number.isFinite(commandExitAtMs) && commandExitAtMs > proof.nativePendingObservedAtMs;
 }

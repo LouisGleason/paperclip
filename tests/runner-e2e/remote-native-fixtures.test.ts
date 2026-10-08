@@ -240,7 +240,7 @@ describe("remote native lease admission", () => {
     const end: any = { ...structuredClone(h.current), complete: false, incompleteReasons: ["workspace_directory_added"], processes: { ...h.current.processes, live: [] }, files: {} };
     h.resolveTerminal(end);
     await expect(f.finish()).rejects.toThrow("terminal_evidence_incomplete");
-    expect(retain).toHaveBeenCalledExactlyOnceWith({ actionPublished: true, setupPublished: true, complete: false, watcherComplete: true, targetMutationCount: 0, workspaceMutationCount: 0, processRootCaptured: true, liveProcessCount: 0, incompleteReasons: ["workspace_directory_added"] });
+    expect(retain).toHaveBeenCalledExactlyOnceWith({ failureCodes: [], actionPublished: true, setupPublished: true, complete: false, watcherComplete: true, targetMutationCount: 0, workspaceMutationCount: 0, processRootCaptured: true, liveProcessCount: 0, incompleteReasons: ["workspace_directory_added"] });
     await expect(f.readFile("result.txt")).rejects.toThrow();
   });
   it("rejects arbitrary diagnostic text before retaining terminal metadata", async () => {
@@ -252,7 +252,7 @@ describe("remote native lease admission", () => {
     expect(retain).not.toHaveBeenCalled();
   });
   it("reports only closed terminal failure reasons without weakening retirement proof", async () => {
-    const h = harness(), f = await bindRemoteNativeFixture(h.options);
+    const h = harness(), retain = vi.fn(async () => {}), f = await bindRemoteNativeFixture({ ...h.options, retainTerminalDiagnostics: retain });
     await f.publishAction("action.txt", "task");
     const end = { ...structuredClone(h.current), complete: false,
       processes: { ...h.current.processes, live: [] }, files: {},
@@ -263,6 +263,8 @@ describe("remote native lease admission", () => {
     expect(error.message).toContain(":process_pid_reused");
     expect(error.message).not.toContain("secret-provider-payload");
     expect(error.message).not.toContain("arbitrary");
+    expect(retain).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ failureCodes: ["process_pid_reused"] }));
+    expect(JSON.stringify(retain.mock.calls)).not.toContain("secret-provider-payload");
     expect(remoteNativeFixtureDiagnostics(error)).toEqual([{ phase: "wait", code: "terminal_evidence_incomplete" }]);
   });
   it("keeps a fixture-owned cross-root sentinel distinct from workspace targets", async () => {

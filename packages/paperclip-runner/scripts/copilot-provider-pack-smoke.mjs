@@ -5,7 +5,7 @@ import { once } from "node:events";
 import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { withCopilotSmokeResources } from "./copilot-smoke-resources.mjs";
+import { stopCopilotSmokeChild, withCopilotSmokeResources } from "./copilot-smoke-resources.mjs";
 
 // Build verification only. No prompt, credential, model request, or runtime
 // installation occurs; the provider runs offline with isolated state.
@@ -106,11 +106,7 @@ await withCopilotSmokeResources(installation, async ({ lease, root, fixture, fix
       qualification: "installation only: no credential, entitlement, model execution or Daytona",
     }, null, 2)}\n`);
   } finally {
-    if (child && child.exitCode === null && child.signalCode === null) {
-      child.stdin.end();
-      child.kill("SIGTERM");
-      await within(exited, 5_000);
-    }
+    await stopCopilotSmokeChild(child);
   }
 });
 

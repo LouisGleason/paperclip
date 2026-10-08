@@ -2,7 +2,26 @@
 
 Current release checklist, updated 2026-10-08 (America/Chicago).
 
-## Current master qualification: v30
+## Current release gate: v31
+
+The normal installed v31 local canary passes on source `d99959f00b62ad2099b5cdaca3f7656dcb88a8e8`, runtime source `4acb084fc5b6805a483bf419c2cdc6de3f7ec13d`, profile `sha256:4a22e4c50fd213c79cd02fd3c5369aef2256ac719762c62f5b70c691cd47e76b`, Copilot 1.0.88 and exact gpt-5.6-luna. Saved-token metadata, UI model selection, save/reopen, one final response, accepted normalized receipt, 30 downloaded bytes and independent process/scratch cleanup pass without qualification overrides. All three installed platform smokes pass; Linux is emulated locally pending the native Daytona canary.
+
+The full v30 campaign below remains immutable historical evidence. Only the saved-prompt compatibility parser and profile admission differ among bound runtime inputs. The current parser reads all 20 captured Product contexts identically and passes the focused recovery checks. No full 20-cell v31 live campaign is claimed.
+
+| Current gate | Result |
+|---|---|
+| Dependency prerequisite | PR #15572 merged at `941a3fa991aeb97eb1ac390c65b7973b5f6de1ad`; CI-owned lock, current-head CI green, fresh Greptile 5/5 |
+| Setup and model discovery | Normal installed local journey passes; first-token refresh and native Runner admission regressions pass with 155 affected UI cases |
+| Attached-command review | Both retained live traces prove finish before independent child exit and waiting read after finish; the stronger oracle and regressions enforce both boundaries |
+| Cleanup and diagnostics review | Smoke-owned providers ignoring SIGTERM receive bounded SIGKILL with confirmed exit; saved remote diagnostics retain only closed failure codes |
+| Focused qualification checks | 214 Product regressions pass, one existing skip; seven smoke cleanup tests and Product typecheck pass |
+| Exact v31 image | Credential-free final image is built and scanned; exact public publication approval is pending |
+| Ordinary v31 Daytona canary | Next live gate after exact image publication; normal installed plugin is ready |
+| Final CI / review / rollout | Remaining four PRs require current-head CI and fresh clean review; production rollout is pending |
+
+The approved budget has $30.68 remaining, with no active reservation. Provider USD remains unknown and attributed to GitHub. No budget reset or billing setting change occurred. The current machine-readable record is `2026-10-08-copilot-qualification-v31.json`.
+
+## Historical completed qualification: v30
 
 Master advanced to `bf9dbd18a8d9a539f79ca2e3ccb10b6df31c6334` on
 2026-10-08. Its two fixes merged cleanly into the integration: resumed turns
@@ -33,14 +52,14 @@ in the v30 freeze. No v29 launch or publication is allowed.
 | Product offline | **2,349 Vitest cases pass**, two existing skips, plus maintained Node contracts |
 | Runner offline | All selected checks have passing evidence: 3,003 Vitest cases, 677 Rust assertions and 1,942 required real-HTTP assertions. Original Mac invocation retains two credential-home setup failures; unchanged isolated Linux runtime-host suite passes all 44 cases with cleanup. Original cause remains unconfirmed; no single all-green `check:all` invocation is claimed. |
 | Installed runtime / metadata | Native macOS ARM64, x64 under Rosetta and Linux x64 under Docker emulation initialize and exit; authenticated packaged metadata confirms 19 models and exact Luna with no prompt. Native Daytona Product and ordinary installed-runtime proof pass. |
-| Full repository suite | Current-source offline container full build passes; `pnpm test:run` is in progress. A single full-suite pass is not claimed. |
+| Full repository suite | Current-source offline container full build passes; the full local root invocation retains eight general-server failures. Current-head CI is the release gate; a single all-green local full-suite invocation is not claimed. |
 | Normal installation / canaries | Fresh 18-package ordinary npm installation, startup, personal token setup, exact model, save/reopen metadata Test and local task canary pass. Downloaded bytes, accepted receipt, one final response and cleanup are independently verified. Daytona also passes: independently downloaded bytes, accepted receipt, one final response, native command exit and all 13 owned sandboxes absent. The manual metadata Test archive was intentionally retained for diagnostics and then deleted. |
 | Image publication | Full final image scan: 225,852 regular files, 18,360,132,191 bytes, zero selected credential matches. Exact OCI index `sha256:b0f81cd040f811b8ae7eeedd326e36a1c697de5116cd91db84694f21526de7d1` was explicitly approved, published, and anonymously verified; Linux x64 manifest is `sha256:2ccfe999e7794ea1577e581840743a466663143c4303a518e06b3f1e0faa58fb`. |
-| Review / CI / rollout | Four current-master branches have **99, 56, 64 and 73 files**. Their final tracked tree equals the frozen source. Template-complete drafts are unpublished; current-head CI, Greptile review and rollout remain pending. |
+| Review / CI / rollout | The four runtime, regression, setup and qualification PRs are published as #15560–#15563. Current-head CI, final clean review and rollout are tracked above. |
 
 The ten Daytona cells and ordinary installed Daytona canary are complete.
 The remaining critical path is current-master compatibility, current-head CI,
-Greptile review and shipping. Master advanced to `2f0c485dec7ab036f0abf7d90d09ca5f84df26a7`: its saved-prompt recovery fix changes one bound runtime input, and its Slack migration takes number 0318. The review stack preserves that recovery fix and renumbers Copilot to 0319. Profile v31 binds the changed parser; the completed v30 evidence remains immutable. No new live pass is claimed for v31.
+Greptile review and shipping. Master advanced to `2f0c485dec7ab036f0abf7d90d09ca5f84df26a7`: its saved-prompt recovery fix changes one bound runtime input, and its Slack migration takes number 0318. The review stack preserves that recovery fix and renumbers Copilot to 0319. Profile v31 binds the changed parser; the completed v30 evidence remains immutable. Its normal installed local canary now passes as recorded above; the full v30 campaign is not reclassified as v31.
 Remote workloads use the maintained local controller; no separate source
 checkout or credential-file upload is needed.
 

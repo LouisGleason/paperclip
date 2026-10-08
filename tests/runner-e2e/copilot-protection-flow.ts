@@ -7,7 +7,7 @@ import { pollUntil, type RunnerApi } from "./api.js";
 import { collectRunEvents } from "./run-observations.js";
 import { createTaskThroughUi } from "./user-actions.js";
 import { approveCopilotContextThroughUi, prepareCopilotContext } from "./copilot-context-permission.js";
-import { onlyCopilotAttachedOperations, readCopilotSemanticCompletion } from "./copilot-semantic-evidence.js";
+import { copilotFinishAttemptBeforeCommandExit, onlyCopilotAttachedOperations, readCopilotSemanticCompletion } from "./copilot-semantic-evidence.js";
 import { copilotOrigin, readCopilotToolEvidence, type CopilotToolNotice } from "./copilot-evidence.js";
 import { createAttachedCommandFixture, createDeniedTargetFixture, bindDeniedTargetPrompt, exists, observeRunProcesses, retainRunProcessIdentity } from "./copilot-local-fixtures.js";
 import { gradeCopilotAttachedSettlement, gradeCopilotDeniedWrite, type CopilotDeniedWriteEvidence } from "./copilot-protection-cases.js";
@@ -267,6 +267,7 @@ export async function runCopilotProtectionFlow(input: {
       const remoteAttached = remote ? assertCopilotRemoteAttached(sealed!, baseline!, terminal ? Date.parse(terminal.emittedAt) : NaN) : undefined;
       const external = remoteAttached ? { ...remoteAttached, childGone: true, clientGone: true,
         commandExit: { ...remoteAttached.commandExit!, ownedProcessIdentityVerified: true, commandSha256: exactCommand()!.commandSha256 } } : localExternal!;
+      check("finish-attempt-before-command-exit", copilotFinishAttemptBeforeCommandExit(semantic, external.commandExit?.observedAtMs ?? NaN), "The correlated finish attempt precedes the independently observed command exit");
       check("trusted-command-exit", !external.failure && external.connections === 1 && external.childGone && external.clientGone, "Fixed controller-owned child exited and its native client is gone");
       const markerMatches = remote ? sealed!.targets[`copilot-settlement-${nonce}.txt`]?.sha256 === `sha256:${createHash("sha256").update(remoteMarker).digest("hex")}` : localMarkerMatches!;
       check("native-client-before-terminal", Boolean(terminal) && external.clientExitedAtMs !== null && external.clientExitedAtMs < Date.parse(terminal.emittedAt), "Independent PID/start observation confirms native client retirement before turn completion");

@@ -49,6 +49,7 @@ export function remoteNativeFixtureDiagnostics(error: unknown): RpcDiagnostic[] 
 export interface RemoteNativeAuthority { companyId: string; environmentId: string; runId: string; leaseId: string; sandboxId: string; image: string }
 export interface RemoteNativeBinding extends RemoteNativeAuthority { remoteCwd: string }
 export interface RemoteProcessIdentity { pid: number; ppid: number; startTicks: string; bootId: string }
+const TERMINAL_FAILURE_CODES = ["ambiguous_run_root", "run_root_changed", "process_pid_reused", "workspace_watch_unknown_entry", "setup_file_changed", "setup_file_unreadable", "workspace_watch_entry_bound", "workspace_watch_new_directory", "workspace_watch_read_failure", "workspace_watch_io_failure", "receipt_output_bound", "attached_child_live", "terminal_snapshot_failed", "process_sample_failed"] as const;
 const INCOMPLETE_REASONS = ["multiple_run_roots", "run_root_changed", "process_identity_reused", "workspace_watch_incomplete", "setup_file_changed", "workspace_event_bound", "workspace_directory_added", "retirement_snapshot_failed", "process_sample_failed", "control_bound", "observer_ttl"] as const;
 
 export interface RemoteNativeSnapshot {
@@ -500,13 +501,13 @@ export async function bindRemoteNativeFixture(options: RemoteNativeFixtureOption
       if ("error" in receipt) throw receipt.error;
       fail(receipt.receivedAtMs <= receiptDeadlineAt, "receipt_deadline");
       const result = readSnapshot(receipt.value, binding!, names, actionFile, options.runnerdSha256);
-      await options.retainTerminalDiagnostics?.({ actionPublished: published, setupPublished: result.setup.published, complete: result.complete, watcherComplete: result.watcher.complete, targetMutationCount: result.watcher.targetMutationCount, workspaceMutationCount: result.watcher.workspaceMutationCount, processRootCaptured: result.processes.captured, liveProcessCount: result.processes.live.length, incompleteReasons: result.incompleteReasons ?? [] });
+      const allowed = new Set<string>(TERMINAL_FAILURE_CODES);
+      const reasons = record(receipt.value).failureCodes;
+      const codes = Array.isArray(reasons) ? [...new Set(reasons.filter((code): code is string => typeof code === "string" && allowed.has(code)))].slice(0, allowed.size) : [];
+      await options.retainTerminalDiagnostics?.({ failureCodes: codes, actionPublished: published, setupPublished: result.setup.published, complete: result.complete, watcherComplete: result.watcher.complete, targetMutationCount: result.watcher.targetMutationCount, workspaceMutationCount: result.watcher.workspaceMutationCount, processRootCaptured: result.processes.captured, liveProcessCount: result.processes.live.length, incompleteReasons: result.incompleteReasons ?? [] });
       if (!(published && result.setup.published && result.complete && result.watcher.complete && result.processes.captured && result.processes.live.length === 0)) {
         // Closed flags explain missing evidence without retaining SDK output,
         // provider text, file contents or opaque observer control credentials.
-        const allowed = new Set(["ambiguous_run_root", "run_root_changed", "process_pid_reused", "workspace_watch_unknown_entry", "setup_file_changed", "setup_file_unreadable", "workspace_watch_entry_bound", "workspace_watch_new_directory", "workspace_watch_read_failure", "workspace_watch_io_failure", "receipt_output_bound", "attached_child_live", "terminal_snapshot_failed", "process_sample_failed"]);
-        const reasons = record(receipt.value).failureCodes;
-        const codes = Array.isArray(reasons) ? [...new Set(reasons.filter((code): code is string => typeof code === "string" && allowed.has(code)))].slice(0, allowed.size) : [];
         const flags = [`published=${published && result.setup.published}`, `complete=${result.complete}`, `watcher=${result.watcher.complete}`, `captured=${result.processes.captured}`, `live=${result.processes.live.length}`];
         throw new RemoteFixtureError(`remote_native_fixture:terminal_evidence_incomplete:${flags.join(",")}:${codes.join(",")}`, { phase: "wait", code: "terminal_evidence_incomplete" });
       }

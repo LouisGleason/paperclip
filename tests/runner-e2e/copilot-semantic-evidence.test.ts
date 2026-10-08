@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
-import { onlyCopilotAttachedOperations, readCopilotSemanticCompletion } from "./copilot-semantic-evidence.js";
+import { copilotFinishAttemptBeforeCommandExit, onlyCopilotAttachedOperations, readCopilotSemanticCompletion } from "./copilot-semantic-evidence.js";
 import { readCopilotToolEvidence } from "./copilot-evidence.js";
 import { copilotActionNotices } from "./copilot-protection-evidence.js";
 import { validatePrpStructuredRunResult } from "../../packages/paperclip-runner/src/protocol/replay-contract.js";
@@ -162,6 +162,16 @@ describe("Copilot semantic completion public-event oracle", () => {
     const f = attachedFixture();
     expect(f.notices.find(n => n.toolCallId === "shell-read" && n.status === "pending")?.commandToolCallId).toBeUndefined();
     expect(onlyCopilotAttachedOperations(f.notices, f.command, f.proof)).toBe(true);
+  });
+  it("rejects waiting on read_bash before attempting finish", () => {
+    const f = attachedFixture();
+    f.notices.find(n => n.toolCallId === "shell-read" && n.status === "pending")!.seq = 16;
+    expect(onlyCopilotAttachedOperations(f.notices, f.command, f.proof)).toBe(false);
+  });
+  it("requires an independently observed exit strictly after the finish attempt", () => {
+    const f = attachedFixture(), at = f.proof.nativePendingObservedAtMs;
+    expect(copilotFinishAttemptBeforeCommandExit(f.proof, at + 1)).toBe(true);
+    for (const exitAt of [at - 1, at, NaN, Infinity]) expect(copilotFinishAttemptBeforeCommandExit(f.proof, exitAt)).toBe(false);
   });
   it("accepts bounded in-progress shell updates without inventing terminal command identity", () => {
     const f = attachedFixture(), pending = f.notices.find(n => n.toolCallId === "shell-read" && n.status === "pending")!;
