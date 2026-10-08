@@ -171,6 +171,18 @@ registration, installation, consent, signed delivery and bot response remain
 required. No deployment, real App creation, installation, runtime provisioning,
 or model execution was performed by the local UI walkthrough.
 
+## Deferred follow-up: production push delivery (2026-10-08)
+
+Use push as the primary Cloud gateway-to-stack transport in production so new
+mentions, issues, and PR events arrive promptly. Wake sleeping hosted stacks
+when needed. Keep polling as a recovery and catch-up path for missed pushes,
+disconnects, and restarts, rather than the normal production delivery path.
+
+Retain the durable inbox, delivery acknowledgments, tenant bindings, original
+GitHub signature verification, and deduplication across push and polling.
+Localhost and self-hosted instances can continue using outbound polling.
+This is a deferred improvement; do not implement it in the current setup work.
+
 ## Prior findings retained
 
 Earlier setup research found repeated interviews, missing manager APIs, tunnel
