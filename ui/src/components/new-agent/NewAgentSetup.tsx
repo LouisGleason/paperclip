@@ -864,7 +864,9 @@ function Setup({
                         </>}
                         {!connectionAdapter && aiProviderForAdapter(brandType) && (
                           <AiConnectionField companyId={companyId} agentName={name} adapterType={brandType} model={model} environmentId={environmentId ?? undefined} value={aiBinding}
-                            onChange={binding => { binding.mode !== "router" && setRuntimeAiBinding(binding); resetTest(); }} />
+                            onChange={binding => { binding.mode !== "router" && setRuntimeAiBinding(binding); resetTest();
+                              if (brandType === "copilot_runtime") void cache.invalidateQueries({ queryKey: ["agents", companyId, "adapter-models", brandType] });
+                            }} />
                         )}
                         {(connectionModels ? connectionModels.error : models.error) && <p role="alert" className="text-sm text-destructive">Could not load models. Retry or enter a model ID manually.</p>}
                         {((showModel && !usingKimiApi) ||
@@ -875,8 +877,8 @@ function Setup({
                                 presentation="native"
                                 models={connectionModels?.models ?? models.data ?? []}
                                 loadingModels={connectionModels?.isLoading ?? models.isLoading}
-                                onRefreshModels={connectionModels?.refreshModels}
-                                refreshingModels={connectionModels?.refreshing}
+                                onRefreshModels={connectionModels?.refreshModels ?? (brandType === "copilot_runtime" ? async () => { await models.refetch(); } : undefined)}
+                                refreshingModels={connectionModels?.refreshing ?? (brandType === "copilot_runtime" ? models.isFetching : undefined)}
                                 value={model}
                                 onChange={(value) => {
                                   setModel(connectionModels?.resolveModel(value) ?? value);
