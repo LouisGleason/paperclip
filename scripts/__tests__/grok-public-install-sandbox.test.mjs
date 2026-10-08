@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
-import { GROK_PUBLIC_INSTALL_IMAGE, GROK_PUBLIC_INSTALL_LIFECYCLE, grokConsumerDockerArgs } from '../grok-public-install-sandbox.mjs';
+import { GROK_PUBLIC_INSTALL_IMAGE, GROK_PUBLIC_INSTALL_LIFECYCLE, grokConsumerDockerArgs, installedCodexProbeSource } from '../grok-public-install-sandbox.mjs';
 
 const paths = { assets: '/private/staging/assets', consumer: '/private/staging/consumer', cache: '/private/staging/cache', uid: 1001, gid: 1001 };
 const values = (args, flag) => args.flatMap((value, index) => value === flag ? [args[index + 1]] : []);
@@ -49,4 +52,26 @@ test('verification never elevates PR-controlled provisioning or cleanup on the h
   const source = readFileSync(new URL('../verify-grok-npm-install.mjs', import.meta.url), 'utf8');
   assert.doesNotMatch(source, /\bsudo\b/);
   assert.ok(source.includes("const prerequisite = join(root, 'native/grok')"));
+});
+
+test('the installed Codex probe exercises the public export and rejects incomplete or mismatched packages', () => {
+  const root = mkdtempSync(join(tmpdir(), 'installed-codex-probe-'));
+  try {
+    const consumer = join(root, 'consumer'); mkdirSync(consumer);
+    const index = join(consumer, 'index.mjs'), command = join(consumer, 'codex'), probe = join(root, 'probe.mjs');
+    const executable = version => writeFileSync(command, `#!/bin/sh\n[ "$1" = --version ] || exit 65\nprintf '%s\\n' 'codex-cli ${version}'\n`, { mode: 0o755 });
+    writeFileSync(probe, installedCodexProbeSource(index, consumer, '0.160.0'));
+    const run = () => spawnSync(process.execPath, [probe], { encoding: 'utf8', timeout: 10_000, env: { PATH: '/usr/bin:/bin', NODE_PATH: '' } });
+    writeFileSync(index, `export const resolvePinnedCodexCommand = () => ${JSON.stringify(command)};`);
+    executable('0.160.0');
+    let result = run(); assert.equal(result.status, 0, result.stderr);
+    assert.equal(JSON.parse(result.stdout).pinnedCodexCommandVerified, true);
+    assert.equal(JSON.parse(result.stdout).providerCalls, 0);
+    executable('9.9.9'); result = run(); assert.notEqual(result.status, 0); assert.match(result.stderr, /qualified pin/);
+    rmSync(command); result = run(); assert.notEqual(result.status, 0); assert.match(result.stderr, /ENOENT/);
+    const outside = join(root, 'outside'); writeFileSync(outside, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    writeFileSync(index, `export const resolvePinnedCodexCommand = () => ${JSON.stringify(outside)};`);
+    result = run(); assert.notEqual(result.status, 0); assert.match(result.stderr, /inside the installed consumer/);
+    writeFileSync(index, 'export const unrelated = true;'); result = run(); assert.notEqual(result.status, 0); assert.match(result.stderr, /must export the pinned Codex resolver/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });

@@ -15,6 +15,110 @@ function readWorkflow(name) {
   return readFileSync(path.join(repoRoot, ".github/workflows", name), "utf8");
 }
 
+function job(workflow, name) {
+  return workflow.split(`\n  ${name}:\n`)[1]?.split(/\n  [a-z_]+:\n/)[0] ?? '';
+}
+function condition(block, needs, github = {}, inputs = {}, isCancelled = false) {
+  const expression = block.match(/    if: >-\n((?:      .+\n)+)/)?.[1]?.trim();
+  assert.ok(expression, 'Routing must use an explicit condition, including skipped ancestors');
+  return Function('needs', 'github', 'inputs', 'cancelled', `return (${expression})`)(needs, github, inputs, () => isCancelled);
+}
+
+test('release producer mode validates immutable data inputs and adds only the missing native target jobs', () => {
+  const workflow = readWorkflow('release-verify.yml');
+  assert.match(workflow, /runner_assets_only:[\s\S]*?default: false/);
+  for (const name of ['runner_chaos_evals', 'typecheck', 'general_tests', 'serialized_tests', 'runner_workflow_evals', 'verify_paperclip_runner', 'build']) {
+    // The default source gate keeps all its prior checks. Producer-only mode
+    // must not create a second broad suite or repeat paid eval authorization.
+    assert.match(job(workflow, name), /if: \$\{\{ !inputs\.runner_assets_only \}\}/, name);
+  }
+  const request = job(workflow, 'runner_release_request');
+  assert.doesNotMatch(request, /uses: actions\/checkout|secrets\./);
+  const validation = request.split('        run: |\n')[1];
+  assert.ok(validation);
+  const source = 'a'.repeat(40);
+  for (const [SOURCE_SHA, expected] of [[source, 0], ['master', 1], ['', 1]]) {
+    const result = spawnSync('bash', ['-c', validation], { env: { ...process.env, SOURCE_SHA }, encoding: 'utf8' });
+    assert.equal(result.status, expected, result.stderr);
+  }
+  for (const name of ['runner_release_binaries', 'runner_release_pack']) {
+    const producer = job(workflow, name);
+    assert.match(producer, /needs: runner_release_request/);
+    assert.match(producer, /contents: read/);
+    assert.doesNotMatch(producer, /secrets\.|contents: write|id-token: write|packages: write|--push|--password/);
+    assert.match(producer, /test "\$\(git rev-parse HEAD\)" = "\$SOURCE_SHA"/);
+  }
+  const binaries = job(workflow, 'runner_release_binaries');
+  assert.deepEqual([...binaries.matchAll(/- target: (.+)/g)].map(match => match[1]), ['darwin-arm64', 'darwin-x64']);
+  assert.match(binaries, /cargo build --release.*--locked/);
+  assert.match(binaries, /record-binary/);
+  const pack = job(workflow, 'runner_release_pack');
+  assert.doesNotMatch(pack, /docker pull|IMAGE_DIGEST/);
+  assert.match(pack, /--target runner-provider-pack/);
+  assert.match(pack, /docker cp "\$owner:\$pack_path"/);
+  assert.match(pack, /daemon_path=\/app\/server\/dist\/vendor\/paperclip-runner\/bin\/paperclip-runnerd/);
+  assert.match(pack, /--entrypoint "\$daemon_path" "\$image" --build-metadata/);
+  assert.match(pack, /docker cp "\$owner:\$daemon_path"/);
+  assert.match(pack, /timeout 30s docker start --attach "\$owner"/);
+  assert.match(pack, /record-image-binary/);
+  assert.match(pack, /trap 'docker rm -f "\$owner"/);
+  const helper = readFileSync(path.join(repoRoot, 'scripts/release-runner-artifacts.mjs'), 'utf8');
+  assert.match(helper, /stage-release-runner-binaries\.mjs/);
+  assert.equal((helper.match(/execFileSync\(process\.execPath/g) ?? []).length, 1, 'Only the existing assembler owns staging');
+});
+
+test('channel assembly routing preserves skipped promotions and blocks incomplete data before publishers', () => {
+  const workflow = readWorkflow('release.yml');
+  const skipped = () => ({ result: 'skipped', outputs: {} });
+  const base = () => Object.fromEntries(['verify_canary', 'select_nightly', 'select_beta', 'verify_beta_candidate', 'preflight_stable', 'verify_stable'].map(name => [name, skipped()]));
+  const pin = job(workflow, 'pin_runner_release_source');
+  assert.equal(condition(pin, base(), { event_name: 'workflow_dispatch' }), false);
+  for (const [name, extra, event] of [
+    ['verify_canary', {}, 'push'], ['select_nightly', { proceed: 'true' }, 'schedule'],
+    ['select_beta', { mode: 'promote' }, 'workflow_dispatch'],
+  ]) {
+    const needs = base(); needs[name] = { result: 'success', outputs: extra };
+    assert.equal(condition(pin, needs, { event_name: event }), true, `${name} with unrelated skipped gates`);
+    assert.equal(condition(pin, needs, { event_name: event }, {}, true), false);
+  }
+  const stable = base(); stable.preflight_stable.result = 'success'; stable.verify_stable.result = 'success';
+  assert.equal(condition(pin, stable, { event_name: 'workflow_dispatch' }), true);
+  stable.verify_stable.result = 'failure';
+  assert.equal(condition(pin, stable, { event_name: 'workflow_dispatch' }), false);
+  assert.match(pin, /git show "\$source_sha:scripts\/release\.sh" \| grep -F 'PAPERCLIP_RELEASE_RUNNER_ASSETS'/);
+  assert.match(pin, /git cat-file -e "\$source_sha:scripts\/release-runner-artifacts\.mjs"/);
+
+  const ready = { verify_canary: { result: 'success' },
+    select_nightly: { result: 'success', outputs: { proceed: 'true' } }, smoke_nightly: { result: 'success' },
+    select_beta: { result: 'success', outputs: { mode: 'promote' } }, verify_beta_candidate: skipped(),
+    verify_stable: { result: 'success' },
+    pin_runner_release_source: { result: 'success', outputs: { required: 'true' } }, release_runner_assets: { result: 'success' } };
+  for (const [name, github, inputs] of [
+    ['publish_canary', { event_name: 'push' }, {}], ['publish_nightly', { event_name: 'schedule' }, {}],
+    ['publish_beta', { event_name: 'workflow_dispatch' }, {}],
+    ['preview_stable', { event_name: 'workflow_dispatch' }, { channel: 'stable', dry_run: true }],
+    ['publish_stable', { event_name: 'workflow_dispatch' }, { channel: 'stable', dry_run: false }],
+  ]) {
+    const block = job(workflow, name);
+    assert.equal(condition(block, ready, github, inputs), true, name);
+    for (const result of ['failure', 'cancelled', 'skipped']) {
+      assert.equal(condition(block, { ...ready, release_runner_assets: { result } }, github, inputs), false, `${name}/${result}`);
+    }
+    const older = { ...ready, pin_runner_release_source: { result: 'success', outputs: { required: 'false' } }, release_runner_assets: skipped() };
+    assert.equal(condition(block, older, github, inputs), true, `${name} older promoted contract`);
+    assert.match(block, /working-directory: source/);
+    const validation = block.match(/name: Validate runner data against[\s\S]*?(?=\n      - name:)/)?.[0];
+    assert.ok(validation);
+    assert.match(validation, /node "\$GITHUB_WORKSPACE\/trusted\/scripts\/release-runner-artifacts\.mjs" unpack/);
+    assert.match(validation, /"\$RUNNER_TEMP\/runner-release-assets" "\$GITHUB_WORKSPACE\/source"/);
+    assert.doesNotMatch(validation, /node scripts\//, 'Credentialed publishers may consume only trusted transfer tooling');
+  }
+  const release = readFileSync(path.join(repoRoot, 'scripts/release.sh'), 'utf8');
+  assert.ok(release.indexOf('pnpm build\n# Production publication') < release.indexOf('PAPERCLIP_RELEASE_RUNNER_ASSETS/bin'));
+  assert.ok(release.indexOf('PAPERCLIP_RELEASE_RUNNER_ASSETS/bin') < release.indexOf('node "$REPO_ROOT/scripts/build-standalone-public-packages.mjs"'));
+  assert.match(release, /elif \[ "\$dry_run" = false \]; then\n\s+release_fail/);
+});
+
 test("chaos verification isolates callers that verify the same source commit", () => {
   const chaosWorkflow = readWorkflow("runner-chaos-evals.yml");
   const group = chaosWorkflow.match(/^  group: (.+)$/m)?.[1];
@@ -45,7 +149,10 @@ test("canary reuses exact-source proof while stable keeps full verification", ()
   assert.match(canary, /SOURCE_SHA: \$\{\{ github\.sha \}\}/);
   assert.match(canary, /run: node scripts\/cloud-source-verification\.mjs "\$SOURCE_SHA"/);
   assert.doesNotMatch(canary, /release-verify\.yml|continue-on-error|always\(\)/);
-  assert.match(releaseWorkflow, /publish_canary:\n\s+if: github\.event_name == 'push'\n\s+needs: verify_canary/);
+  const publishCanary = job(releaseWorkflow, 'publish_canary');
+  assert.match(publishCanary, /needs: \[verify_canary, pin_runner_release_source, release_runner_assets\]/);
+  assert.match(publishCanary, /needs\.verify_canary\.result == 'success'/);
+  assert.match(publishCanary, /needs\.release_runner_assets\.result == 'success'/);
   // The stable lane is gated on the stable channel since the nightly lane
   // was added; a `needs:` line (for example a preflight job) may sit between
   // the gate and the delegation.
