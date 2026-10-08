@@ -18,7 +18,6 @@ export const environmentTaskOperationSchema = z.discriminatedUnion("kind", [
       harness: identifier,
       runnerId: identifier, leaseId: identifier, runId: identifier,
       sessionId: identifier, turnId: identifier, itemId: identifier,
-      connectUrl: secureUrl.optional(),
     }).strict(),
     bootstrapTicket: z.string().min(1).max(65_536),
   }).strict(),

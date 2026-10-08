@@ -25,19 +25,25 @@ the task's durable attempt ID. Save it before a remote call. Do not use a persis
 machine ID as this task ID. Multiple attempts can use the same underlying resource. Provider task IDs are
 opaque strings; each provider owns its addressing constraints.
 
-- `submit`: supplies typed Runner identity, source revision, harness, optional
-  outbound WSS URL, and a transient bootstrap ticket. The Runner run and lease IDs
+- `submit`: supplies typed Runner identity, source revision, harness,
+  and a transient bootstrap ticket. The Runner run and lease IDs
   must match the persisted host records. Only a running run with an active,
   unexpired lease can submit.
 - `status`: returns the phase and optional exit code. Optional `executionStopped`
   is live provider evidence that the complete task process tree has stopped.
 - `connection`: returns a private authenticated WebSocket endpoint for a running
-  task. Transport credentials remain on the server. PRP authentication still binds
+  task. The tenant connects to this provider endpoint. Transport credentials remain
+  on the server. PRP authentication still binds
   the Runner to its authorized run.
 - `complete`: releases task grants according to the provider's policy. It does not
   imply that the process or its descendants stopped.
 - `stop`: requests cancellation of the task. An accepted request is not a process
   termination receipt. Reconcile status before treating execution as stopped.
+
+This contract supports provider ingress only. Submit the task, wait until it is
+running, then request `connection` and connect to its WSS endpoint with the
+returned headers. `submit` does not accept a callback URL; Runner-initiated
+outbound connections are outside this contract.
 
 Submission, completion and stop return `accepted`. Acceptance does not imply
 readiness or success. Status and connection return distinct typed results. Every
