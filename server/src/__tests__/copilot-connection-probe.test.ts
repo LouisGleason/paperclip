@@ -4,10 +4,12 @@ import type { PluginWorkerManager } from "../services/plugin-worker-manager.js";
 const mocks = vi.hoisted(() => ({ metadata: vi.fn(), command: vi.fn(), environment: vi.fn(), bindings: vi.fn(), acquire: vi.fn(), realize: vi.fn(), release: vi.fn(), resolve: vi.fn(), general: vi.fn(), experimental: vi.fn(), defaults: vi.fn(), kubernetes: vi.fn(), managed: vi.fn() }));
 vi.mock("../vendor/paperclip-runner/live/index.js", async importOriginal => ({ ...await importOriginal<object>(), probeCopilotMetadata: mocks.metadata }));
 vi.mock("@paperclipai/adapter-utils/execution-target", () => ({ runAdapterExecutionTargetShellCommand: mocks.command }));
+vi.mock("../middleware/logger.js", () => ({ logger: { warn: vi.fn() } }));
 vi.mock("../services/environments.js", () => ({ environmentService: () => ({ getById: mocks.environment, listBoundCompanyIds: mocks.bindings, findKubernetesEnvironment: mocks.kubernetes, findManagedSandboxEnvironment: mocks.managed }) }));
 vi.mock("../services/instance-settings.js", () => ({ instanceSettingsService: () => ({ get: mocks.defaults, getGeneral: mocks.general, getExperimental: mocks.experimental }) }));
 vi.mock("../services/environment-runtime.js", () => ({ environmentRuntimeService: vi.fn(() => ({ acquireRunLease: mocks.acquire, realizeWorkspace: mocks.realize, getDriver: () => ({ releaseRunLease: mocks.release }) })) }));
 vi.mock("../services/environment-execution-target.js", () => ({ resolveEnvironmentExecutionTarget: mocks.resolve }));
+import { logger } from "../middleware/logger.js";
 import { probeCopilotConnection, probeCopilotExecutionTarget } from "../services/copilot-connection-probe.js";
 import { QUALIFIED_ACPX_PROFILES } from "../../../packages/paperclip-runner/src/drivers/acpx/qualified-profiles.js";
 import type { Db } from "@paperclipai/db";
@@ -45,6 +47,23 @@ describe("Copilot connection verification", () => {
     mocks.command.mockResolvedValue({ timedOut: false, stdout: JSON.stringify({ status: "failed", code: "COPILOT_AUTH_REQUIRED", promptSent: false, message: "private-token" }), exitCode: 1 });
     const error = await probeCopilotConnection({} as Db, "company", "private-token", "selected").catch(e => e);
     expect(error.details.code).toBe("COPILOT_AUTH_REQUIRED"); expect(error.message).not.toContain("private-token"); expect(mocks.release).toHaveBeenCalledOnce();
+  });
+  it("preserves authentication classification when lease cleanup also fails", async () => {
+    mocks.command.mockResolvedValue({ timedOut: false, stdout: JSON.stringify({ status: "failed", code: "COPILOT_AUTH_REQUIRED", promptSent: false, message: "private-token" }), exitCode: 1 });
+    mocks.release.mockRejectedValue(new Error("cleanup private-token"));
+    const error = await probeCopilotConnection({} as Db, "company", "private-token", "selected").catch(e => e);
+    expect(error).toMatchObject({ status: 422, details: { code: "COPILOT_AUTH_REQUIRED" } });
+    expect(error.message).not.toContain("private-token");
+    expect(logger.warn).toHaveBeenCalledWith({ companyId: "company", environmentId: "selected", leaseId: "lease", code: "COPILOT_PROBE_CLEANUP_FAILED" }, expect.any(String));
+    expect(JSON.stringify(vi.mocked(logger.warn).mock.calls)).not.toContain("private-token");
+    expect(mocks.release).toHaveBeenCalledOnce();
+  });
+  it("does not verify a connection when its successful probe cannot clean up", async () => {
+    mocks.release.mockRejectedValue(new Error("cleanup private-token"));
+    const error = await probeCopilotConnection({} as Db, "company", "private-token", "selected").catch(e => e);
+    expect(error).toMatchObject({ status: 422, details: { code: "COPILOT_REQUEST_FAILED", cleanupCode: "COPILOT_PROBE_CLEANUP_FAILED" } });
+    expect(error.message).not.toContain("private-token");
+    expect(mocks.release).toHaveBeenCalledOnce();
   });
   it("rejects stale profile results and unavailable model selections", async () => {
     mocks.command.mockResolvedValue({ timedOut: false, stdout: JSON.stringify({ ...verified, profileDigest: "stale" }), exitCode: 0 });
