@@ -381,7 +381,7 @@ function isDeclaredHoistedCodexPlatform(root: string, manifest: string, issuer: 
     });
     if (!declaredSlot) return false;
     const platform = readResolverPackageJson(packageJsonPath);
-    return [qualified.packageName, qualified.runtimePackageName].includes(String(platform.name))
+    return (platform.name === qualified.packageName || platform.name === qualified.runtimePackageName)
       && platform.version === qualified.packageVersion
       && Array.isArray(platform.os) && platform.os.includes("linux")
       && Array.isArray(platform.cpu) && platform.cpu.includes("x64");
