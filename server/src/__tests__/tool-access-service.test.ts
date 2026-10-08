@@ -8256,6 +8256,18 @@ describeEmbeddedPostgres("tool access service", () => {
       await expect(fixture.service.refreshCatalog(fixture.connected.connectionId, fixture.actor)).rejects.toMatchObject({ details: { code: "google_workspace_services_unavailable" } });
     });
 
+    it("does not let a cached Gmail call failure hide healthy Docs actions", async () => {
+      const fixture = await connectWorkspace("customer");
+      const gmail = (await fixture.gateway.listToolsForSession(fixture.session.token)).find((tool) => tool.upstreamToolName === "gmail__get_message")!;
+      fixture.unavailable.add("gmailmcp.googleapis.com");
+      await expect(fixture.gateway.executeTool({ sessionToken: fixture.session.token, tool: gmail.name, parameters: {} })).rejects.toMatchObject({ reasonCode: "mcp_remote_status" });
+      expect((await fixture.service.getConnection(fixture.connected.connectionId)).healthStatus).toBe("ok");
+      const doc = (await fixture.gateway.listToolsForSession(fixture.session.token)).find((tool) => tool.upstreamToolName === "docs__read_doc")!;
+      expect(doc).toBeTruthy();
+      await expect(fixture.gateway.executeTool({ sessionToken: fixture.session.token, tool: doc.name, parameters: {} })).resolves.toMatchObject({ status: "completed" });
+      expect(fixture.calls).toEqual(["read_doc"]);
+    });
+
     it.each(["managed", "customer"] as const)("blocks the auth retry and updates listing after %s refresh narrows consent", async (mode) => {
       const fixture = await connectWorkspace(mode);
       const tool = (await fixture.gateway.listToolsForSession(fixture.session.token)).find((item) => item.upstreamToolName === "docs__read_doc")!;

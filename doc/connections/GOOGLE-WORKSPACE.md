@@ -29,6 +29,8 @@ the catalog is shared, actions skipped because of narrower consent are preserved
 when another active grant supports them. Failed services and tools removed from a
 successful discovery are still disabled. Each caller's listing and dispatch use only their
 selected grant, without combining permissions from different identities.
+Individual call failures are reported and audited without marking unrelated
+Google services unhealthy; they do not trigger automatic write retries.
 
 Existing individual product connections and their direct setup routes remain
 supported. They are not automatically merged, upgraded or reauthorized. The Sheets
