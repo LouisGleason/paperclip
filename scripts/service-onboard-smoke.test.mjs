@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { accessSync, constants, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { accessSync, constants, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import test from "node:test";
 
 // Pins the wiring that makes the background-service smoke an effective gate.
@@ -54,7 +55,10 @@ test("release-smoke workflow runs the service leg against the input version", ()
 test("source service qualification keeps the supported installer and real managed-shim path", () => {
   const serviceJob = smokeWorkflow.split(/^  smoke:$/m)[0];
   assert.match(serviceJob, /ref: \$\{\{ inputs\.qualification_source_sha \|\| github\.sha \}\}/);
-  assert.match(serviceJob, /pnpm --filter paperclipai build/);
+  assert.match(serviceJob, /cli\/node_modules\/tsx\/dist\/cli\.mjs/);
+  assert.match(serviceJob, /cli\/src\/index\.ts/);
+  assert.match(serviceJob, /PAPERCLIPAI_CLI_PATH: \$\{\{ runner\.temp \}\}\/service-source-qualification\/bootstrap\.mjs/);
+  assert.doesNotMatch(serviceJob, /cli\/dist\/index\.js|pnpm --filter paperclipai build/);
   assert.doesNotMatch(serviceJob, /secrets\./);
   assert.match(script, /PAPERCLIP_HOME="\$DATA_DIR" PAPERCLIP_BUILD_COMMIT="\$SOURCE_SHA"/);
   assert.match(script, /install --repo paperclipai\/paperclip --ref "\$SOURCE_SHA" --yes/);
@@ -63,6 +67,54 @@ test("source service qualification keeps the supported installer and real manage
   assert.match(script, /--property=MainPID --value/);
   assert.match(script, /instances\/default\/runtime-info\.json/);
   assert.doesNotMatch(script, /writeManagedShim|\.managed-install|source.*payload.*cp/);
+});
+
+test("source service bootstrap loads with every workspace dist module unavailable", () => {
+  const root = mkdtempSync(join(tmpdir(), "paperclip-service-source-bootstrap-"));
+  try {
+    const generator = smokeWorkflow.match(/node --input-type=module <<'NODE'\n([\s\S]*?)\n          NODE/)?.[1];
+    assert.ok(generator, "The workflow must prepare its owned source bootstrap");
+    // Reject compiled workspace modules rather than relying on this checkout's
+    // build outputs. External npm dependencies retain their real install graph.
+    const loader = join(root, "source-only.mjs");
+    writeFileSync(loader, `import { registerHooks } from "node:module";
+import { fileURLToPath } from "node:url";
+const workspaces = ${JSON.stringify([realpathSync(repoRoot) + "/", realpathSync(root) + "/"])};
+registerHooks({ resolve(specifier, context, nextResolve) {
+  const result = nextResolve(specifier, context);
+  if (result.url.startsWith("file:")) {
+    const file = fileURLToPath(result.url);
+    const workspace = workspaces.find(root => file.startsWith(root));
+    const relative = workspace && file.slice(workspace.length);
+    if (relative && !relative.includes("node_modules/") && relative.split("/").includes("dist")) {
+      throw new Error("SOURCE_BOOTSTRAP_REQUIRES_WORKSPACE_DIST: " + file);
+    }
+  }
+  return result;
+}});
+`, { mode: 0o600 });
+    const env = { ...process.env, GITHUB_WORKSPACE: repoRoot, RUNNER_TEMP: root,
+      PAPERCLIP_TELEMETRY_DISABLED: "1", NODE_PATH: "", NODE_OPTIONS: `--import=${pathToFileURL(loader).href}` };
+    const control = join(root, "dist", "must-not-load.mjs");
+    mkdirSync(join(root, "dist"));
+    writeFileSync(control, "throw new Error('Compiled workspace code executed');\n");
+    const rejected = spawnSync(process.execPath, ["--input-type=module", "--eval",
+      `await import(${JSON.stringify(pathToFileURL(control).href)})`], { env, encoding: "utf8", timeout: 10_000 });
+    assert.equal(rejected.status, 1);
+    assert.match(rejected.stderr, /SOURCE_BOOTSTRAP_REQUIRES_WORKSPACE_DIST/);
+    const directory = join(root, "service-source-qualification");
+    mkdirSync(directory, { recursive: true });
+    execFileSync(process.execPath, ["--input-type=module"], { input: generator, env, timeout: 10_000 });
+    const help = execFileSync(process.execPath, [join(directory, "bootstrap.mjs"), "--help"],
+      { env, encoding: "utf8", timeout: 30_000, maxBuffer: 1024 * 1024 });
+    assert.match(help, /Usage:/);
+    assert.match(help, /install/);
+    // An install subcommand help flag must reach the real CLI unchanged.
+    const installHelp = execFileSync(process.execPath, [join(directory, "bootstrap.mjs"), "install", "--help"],
+      { env, encoding: "utf8", timeout: 30_000, maxBuffer: 1024 * 1024 });
+    assert.match(installHelp, /--repo/);
+    assert.match(installHelp, /--ref/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("malformed source qualification cannot run or clean up an existing shim", () => {

@@ -105,10 +105,11 @@ jobs:
         with:
           node-version: 24
 
-      - name: Build only the exact candidate CLI bootstrap
+      - name: Prepare the exact candidate CLI source bootstrap
         if: inputs.qualification_source_sha != ''
         env:
           SOURCE_SHA: ${{ inputs.qualification_source_sha }}
+          PAPERCLIP_TELEMETRY_DISABLED: "1"
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/service-source-qualification"
@@ -120,8 +121,27 @@ jobs:
           pnpm install --resolution-only --ignore-scripts --no-frozen-lockfile > "$RUNNER_TEMP/service-source-qualification/bootstrap-lock-resolution.log" 2>&1
           sha256sum pnpm-lock.yaml > "$RUNNER_TEMP/service-source-qualification/build-lock.sha256"
           pnpm install --frozen-lockfile > "$RUNNER_TEMP/service-source-qualification/bootstrap-install.log" 2>&1
-          pnpm --filter paperclipai build > "$RUNNER_TEMP/service-source-qualification/bootstrap-build.log" 2>&1
-          node --check cli/dist/index.js
+          # The raw workspace CLI bundle externalizes transitive dependencies
+          # supplied by public package staging. Use the existing source entry
+          # only to invoke the real git installer; the installed service still
+          # runs its actual npm payload through the managed shim below.
+          node --input-type=module <<'NODE'
+          import { writeFileSync } from 'node:fs';
+          import { resolve } from 'node:path';
+          const cliArgs = [
+            resolve(process.env.GITHUB_WORKSPACE, 'cli/node_modules/tsx/dist/cli.mjs'),
+            resolve(process.env.GITHUB_WORKSPACE, 'cli/src/index.ts'),
+          ];
+          writeFileSync(resolve(process.env.RUNNER_TEMP, 'service-source-qualification/bootstrap.mjs'), [
+            "import { spawnSync } from 'node:child_process';",
+            'const result = spawnSync(process.execPath, ' + JSON.stringify(cliArgs) + '.concat(process.argv.slice(2)), { stdio: "inherit" });',
+            'if (result.error) throw result.error;',
+            'process.exit(result.status ?? 1);',
+            '',
+          ].join('\n'), { mode: 0o600 });
+          NODE
+          node "$RUNNER_TEMP/service-source-qualification/bootstrap.mjs" --help \
+            > "$RUNNER_TEMP/service-source-qualification/bootstrap-load.log" 2>&1
 
       - name: Start a user systemd session
         id: service_session
@@ -146,7 +166,7 @@ jobs:
         env:
           PAPERCLIPAI_VERSION: ${{ inputs.paperclip_version }}
           SOURCE_SHA: ${{ inputs.qualification_source_sha }}
-          PAPERCLIPAI_CLI_PATH: ${{ github.workspace }}/cli/dist/index.js
+          PAPERCLIPAI_CLI_PATH: ${{ runner.temp }}/service-source-qualification/bootstrap.mjs
           DATA_DIR: ${{ runner.temp }}/service-smoke-data
           SERVICE_QUALIFICATION_RECEIPT: ${{ runner.temp }}/service-source-qualification/service.json
           SERVICE_SMOKE_OWNERSHIP_FILE: ${{ runner.temp }}/service-smoke-owned
