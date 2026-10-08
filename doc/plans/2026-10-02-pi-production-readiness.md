@@ -5,6 +5,34 @@ set of release gates. Pi remains a candidate until every required gate passes.
 Keep behavioral qualification on the accepted fixtures. Do not expand it to
 widgets, images, Cursor or Copilot qualification. The existing draft stack must be reviewed in dependency order.
 
+## Retain cloud-built packages for the changed reader — 2026-10-08
+
+Reader fix `111082ad429c3d21ba74e9241d1375da6e82a7cd` passes all 54
+applicable PR checks, with two intentional skips and no unresolved review
+threads. Cloud build `37774605672` also passes its normal source build,
+18-package clean npm installation, lifecycle isolation and Pi profile-18
+admission. Its immutable image is
+`ghcr.io/paperclipai/paperclip-daytona-runner@sha256:098bd31be64612dd15490f2507ae0cdc08875cc6e35ce6fe5e2ef87fce7d0d69`.
+These are credential-free checks; they do not qualify the live cloud memory
+case or the remaining Product and Runner cases.
+
+The public installation verifier previously deleted its normal archive set
+with its temporary consumer. The existing hosted Linux image job now opts in
+to retaining those exact public archives, plus the normally prepacked Daytona
+plugin and separately built private Runner eval SDK. The manifest binds all
+archive hashes to the actual server build stamp and git revision. Existing
+retained output cannot be replaced. Temporary package stages and caches are
+removed; source manifests stay unchanged. Nine focused Node tests pass,
+including actual plugin prepack and source/destination identity controls.
+
+Run the image job once on the new head to retain one matching image and
+20-package set. Install that set normally on an owned cloud host, freeze its
+full installed graphs, import the matching image companion through the public
+CLI, and call the actual installed provider-pack reader before any paid turn.
+Then run one cloud memory case with Sonnet 4.6 and zero automatic retries.
+No local Docker is used. The earlier canonical failures and passes stay bound
+to their original source and definition versions.
+
 ## Sonnet memory verification and cloud reader repair — 2026-10-08
 
 The user approved `openrouter/anthropic/claude-sonnet-4.6` as the explicit

@@ -10,6 +10,7 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { materializePublishManifest, prepareBundledPackage } from './prepare-bundled-package.mjs';
 import { GROK_PUBLIC_INSTALL_IMAGE, GROK_PUBLIC_INSTALL_LIFECYCLE, grokConsumerDockerArgs } from './grok-public-install-sandbox.mjs';
+import { retainRunnerQualificationPackages } from './retain-runner-qualification-packages.mjs';
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 assert.equal(process.platform, 'linux', 'Run this verification on disposable EC2 Linux, not a developer host');
 const root = mkdtempSync(join(tmpdir(), 'paperclip-grok-public-install-'));
@@ -133,6 +134,12 @@ try {
   // Docker defaults tmpfs to noexec. The offline admission probe must execute
   // its verified private snapshot while keeping lifecycle/download scratch noexec.
   console.log(isolated(['node', '/packages/pi-public-install-probe.mjs', '/consumer/node_modules/@paperclipai/server'], { temporarySizeMiB: 2048, temporaryExecutable: true }).toString().trim());
+  if (process.env.PAPERCLIP_RUNNER_QUALIFICATION_PACKAGES_DIR) {
+    const retained = retainRunnerQualificationPackages({ repo, output: process.env.PAPERCLIP_RUNNER_QUALIFICATION_PACKAGES_DIR, sourceRevision, releaseVersion, env,
+      publicArchives: [...needed].map((name, index) => ({ name, file: tarballs[index] })),
+    });
+    console.log(JSON.stringify(retained));
+  }
 } finally {
   rmSync(root, { recursive: true, force: true });
 }
