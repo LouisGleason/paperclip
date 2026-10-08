@@ -268,7 +268,7 @@ describe("PaperclipRunnerToolAuthority", () => {
       issueId,
       runId,
     });
-    expect(authority.definitions()).toHaveLength(44);
+    expect(authority.definitions()).toHaveLength(45);
     expect(authority.definitions().map(tool => tool.name)).not.toContain("read_chat_attachment");
     expect(authority.definitions().map(tool => tool.name)).not.toContain("read_current_wake_comments");
     const questions = authority.definitions().find(tool => tool.name === "request_human_input")!;
