@@ -6627,6 +6627,7 @@ registry.registerPath({
     400: r.badRequest,
     401: r.unauthorized,
     403: r.forbidden,
+    409: r.conflict,
   },
 });
 
