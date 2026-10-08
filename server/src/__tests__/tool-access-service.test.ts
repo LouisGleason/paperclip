@@ -8102,12 +8102,12 @@ describeEmbeddedPostgres("tool access service", () => {
   });
 
   describe("combined Workspace service isolation and refresh consent", () => {
-    async function connectWorkspace(mode: "managed" | "customer") {
+    async function connectWorkspace(mode: "managed" | "customer", permissions = ["documents.readonly", "gmail.readonly"]) {
       const company = await createCompany(db);
       const userId = `workspace-refresh-${randomUUID()}`;
       await grantBoardUser(db, company.id, userId, [], "owner");
       const actor = { actorType: "user" as const, actorId: userId };
-      const initialScopes = ["documents.readonly", "gmail.readonly"].map((scope) => `https://www.googleapis.com/auth/${scope}`);
+      const initialScopes = permissions.map((scope) => `https://www.googleapis.com/auth/${scope}`);
       let authorizationScopes = initialScopes;
       let refreshScopes: string[] | undefined = initialScopes;
       const connector = fakeGoogleWorkspaceConnector(company.id, userId, "workspace.all");
@@ -8119,6 +8119,7 @@ describeEmbeddedPostgres("tool access service", () => {
       const service = createTestToolAccessService(db, { paperclipCloudConnector: connector });
       const calls: string[] = [];
       const unavailable = new Set<string>();
+      const omitted = new Set<string>();
       let unauthorizedNextCall = false;
       const tokenRefreshes: string[] = [];
       vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
@@ -8137,10 +8138,11 @@ describeEmbeddedPostgres("tool access service", () => {
           if (unauthorizedNextCall) { unauthorizedNextCall = false; return new Response("expired", { status: 401 }); }
           return Response.json({ jsonrpc: "2.0", id: body.id, result: { content: [{ type: "text", text: "ok" }] } });
         }
-        return mcpHttpResponse({ jsonrpc: "2.0", id: body.id, result: { tools: [{
-          name: host === "docsmcp.googleapis.com" ? "read_doc" : "get_message", annotations: { readOnlyHint: true },
+        const names = host === "docsmcp.googleapis.com" ? ["read_doc", "update_doc"] : ["get_message"];
+        return mcpHttpResponse({ jsonrpc: "2.0", id: body.id, result: { tools: omitted.has(host) ? [] : names.map((name) => ({
+          name, annotations: { readOnlyHint: name !== "update_doc" },
           inputSchema: { type: "object", properties: {} },
-        }] } });
+        })) } });
       });
       const connected = await service.connectGalleryApp(company.id, {
         galleryKey: "google-workspace", grantKind: "organization",
@@ -8162,13 +8164,13 @@ describeEmbeddedPostgres("tool access service", () => {
       const gateway = createToolGatewayService(db, { toolActionSigningSecret: "test-secret",
         oauthGrantRefresher: service.refreshOAuthGrantCredentials });
       const session = await gateway.createSession({ companyId: company.id, agentId: agent.id, runId: run.id });
-      return { company, actor, agent, service, connected, gateway, session, calls, unavailable, connector, tokenRefreshes,
+      return { company, actor, agent, service, connected, gateway, session, calls, unavailable, omitted, connector, tokenRefreshes,
         setAuthorizationScopes: (scopes: string[]) => { authorizationScopes = scopes; },
         expireNextCall: (scopes: string[] | undefined) => { refreshScopes = scopes; unauthorizedNextCall = true; } };
     }
 
     it("preserves organization actions when a personal OAuth callback grants fewer permissions", async () => {
-      const fixture = await connectWorkspace("customer");
+      const fixture = await connectWorkspace("customer", ["documents", "gmail.readonly"]);
       // This supported policy selects personal consent when present and the
       // organization identity for callers without a personal grant.
       await db.update(toolConnections).set({ credentialPolicy: "per_user_with_fallback" })
@@ -8187,6 +8189,12 @@ describeEmbeddedPostgres("tool access service", () => {
         eq(toolCatalogEntries.connectionId, fixture.connected.connectionId), eq(toolCatalogEntries.toolName, "gmail__get_message"),
       ));
       expect(gmailEntry.status).toBe("active");
+      const [docsWrite] = await db.select().from(toolCatalogEntries).where(and(
+        eq(toolCatalogEntries.connectionId, fixture.connected.connectionId), eq(toolCatalogEntries.toolName, "docs__update_doc"),
+      ));
+      // Docs was probed, but its write action was filtered by personal consent,
+      // not removed by Google. The organization still retains that action.
+      expect(docsWrite.status).toBe("active");
       const gmail = (await fixture.gateway.listToolsForSession(fixture.session.token)).find((tool) => tool.upstreamToolName === "gmail__get_message")!;
       expect(gmail).toBeTruthy();
       await expect(fixture.gateway.executeTool({ sessionToken: fixture.session.token, tool: gmail.name, parameters: {} })).resolves.toMatchObject({ status: "completed" });
@@ -8201,6 +8209,27 @@ describeEmbeddedPostgres("tool access service", () => {
       await fixture.service.refreshCatalog(fixture.connected.connectionId, actor);
       const [removed] = await db.select().from(toolCatalogEntries).where(eq(toolCatalogEntries.id, gmailEntry.id));
       expect(removed.status).toBe("disabled");
+    });
+
+    it.each(["outage", "removed"] as const)("does not preserve a probed Gmail service's missing tools across grants (%s)", async (failure) => {
+      const fixture = await connectWorkspace("customer");
+      const userId = `workspace-both-${randomUUID()}`;
+      await grantBoardUser(db, fixture.company.id, userId, [], "owner");
+      const actor = { actorType: "user" as const, actorId: userId };
+      const redirectUri = "https://paperclip.example/api/tools/oauth/callback";
+      const started = await fixture.service.startOAuth(fixture.company.id, fixture.connected.connectionId, { redirectUri, actor, subjectUserId: userId });
+      await fixture.service.completeOAuthCallback({ state: new URL(started.authorizationUrl).searchParams.get("state")!, code: "personal-both", redirectUri, actor });
+      (failure === "outage" ? fixture.unavailable : fixture.omitted).add("gmailmcp.googleapis.com");
+      const refreshed = await fixture.service.refreshCatalog(fixture.connected.connectionId, actor);
+      expect(refreshed.connection.healthStatus).toBe("ok");
+      const tools = await fixture.gateway.listToolsForSession(fixture.session.token);
+      expect(tools.some((tool) => tool.upstreamToolName === "gmail__get_message")).toBe(false);
+      const doc = tools.find((tool) => tool.upstreamToolName === "docs__read_doc")!;
+      expect(doc).toBeTruthy();
+      await expect(fixture.gateway.executeTool({ sessionToken: fixture.session.token, tool: doc.name, parameters: {} })).resolves.toMatchObject({ status: "completed" });
+      expect(fixture.calls).toEqual(["read_doc"]);
+      const [gmail] = await db.select().from(toolCatalogEntries).where(and(eq(toolCatalogEntries.connectionId, fixture.connected.connectionId), eq(toolCatalogEntries.toolName, "gmail__get_message")));
+      expect(gmail.status).toBe("disabled");
     });
 
     it("keeps healthy service tools visible during a partial outage and restores recovered services", async () => {

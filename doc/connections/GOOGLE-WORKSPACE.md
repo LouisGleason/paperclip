@@ -25,8 +25,9 @@ connection's health message identifies unavailable services and recommends a
 catalog refresh. Failed services' cached actions are disabled until rediscovered;
 an outage affecting every requested service still fails the refresh. Loss of the
 shared OAuth grant never degrades into a successful partial discovery. Because
-the catalog is shared, a caller's narrower consent never removes actions another
-active grant supports; each caller's listing and dispatch still use only their
+the catalog is shared, actions skipped because of narrower consent are preserved
+when another active grant supports them. Failed services and tools removed from a
+successful discovery are still disabled. Each caller's listing and dispatch use only their
 selected grant, without combining permissions from different identities.
 
 Existing individual product connections and their direct setup routes remain
