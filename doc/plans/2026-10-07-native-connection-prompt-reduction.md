@@ -60,3 +60,33 @@ general coding quality. It detects duplicate saved interactions, not every
 repeated idempotent tool call. A single pair per cell does not establish general
 equivalence, speed or cost trends. The failed hiring-only reduction #15389 stays
 held and is not part of this comparison.
+
+
+## Final bounded comparison on repaired master — 2026-10-08
+
+The human authorized one further matched comparison and retirement of this
+reduction if it still regresses. Common master is
+`b5342febe5975a3e216be554a3592127a039fb1e`, including merged #15514.
+Both variants retain its per-turn completion reminder and corrected evaluator.
+The candidate differs only in the original 261-byte fixed-prompt reduction,
+its prompt revision, and this plan. No fixture, grader, tool catalog, budget,
+permission, runtime, or retry change is part of this comparison.
+
+Use the same fifteen cells, models, one-attempt cap, twelve-minute deadline,
+1,000-cent company and agent hard stops, and three concurrent cells per campaign.
+Freeze the actual source, suite and definition hashes from the exported catalog
+before dispatch. Run through the trusted master workflow using distinct target
+branches. Expected turns are not actual run counts; count every retained run.
+
+Preserve the original 11/15 baseline and 12/15 candidate campaigns
+37688433682/37688449963, including both newly failing pairs. The separate merged
+repair comparison 37711675579/37711658378 passed 15/15 on each side; it did not
+measure this prompt reduction. Neither historical campaign replaces this trial.
+
+Complete provider-free validation and inspect all original paired outcomes,
+saved content, approvals/declines, accepted finalization, actual run accounting,
+cleanup, and billing coverage. Do not reroll failures or change the oracle.
+No new failing pair or lost required behavior is allowed for qualification.
+If the reduction still regresses, keep the merged guidance and retire this PR
+instead of entering another repair cycle. Uncomparable evidence stays explicit
+and cannot qualify the reduction. No merge is authorized.
