@@ -8,6 +8,7 @@ import { instanceSettingsService } from "./instance-settings.js";
 import { resolveEnvironmentExecutionTarget } from "./environment-execution-target.js";
 import { assertEnvironmentSelectionForCompany } from "../routes/environment-selection.js";
 import { buildLoginLeaseAcquireArgs } from "./adapter-login-lease.js";
+import { logger } from "../middleware/logger.js";
 import { forbidden, unprocessable } from "../errors.js";
 
 export async function probeCopilotConnection(db: Db, companyId: string, token: string, suppliedEnvironmentId?: string | null, model?: string, runtimeOptions: Parameters<typeof environmentRuntimeService>[1] = {}) {
@@ -33,6 +34,7 @@ export async function probeCopilotConnection(db: Db, companyId: string, token: s
   const runtime = environmentRuntimeService(db, runtimeOptions);
   let lease: Awaited<ReturnType<typeof runtime.acquireRunLease>> | undefined;
   let succeeded = false;
+  let probeFailed = false;
   try {
     if (environment.driver !== "ssh") {
       lease = await runtime.acquireRunLease(buildLoginLeaseAcquireArgs({ metadata: { companyId, environment, adapterType: "paperclip_runner" }, assertCompanyBinding: true, requestedExpiresAt: new Date(Date.now() + 90_000) }));
@@ -44,11 +46,20 @@ export async function probeCopilotConnection(db: Db, companyId: string, token: s
     const verified = await probeCopilotExecutionTarget(token, target, model);
     succeeded = true;
     return verified;
+  } catch (error) {
+    probeFailed = true;
+    throw error;
   } finally {
     if (lease) {
-      const driver = runtime.getDriver(environment.driver);
-      if (!driver) throw new Error("Copilot verification lease cleanup driver is unavailable");
-      await driver.releaseRunLease({ environment, lease: lease.lease, status: succeeded ? "released" : "failed" });
+      try {
+        const driver = runtime.getDriver(environment.driver);
+        if (!driver) throw new Error("Copilot verification lease cleanup driver is unavailable");
+        await driver.releaseRunLease({ environment, lease: lease.lease, status: succeeded ? "released" : "failed" });
+      } catch {
+        // Report only owned identifiers; driver errors may contain credentials.
+        logger.warn({ companyId, environmentId: environment.id, leaseId: lease.lease.id, code: "COPILOT_PROBE_CLEANUP_FAILED" }, "Copilot verification lease cleanup failed");
+        if (!probeFailed) throw unprocessable("Copilot verification could not release its execution environment.", { code: "COPILOT_REQUEST_FAILED", cleanupCode: "COPILOT_PROBE_CLEANUP_FAILED" });
+      }
     }
   }
 }

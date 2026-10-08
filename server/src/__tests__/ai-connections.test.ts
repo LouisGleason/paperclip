@@ -106,6 +106,22 @@ describe("managed AI connections", () => {
     } finally { probe.mockRestore(); }
   });
 
+  it("preserves repository GitHub credentials for managed non-Copilot execution", async () => {
+    const owner = "repo-github-owner";
+    await db.insert(companyMemberships).values({ companyId, principalId: owner, principalType: "user", status: "active", membershipRole: "member" });
+    await create(owner, owner);
+    for (const configured of [{ GH_TOKEN: "repo-gh-fixture", GITHUB_TOKEN: "repo-github-fixture" }, {}]) {
+      const runtime = await prepareManagedAiRuntime(db, { ...input, responsibleUserId: owner, config: { env: configured } });
+      try {
+        expect(runtime.config.env).toMatchObject({ COPILOT_GITHUB_TOKEN: "", ANTHROPIC_API_KEY: `fixture-${owner}` });
+        for (const key of ["GH_TOKEN", "GITHUB_TOKEN"] as const) {
+          if (key in configured) expect(runtime.config.env?.[key]).toBe(configured[key as keyof typeof configured]);
+          else expect(runtime.config.env).not.toHaveProperty(key);
+        }
+      } finally { await runtime.cleanup(); }
+    }
+  });
+
   it("uses a vaulted Copilot token with GitHub attribution and refuses revoked or foreign grants", async () => {
     const owner = "copilot-owner";
     const token = "github_pat_fixture_copilot";
