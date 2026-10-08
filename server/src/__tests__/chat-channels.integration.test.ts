@@ -2793,6 +2793,153 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
       );
       expect(await f.service.listResources(f.endpoint.id)).toEqual(resources);
     });
+    it.each(["draft", "verifying"] as const)(
+      "wizard resumes a %s installation callback after its signed ping",
+      async (status) => {
+        const f = await reviewBotFixture();
+        const permissions = {
+          contents: "read",
+          issues: "write",
+          metadata: "read",
+          pull_requests: "write",
+          checks: "write",
+        };
+        f.setAppAccess({
+          permissions,
+          events: ["pull_request", "issue_comment", "pull_request_review_comment"],
+        });
+        f.setInstallationAccess(permissions);
+        f.setSupplementalProviderFetch(async (input) =>
+          String(input) === "https://api.github.com/app/installations/2468"
+            ? Response.json({
+                id: 2468,
+                app_id: Number(f.endpoint.botExternalId),
+                account: { login: "paperclipai" },
+                permissions,
+              })
+            : undefined,
+        );
+        const returnState = randomUUID();
+        const cloudId = `late-ping-${randomUUID()}`;
+        await db
+          .update(chatEndpoints)
+          .set({
+            status,
+            setup: {
+              ...f.endpoint.setup,
+              step: "provider_setup",
+              webhookVerifiedAt: null,
+              github: {
+                ...f.endpoint.setup.github,
+                stage: "repositories",
+                initialRepositoriesImported: true,
+              },
+            },
+          })
+          .where(eq(chatEndpoints.id, f.endpoint.id));
+        await db.insert(chatGitHubRegistrations).values({
+          companyId: f.companyId,
+          endpointId: f.endpoint.id,
+          userId: "owner-user",
+          stateHash: createHash("sha256").update(returnState).digest("hex"),
+          trustedOrigin: "http://localhost:3104",
+          status: "completed",
+          expiresAt: new Date(Date.now() + 60_000),
+          handoff: {
+            cloudId: cloudId,
+            returnState,
+            redemptionId: "receipt",
+            webhookSecretHash: createHash("sha256")
+              .update(f.webhookSecret)
+              .digest("hex"),
+          },
+        });
+        const configure = vi.fn((id: string, userId: string) =>
+          f.service.configure(id, { action: "configure" }, userId),
+        );
+        const finish = vi.fn((id: string, userId: string) =>
+          f.service.test(id, { optionalSlackTestForUser: userId }),
+        );
+        const wizard = githubChatWizardService(db, {
+          origin: () => "http://localhost:3104",
+          fetch: f.providerFetch,
+          connector: () =>
+            ({
+              githubApp: async () => ({ id: cloudId }),
+              claimGitHubApp: async () => ({
+                kind: "gateway_callback",
+                callbackKind: "install",
+                registrationId: cloudId,
+              }),
+            }) as unknown as PaperclipCloudConnector,
+          startDirect: f.service.startGitHubRegistration,
+          storeApp: f.service.storeGitHubApp,
+          storeCredentials: async () => {},
+          refreshRepositories: f.service.refreshGitHubRepositories,
+          resources: f.service.listResources,
+          replaceResources: f.service.replaceResources,
+          configure,
+          finish,
+        });
+        const before = await f.management.configuration(
+          f.endpoint.id,
+          "owner-user",
+        );
+        expect(await wizard.cloudCallback("", cloudId, "installation-claim")).toBe(
+          `http://localhost:3104/${(await db.select().from(companies).where(eq(companies.id, f.companyId)))[0].issuePrefix}/apps/chat/connect?provider=github&purpose=chat&resume=${f.endpoint.id}`,
+        );
+        expect(await wizard.advance(f.endpoint.id, "owner-user")).toMatchObject({
+          state: "verify",
+          verification: { ready: false, checks: [{ key: "webhook", ok: false }] },
+        });
+        expect(configure).not.toHaveBeenCalled();
+        expect(finish).not.toHaveBeenCalled();
+        expect(
+          await f.management.configuration(f.endpoint.id, "owner-user"),
+        ).toEqual(before);
+        expect((await f.service.get(f.endpoint.id)).botExternalId).toBe(
+          f.endpoint.botExternalId,
+        );
+        const unsigned = await f.service.handleWebhook(
+          f.endpoint.publicId,
+          "github",
+          new Request("https://gateway.example.test/webhook", {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "x-github-event": "ping",
+            },
+            body: "{}",
+          }),
+        );
+        expect(unsigned.status).toBe(401);
+        expect((await wizard.advance(f.endpoint.id, "owner-user")).state).toBe(
+          "verify",
+        );
+        expect(configure).not.toHaveBeenCalled();
+        await recordGitHubWebhookVerification(
+          f.service,
+          f.endpoint.publicId,
+          f.webhookSecret,
+        );
+        expect((await wizard.advance(f.endpoint.id, "owner-user")).state).toBe(
+          "connected",
+        );
+        expect(configure).toHaveBeenCalledExactlyOnceWith(
+          f.endpoint.id,
+          "owner-user",
+        );
+        expect(finish).toHaveBeenCalledExactlyOnceWith(f.endpoint.id, "owner-user");
+        expect((await f.service.get(f.endpoint.id)).status).toBe("active");
+        expect((await f.service.get(f.endpoint.id)).botExternalId).toBe(
+          f.endpoint.botExternalId,
+        );
+        expect(
+          (await f.service.get(f.endpoint.id)).setup.webhookVerifiedAt,
+        ).toEqual(expect.any(String));
+        expect(f.wakeup).not.toHaveBeenCalled();
+      },
+    );
     it("wizard completes a verified connection automatically without claiming runtime execution", async () => {
       const f = await reviewBotFixture();
       const permissions = {

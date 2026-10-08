@@ -83,7 +83,7 @@ vi.mock("@/api/githubChat", () => ({
   },
 }));
 vi.mock("@/api/tools", () => ({
-  toolsApi: { startCloudConnectorEnrollment: vi.fn() },
+  toolsApi: { startCloudConnectorEnrollment: vi.fn(), getCloudConnectorEnrollment: vi.fn() },
 }));
 vi.mock("@/lib/clipboard", () => ({ copyTextToClipboard: vi.fn() }));
 
@@ -162,6 +162,14 @@ describe("GitHub App wizard", () => {
     });
     vi.mocked(githubChatApi.saveDraft).mockResolvedValue({ saved: true });
     vi.mocked(githubChatApi.personalConnections).mockResolvedValue([]);
+    vi.mocked(toolsApi.getCloudConnectorEnrollment).mockResolvedValue({
+      configured: false,
+      status: "not_configured",
+      brokerBaseUrl: "https://gateway.example",
+      instanceId: null,
+      environment: "staging",
+      origins: [],
+    });
     vi.mocked(copyTextToClipboard).mockResolvedValue();
     client = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
@@ -180,6 +188,61 @@ describe("GitHub App wizard", () => {
       await new Promise((resolve) => setTimeout(resolve, 20));
     });
   }
+  it("explains HTTP delivery before choosing an agent without creating an App", async () => {
+    await render("agentId=reviewer");
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      "publicly reachable HTTPS URL before creating an App",
+    );
+    expect(container.textContent).toContain(
+      "GitHub cannot send webhooks directly to this HTTP address",
+    );
+    expect(chatEndpointsApi.create).not.toHaveBeenCalled();
+    expect(githubChatApi.registration).not.toHaveBeenCalled();
+  });
+  it("explains that an enrolled Cloud gateway supports the HTTP instance", async () => {
+    vi.mocked(toolsApi.getCloudConnectorEnrollment).mockResolvedValue({
+      configured: true,
+      status: "active",
+      brokerBaseUrl: "https://gateway.example",
+      instanceId: "instance",
+      environment: "staging",
+      origins: [window.location.origin],
+    });
+    await render("agentId=reviewer");
+    expect(container.querySelector('[role="note"]')?.textContent).toContain(
+      "Cloud is connected and provides the HTTPS webhook",
+    );
+    expect(container.textContent).not.toContain(
+      "configure a publicly reachable HTTPS URL before creating",
+    );
+  });
+  it("shows pending signed delivery as waiting, not failed setup", async () => {
+    fixture.endpoint.botExternalId = "1234";
+    vi.mocked(githubChatApi.advance).mockResolvedValue({
+      endpointId: "draft-1",
+      state: "verify",
+      message: "Waiting for GitHub to verify webhook delivery…",
+      verification: {
+        ready: false,
+        checks: [
+          {
+            key: "webhook",
+            label: "Signed webhook delivery",
+            ok: false,
+            detail:
+              "Keep this page open. Setup will continue automatically when GitHub’s signed ping arrives.",
+          },
+        ],
+      },
+    });
+    await render("resume=draft-1");
+    expect(container.querySelector('[role="status"]')?.textContent).toContain(
+      "Waiting for GitHub",
+    );
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(container.textContent).toContain("continue automatically");
+    expect(githubChatApi.registration).not.toHaveBeenCalled();
+  });
   it("reconnects the same App using vaulted credentials without requiring another paste", async () => {
     fixture.endpoint.status = "attention";
     fixture.endpoint.botExternalId = "1234";
@@ -252,7 +315,7 @@ describe("GitHub App wizard", () => {
       }),
       "company-1",
     );
-    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(container.textContent).not.toContain("Change Reviewer to a low trust agent");
     await click("Continue");
     expect(chatEndpointsApi.create).toHaveBeenCalledWith("company-1", {
       provider: "github",

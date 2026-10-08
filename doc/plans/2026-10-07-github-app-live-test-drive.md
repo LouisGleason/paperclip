@@ -356,3 +356,39 @@ All 59 focused management, setup, avatar-download and clipboard tests pass,
 including Slack's existing download/error/retry coverage for the shared
 downloader. UI typecheck/build, production Storybook build and token gates pass.
 The earlier full-suite failure and current-head CI/review limits still apply.
+
+### HTTP prerequisites and delayed-ping recovery (October 7, evening)
+
+A second dedicated App, **Animal Bot Baby**, returned from installation with
+`chat_webhook_not_verified`. This was a callback-ordering failure, not evidence
+that localhost needs a tunnel: the original registration was created at
+01:13:44 UTC on October 8, and a valid signed ping was recorded at 01:15:19 UTC.
+Cloud enrollment and HTTPS gateway delivery were already active.
+
+The wizard now explains HTTPS webhook delivery before selecting an agent on an
+HTTP instance. Missing or unavailable enrollment shows a warning with Cloud or
+public-HTTPS setup guidance; active enrollment explains that Cloud supplies the
+HTTPS webhook. Desktop and 390px layouts were inspected without creating
+another draft or App.
+
+An installation return before the signed ping now redirects to the original
+draft's waiting screen. Polling continues setup after the ping authenticates,
+without weakening the manager action's signature gate. Live recovery also
+exposed a `verifying` endpoint still at `provider_setup`; the wizard now finishes
+configuration at that stage instead of prematurely attempting the optional
+setup test. Already configured connections still require explicit reconnect.
+
+After restarting the preserved test drive, the same Animal Bot Baby App and
+draft reached **GitHub connected** and `active` / `complete`, with mention
+`@animal-bot-baby`. Its saved signed-ping timestamp, company and assigned agent
+remained unchanged. The original Animal Bot E2E connection remains active at
+configuration revision 7. No new App, tunnel, provider permission, credential
+entry, model turn or review execution was performed by this recovery.
+
+All 21 focused database-backed wizard tests and 32 focused setup/management UI
+tests pass. The delayed-ping regressions exercise both draft and installation-
+advanced states through real configure/finish calls, reject unsigned pings,
+retain App identity/configuration, and create no agent wakeup. UI/server
+typecheck/build, production Storybook build, token gates and diff whitespace
+checks pass. This remains connection qualification; the earlier full-suite
+failure and outstanding current-head CI/review limits still apply.

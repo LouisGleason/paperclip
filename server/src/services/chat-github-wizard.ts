@@ -909,7 +909,31 @@ export function githubChatWizardService(
         initialSetupPending: false,
       });
     }
-    if (bot.status !== "active" && bot.status !== "verifying")
+    // Installation callbacks can precede the separately delivered signed ping.
+    // Keep the same vaulted App in the wizard instead of throwing JSON from
+    // the browser callback or relaxing the configure action's signature gate.
+    bot = await endpoint(id, userId);
+    if (!bot.setup.webhookVerifiedAt)
+      return {
+        endpointId: id,
+        state: "verify",
+        message: "Waiting for GitHub to verify webhook delivery…",
+        verification: {
+          ready: false,
+          checks: [
+            {
+              key: "webhook",
+              label: "Signed webhook delivery",
+              ok: false,
+              detail: "Keep this page open. Setup will continue automatically when GitHub’s signed ping arrives.",
+            },
+          ],
+        },
+      };
+    if (
+      bot.status !== "active" &&
+      (bot.status !== "verifying" || bot.setup.step === "provider_setup")
+    )
       await options.configure(id, userId);
     bot = await endpoint(id, userId);
     let linked = await linkedIdentity(bot, userId);

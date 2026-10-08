@@ -9573,7 +9573,15 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
       }
     } else if (
       input.action === "configure" &&
-      !["draft", "attention", "revoked"].includes(endpoint.status)
+      !["draft", "attention", "revoked"].includes(endpoint.status) &&
+      // GitHub installation discovery can advance the status before the
+      // wizard has configured its runtime. Finish that exact setup stage;
+      // configured connections still require the explicit reconnect flow.
+      !(
+        endpoint.provider === "github" &&
+        endpoint.status === "verifying" &&
+        endpoint.setup.step === "provider_setup"
+      )
     ) {
       throw conflict(
         "This connection is already configured; use its reconnect flow if credentials need repair",
