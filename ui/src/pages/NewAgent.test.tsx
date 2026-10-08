@@ -201,6 +201,24 @@ afterEach(async () => {
   container.remove();
 });
 describe("New agent setup", () => {
+  it("refuses an undiscovered Copilot model before hiring with a saved connection", async () => {
+    api.adapterModels.mockResolvedValue([{ id: "gpt-5.6-luna", label: "GPT" }]);
+    await render("paperclip_runner", "copilot");
+    await fill("Model", "unavailable-copilot-model");
+    await click("Finish setup");
+    expect(api.hire).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("select an available model");
+  });
+  it("preserves the authenticated Copilot model when hiring with a saved connection", async () => {
+    api.adapterModels.mockResolvedValue([{ id: "gpt-5.6-luna", label: "GPT" }]);
+    await render("paperclip_runner", "copilot");
+    await fill("Model", "gpt-5.6-luna");
+    await click("Finish setup");
+    expect(api.hire).toHaveBeenCalledWith("company-1", expect.objectContaining({
+      adapterType: "paperclip_runner", adapterConfig: expect.objectContaining({ provider: "acpx", acpxAgent: "copilot", model: "gpt-5.6-luna" }),
+      runtimeConfig: expect.objectContaining({ aiConnection: { provider: "github", method: "api_key", mode: "responsible_user" } }),
+    }));
+  });
   it("discovers models after the first Copilot token becomes the responsible user's default", async () => {
     let defaultSaved = false;
     managedApi.setDefault.mockImplementation(async () => { defaultSaved = true; return {}; });

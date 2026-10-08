@@ -403,6 +403,8 @@ function Setup({
     return config;
   }
   function preparedConfig(nextConnection = connection) {
+    if (brandType === "copilot_runtime" && !models.data?.some(candidate => candidate.id === model))
+      throw new Error("Refresh Copilot models and select an available model before creating this agent.");
     if (isDot && !allowUnmeteredProvider) throw new Error("Acknowledge external provider billing before creating your Dot agent.");
     if (multiProvider && (!model.trim() || !model.includes("/")))
       throw new Error("Choose or enter a model in provider/model format.");
@@ -903,9 +905,9 @@ function Setup({
                                 }}
                                 open={modelOpen}
                                 onOpenChange={setModelOpen}
-                                allowDefault={!multiProvider}
-                                required={multiProvider}
-                                creatable
+                                allowDefault={!multiProvider && brandType !== "copilot_runtime"}
+                                required={multiProvider || brandType === "copilot_runtime"}
+                                creatable={brandType !== "copilot_runtime"}
                                 groupByProvider={multiProvider && !connectionModels}
                                 preserveOrder={Boolean(connectionModels) || adapterCuratesModelOrder(brandType)}
                               />
