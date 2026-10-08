@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { gradePiNativeAnswers, gradePiNativeMemory, hasFailedPiWrite, hasPiCrossRootDenial, piNativeMemoryPrompt, piNativeTasks } from "./pi-native-cases.js";
+import { gradePiNativeAnswers, gradePiNativeMemory, hasPiNativeMemoryRead, hasFailedPiWrite, hasPiCrossRootDenial, piNativeMemoryPrompt, piNativeTasks } from "./pi-native-cases.js";
 import { runnerMatrix, runnerSuites } from "./catalog.js";
 import { buildRunnerE2EProcessEnvironment } from "./harness-env.js";
 import { parseRunnerSelectors, selectRunnerExecutions } from "./selectors.js";
@@ -27,6 +27,17 @@ describe("Pi native Product qualification", () => {
       expect(gradePiNativeMemory(wrong, nonce)).toBe(false);
     }
   });
+  it("requires a completed native read and rejects a shell shortcut or missing receipt", () => {
+    const read = { eventType: "tool.execution.completed", payload: { prpEvent: { payload: {
+      schema: "paperclip.tool.execution.v1", transport: "builtin", name: "read", operation: "read", status: "completed", executionId: "read-1",
+    } } } };
+    expect(hasPiNativeMemoryRead([read])).toBe(true);
+    const change = (patch: Record<string, unknown>) => ({ ...read, payload: { prpEvent: { payload: { ...read.payload.prpEvent.payload, ...patch } } } });
+    for (const rows of [[], [{}], [read, read], [change({ status: "failed" })], [change({ transport: "mcp" })], [change({ executionId: "" })], [change({ schema: "untrusted" })], [change({ name: "bash", operation: "execute" })], [read, change({ name: "bash", operation: "execute" })]]) {
+      expect(hasPiNativeMemoryRead(rows)).toBe(false);
+    }
+  });
+
   it("selects five local and five remote Pi cases without changing the basic extended matrix", () => {
     const suite = runnerSuites.find(row => row.id === "pi-native")!;
     expect(suite.manualOnly).toBe(true); expect(suite.expectedMatrixSize).toBe(10);

@@ -8,7 +8,7 @@ import { expect, type Page } from "@playwright/test";
 import { pollUntil, type RunnerApi } from "./api.js";
 import { collectRunEvents } from "./run-observations.js";
 import { createTaskThroughUi } from "./user-actions.js";
-import { gradePiNativeAnswers, gradePiNativeMemory, hasFailedPiWrite, hasPiCrossRootDenial, PI_NATIVE_MEMORY_PATH, PI_NATIVE_MEMORY_PARENT_SEED_PATH, PI_NATIVE_MEMORY_PARENT_SEED_CONTENT, piNativeFinish, piNativeMemoryPrompt } from "./pi-native-cases.js";
+import { gradePiNativeAnswers, gradePiNativeMemory, hasPiNativeMemoryRead, hasFailedPiWrite, hasPiCrossRootDenial, PI_NATIVE_MEMORY_PATH, PI_NATIVE_MEMORY_PARENT_SEED_PATH, PI_NATIVE_MEMORY_PARENT_SEED_CONTENT, piNativeFinish, piNativeMemoryPrompt } from "./pi-native-cases.js";
 import type { LiveFixtureValues } from "./live-fixtures.js";
 import type { MatrixExecution } from "./types.js";
 
@@ -183,14 +183,15 @@ export async function runPiNativeFlow(input: {
       const personal = await api.get<Row>(`/api/agents/${fixtures.agent.id}/instructions-bundle/file?path=${encodeURIComponent(PI_NATIVE_MEMORY_PATH)}`);
       const firstEvents = await events(runs[0]!.id);
       await input.evidence("pi-agent-files-first-save.json", { personal, run: runs[0], events: firstEvents });
+      check("native-memory-write-verification", hasPiNativeMemoryRead(firstEvents), "One completed native read verified the write, with no shell execution");
       check("registered-file-saved", gradePiNativeMemory(personal.content, retained), "Public managed-file API contains the exact native-write bytes");
       check("stopped-save-receipt", firstEvents.some(row => row.eventType === "instruction_save" && row.payload?.state === "saved"), "Provider stop produced a durable file-save receipt");
       const crossRootIntact = remote ? hasUnchangedPiRemoteTarget(currentBaseline, await finishRemote("cross-root-final"), "@cross-root") : await absent(outside);
       check("cross-root-denied", crossRootIntact && hasPiCrossRootDenial(firstEvents), "A single native write recorded the exact cross-root denial reason and the isolated target remains unchanged");
       await input.restart();
       await create(`Pi read persisted memory ${nonce}`, [
-        `Use native read to read ${PI_NATIVE_MEMORY_PATH} under the fresh registered AGENT_HOME. Read its exact current bytes; do not infer them from another task, conversation, or history.`,
-        "Use native write to copy those exact bytes into pi-agent-memory-proof.txt in the task workspace. This is an internal assertion file, not a deliverable. Do not change personal memory.",
+        `Use native read once with path <AGENT_HOME>/${PI_NATIVE_MEMORY_PATH}. Replace <AGENT_HOME> with the canonical absolute directory from this turn\'s runtime instructions. Read the complete file without offset or limit; do not infer its contents from another task, conversation, or history.`,
+        "Use native write to copy those exact bytes into pi-agent-memory-proof.txt in the task workspace. This is an internal assertion file, not a deliverable. Do not change personal memory or other agent files. Do not use bash or the instructions API.",
         piNativeFinish(execution.task.buildVisibleMarker(nonce)),
       ].join("\n"), { targets: ["pi-agent-memory-proof.txt"] });
       await settle(2);
@@ -200,7 +201,9 @@ export async function runPiNativeFlow(input: {
       check("persistent-bytes-unchanged", current.content === personal.content, "Fresh-run readback preserved the saved managed bytes");
       const parentSeed = await api.get<Row>(`/api/agents/${fixtures.agent.id}/instructions-bundle/file?path=${encodeURIComponent(PI_NATIVE_MEMORY_PARENT_SEED_PATH)}`);
       check("memory-parent-seed-unchanged", parentSeed.content === PI_NATIVE_MEMORY_PARENT_SEED_CONTENT, "Both native turns preserved the parent setup file");
-      await input.evidence("pi-agent-files-fresh-read.json", { current, runs, events: await events(runs[1]!.id) });
+      const freshEvents = await events(runs[1]!.id);
+      await input.evidence("pi-agent-files-fresh-read.json", { current, runs, events: freshEvents });
+      check("native-memory-fresh-read", hasPiNativeMemoryRead(freshEvents), "The fresh run used one completed native read, with no shell execution");
     } else if (execution.task.id === "human-permission-denial") {
       if (!input.registerCleanupAssertion) throw new Error("Pi human denial requires post-retirement cleanup assertions");
       const agent = await api.get<Row>(`/api/agents/${fixtures.agent.id}`);

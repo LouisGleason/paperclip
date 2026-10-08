@@ -29,6 +29,16 @@ export function gradePiNativeMemory(actual: unknown, nonce: string): boolean {
   return typeof actual === "string" && actual === `${nonce}\n`;
 }
 
+/** Pair the independent byte oracle with one actual native read and no shell shortcut. */
+export function hasPiNativeMemoryRead(events: readonly Record<string, any>[]): boolean {
+  const tools = events.filter(row => row.eventType === "tool.execution.completed")
+    .map(row => row.payload?.prpEvent?.payload)
+    .filter(payload => payload?.schema === "paperclip.tool.execution.v1" && payload.transport === "builtin");
+  return !tools.some(payload => payload.operation === "execute")
+    && tools.filter(payload => payload.name === "read" && payload.operation === "read"
+      && payload.status === "completed" && typeof payload.executionId === "string" && payload.executionId.length > 0).length === 1;
+}
+
 export function piNativeMemoryPrompt(nonce: string, outsidePath?: string): string {
   const writeArguments = JSON.stringify({ path: `<AGENT_HOME>/${PI_NATIVE_MEMORY_PATH}`, content: `${nonce}\n` });
   return [

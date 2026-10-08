@@ -2265,23 +2265,23 @@ Keep rollout held until every release gate is proven.
 
 ## Remaining work in order
 
-1. Identify a concrete correction for the failed exact-LF memory behavior under
-   the accepted frozen DeepSeek model and low thinking. Installed native-tool,
-   fragmented RPC and exact read-feedback diagnostics preserve supplied LF;
-   no supported production correction is identified. Keep all three canonical
-   failures, their classifications and independent cleanup. A documentation
-   change or an unchanged paid retry does not address this failure.
-2. Complete all 26 Product and seven Runner cases against the frozen profile-18
-   package/image set after the observed failure has a concrete correction.
-   Include the exact pending-controller restart, provider-death, warm-turn and
-   Runner finish-task terminal/cleanup cases. Current coverage is 2 Product
-   passes, one failed cell, 23 unexecuted Product cells and Runner 0/7. The older
-   native-question pass has definition 16 and is not transferred to definition
-   17. Preserve strict graders, model, low thinking, spending caps and zero
-   automatic retries. Rebuild and readmit the full set if shipping inputs change.
-   Normal Linux, native ARM and native Intel installation already pass for
-   shipping `06a3d9739`; retain each platform's own package, daemon, graph and
-   build-lock identities.
+1. Complete the corrected Sonnet memory fixture (native definition 19). Its first
+   Sonnet measurement on harness `0104942b0` passed exact LF, saved memory,
+   controller restart, fresh-task bytes, denied cross-root write and cleanup.
+   Its canonical pass remains preserved: 23 files, 4,180,889 bytes. The fresh
+   task used a shell read, so definition 19 explicitly requires native read in
+   both runs and rejects shell execution. Missing-LF and historical DeepSeek
+   evidence remain unchanged.
+2. Complete all 26 Product and seven Runner cases on Sonnet 4.6 with native low
+   thinking and the frozen profile-18 package/image set. Definition source
+   `bf8c509df49a40e72509e8732b77516aea02bbbd` changes only qualification model,
+   its matching test declaration and estimated pricing; all seven case bodies,
+   scoring rules and 120-second limits remain unchanged. Seven free definitions
+   and 63 eval-program/roster tests pass. Definition-19 coverage starts at zero;
+   historical model/fixture passes are not transferred. Preserve spending caps,
+   zero automatic retries and independent cleanup. Normal Linux, native ARM and
+   native Intel installation already pass for shipping `06a3d9739`; their own
+   immutable identities stay attached.
 3. Close the valid prerequisite #14921 premature-admission finding with
    source-specific qualification; #14922–14924 currently have no unresolved
    threads. Finish latest-head typecheck, tests, build, CI and review. Follow the
