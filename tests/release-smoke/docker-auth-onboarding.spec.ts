@@ -129,7 +129,9 @@ test.describe("Docker authenticated onboarding smoke", () => {
     await page.getByRole("button", { name: "Next", exact: true }).click();
     const sources = page.getByRole("radiogroup", { name: "Model source" });
     await expect(sources.getByRole("radio", { name: /Claude/ })).toBeVisible();
-    await expect(sources.getByRole("radio", { name: /Codex/ })).toBeVisible();
+    // The Codex harness is presented by its connection provider, as in the
+    // maintained first-task onboarding journey (OpenAI Subscription/API key).
+    await expect(sources.getByRole("radio", { name: /^OpenAI/ })).toBeVisible();
     await expect(sources.getByRole("radio", { name: /Paperclip Runner/ })).toHaveCount(0);
     await page.reload();
     await expect(page.getByRole("heading", { name: "Connect a model" })).toBeVisible();
