@@ -1698,7 +1698,9 @@ jobs:
 
   release_runner_assets:
     needs: pin_runner_release_source
-    if: needs.pin_runner_release_source.outputs.required == 'true'
+    if: >-
+      !cancelled() && needs.pin_runner_release_source.result == 'success' &&
+      needs.pin_runner_release_source.outputs.required == 'true'
     permissions:
       contents: read
     uses: ./.github/workflows/release-verify.yml

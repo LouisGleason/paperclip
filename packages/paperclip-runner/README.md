@@ -72,6 +72,13 @@ pinned package version and host architecture. Release assembly also checks the
 source revision and runner binary identities before publication. This packaging
 does not change agent defaults or the selected runner of an existing agent.
 
+The npm Linux daemon is built for `x86_64-unknown-linux-musl` with static linking.
+Release validation rejects an ELF interpreter or required shared libraries, then
+the native producer executes the bounded build-metadata check. The Docker image
+keeps its GNU daemon. Its provider-pack identity remains tied to that exact source
+and image; it does not supply the npm host daemon. The existing release verifier
+offers a provider-free portable Linux check without image builds or publication.
+
 Every ACPX harness accepts an explicit caller-selected model without a Paperclip
 model allowlist. The adapter sends that ID unchanged and verifies the provider's
 effective model before prompting. An incomplete discovery catalog does not block

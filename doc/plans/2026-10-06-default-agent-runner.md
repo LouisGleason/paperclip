@@ -43,13 +43,16 @@ The large execution and setup changes stay in the later slices.
 | Gate | Status | Evidence |
 | --- | --- | --- |
 | Preserve original implementation | Passed | Original branch and commit above |
-| Extract only first-slice behavior | Passed | 30 files; separate branch; independent packaging/release review |
+| Extract only first-slice behavior | Passed | 31 files; separate branch; independent packaging/release review |
 | Installer and packaging tests | Passed | Existing installer suite: 26 tests; existing packaging suite: 24 tests |
 | Login and transport controls | Passed | Login: 13/13; focused Codex/transport selection: 21 passed, 185 outside the focused filter |
 | Release-transfer controls | Passed | Release workflow, transfer, and sandbox suites: 38/38; actionlint and Node/shell syntax checks passed |
 | Token gates | Passed | All three commands in `check:token-gates` passed |
 | Package and module contracts | Passed | Release package manifest and feature module boundary checks passed |
-| Clean installed Codex version probe | Hosted qualification | Existing Linux npm consumer sandbox in the linked PR checks |
+| Clean installed Codex version probe | Passed on initial candidate; final-head rerun required | Existing Linux npm consumer sandbox resolved and launched Codex 0.160.0, preserved consumer hooks, and made no provider calls |
+| Initial hosted checks | 46 passed; one fixture timeout repaired | Candidate `6e5e20379449cfdfbd6ca5f6043492f91e698b62`; real issue-route bootstrap moved to a bounded suite hook, original agent denials unchanged, board control added; 3/3 local cases passed |
+| Release review fixes | Local checks passed; hosted producer pending | Explicit status guards preserve release assembly with skipped lanes; static musl npm Linux daemon; 32/32 focused checks and original-source portability rejection control |
+| Portable Linux producer | Hosted qualification | One bounded Linux-only dispatch of the existing release verifier; no local Rust/Docker build, providers, image build, or publication |
 | Full checks and fresh review | Hosted qualification | Require green checks and fresh 5/5 review on the linked PR's final head |
 | All-harness live onboarding and cloud qualification | Deferred | Owned by later slices; prior evidence does not prove this revision |
 
@@ -57,6 +60,12 @@ Heavy builds run in hosted CI. No local Docker or Rust build is planned.
 No provider-backed runs or new disposable environments are needed for this
 slice. The original $250 cost ceiling and cleanup obligations still apply.
 Existing login credentials and running user previews must remain untouched.
+
+The initial clean-install CI job checked out the candidate-equivalent merge tree
+at `296097827eeb4005950134ec7f10ce4022706ef8`, then the normal release workflow
+generated a lock-only producer commit at `3e1df4472b56f04ecb029008e47cd276afdb5c6d`.
+The installed verifier reports that producer stamp. This is distinct from the
+product source candidate; no lockfile is committed to this PR.
 
 Focused test commands use Node 24 and a single worker: `node --test
 --test-concurrency=1 scripts/acpx-patch-packaging.test.mjs` and, from `cli/`,

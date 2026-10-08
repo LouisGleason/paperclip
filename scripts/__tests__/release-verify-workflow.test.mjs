@@ -21,24 +21,36 @@ function job(workflow, name) {
 function condition(block, needs, github = {}, inputs = {}, isCancelled = false) {
   const expression = block.match(/    if: >-\n((?:      .+\n)+)/)?.[1]?.trim();
   assert.ok(expression, 'Routing must use an explicit condition, including skipped ancestors');
-  return Function('needs', 'github', 'inputs', 'cancelled', `return (${expression})`)(needs, github, inputs, () => isCancelled);
+  assert.match(expression, /!cancelled\(\)/, 'Suppress implicit success() from unrelated skipped ancestors');
+  return Boolean(Function('needs', 'github', 'inputs', 'cancelled', `return (${expression})`)(needs, github, inputs, () => isCancelled));
 }
 
 test('release producer mode validates immutable data inputs and adds only the missing native target jobs', () => {
   const workflow = readWorkflow('release-verify.yml');
   assert.match(workflow, /runner_assets_only:[\s\S]*?default: false/);
+  const dispatch = workflow.split('  workflow_dispatch:\n')[1].split('  workflow_call:\n')[0];
+  const call = workflow.split('  workflow_call:\n')[1].split('\n# Caller-provided')[0];
+  assert.match(dispatch, /portable_linux_only:[\s\S]*?default: true/);
+  assert.match(dispatch, /runner_assets_only:[\s\S]*?default: true/);
+  assert.match(call, /portable_linux_only:[\s\S]*?default: false/);
   for (const name of ['runner_chaos_evals', 'typecheck', 'general_tests', 'serialized_tests', 'runner_workflow_evals', 'verify_paperclip_runner', 'build']) {
     // The default source gate keeps all its prior checks. Producer-only mode
     // must not create a second broad suite or repeat paid eval authorization.
-    assert.match(job(workflow, name), /if: \$\{\{ !inputs\.runner_assets_only \}\}/, name);
+    assert.match(job(workflow, name), /if: \$\{\{ !inputs\.runner_assets_only && !inputs\.portable_linux_only \}\}/, name);
   }
   const request = job(workflow, 'runner_release_request');
   assert.doesNotMatch(request, /uses: actions\/checkout|secrets\./);
+  assert.equal(condition(request, {}, {}, { runner_assets_only: true }), true);
+  assert.equal(condition(request, {}, {}, { runner_assets_only: false }), false);
+  assert.equal(condition(request, {}, {}, { runner_assets_only: true }, true), false);
   const validation = request.split('        run: |\n')[1];
   assert.ok(validation);
   const source = 'a'.repeat(40);
-  for (const [SOURCE_SHA, expected] of [[source, 0], ['master', 1], ['', 1]]) {
-    const result = spawnSync('bash', ['-c', validation], { env: { ...process.env, SOURCE_SHA }, encoding: 'utf8' });
+  for (const [SOURCE_SHA, RUNNER_ASSETS_ONLY, PORTABLE_LINUX_ONLY, expected] of [
+    [source, 'true', 'true', 0], [source, 'true', 'false', 0], [source, 'false', 'true', 1],
+    ['master', 'true', 'true', 1], ['', 'true', 'true', 1],
+  ]) {
+    const result = spawnSync('bash', ['-c', validation], { env: { ...process.env, SOURCE_SHA, RUNNER_ASSETS_ONLY, PORTABLE_LINUX_ONLY }, encoding: 'utf8' });
     assert.equal(result.status, expected, result.stderr);
   }
   for (const name of ['runner_release_binaries', 'runner_release_pack']) {
@@ -47,10 +59,37 @@ test('release producer mode validates immutable data inputs and adds only the mi
     assert.match(producer, /contents: read/);
     assert.doesNotMatch(producer, /secrets\.|contents: write|id-token: write|packages: write|--push|--password/);
     assert.match(producer, /test "\$\(git rev-parse HEAD\)" = "\$SOURCE_SHA"/);
+    const ready = { runner_release_request: { result: 'success' }, unrelated_lane: { result: 'skipped' } };
+    assert.equal(condition(producer, ready, {}, { runner_assets_only: true }), true, name);
+    assert.equal(condition(producer, ready, {}, { runner_assets_only: false }), false, name);
+    assert.equal(condition(producer, ready, {}, { runner_assets_only: true }, true), false, name);
+    assert.equal(condition(producer, ready, { event_name: 'workflow_dispatch' }, { runner_assets_only: true, portable_linux_only: false }), true, `${name}/manual release caller`);
+    assert.equal(condition(producer, ready, {}, { runner_assets_only: true, portable_linux_only: true }), name === 'runner_release_binaries', `${name}/portable only`);
+    for (const result of ['failure', 'cancelled', 'skipped']) {
+      assert.equal(condition(producer, { ...ready, runner_release_request: { result } }, {}, { runner_assets_only: true }), false, `${name}/${result}`);
+    }
+  }
+  const assemble = job(workflow, 'runner_release_assemble');
+  const produced = { runner_release_binaries: { result: 'success' }, runner_release_pack: { result: 'success' }, unrelated_lane: { result: 'skipped' } };
+  assert.equal(condition(assemble, produced, {}, { runner_assets_only: true }), true);
+  assert.equal(condition(assemble, produced, {}, { runner_assets_only: false }), false);
+  assert.equal(condition(assemble, produced, {}, { runner_assets_only: true }, true), false);
+  assert.equal(condition(assemble, produced, {}, { runner_assets_only: true, portable_linux_only: true }), false, 'Portable-only check has no assembler or publisher');
+  for (const name of ['runner_release_binaries', 'runner_release_pack']) for (const result of ['failure', 'cancelled', 'skipped']) {
+    assert.equal(condition(assemble, { ...produced, [name]: { result } }, {}, { runner_assets_only: true }), false, `${name}/${result}`);
   }
   const binaries = job(workflow, 'runner_release_binaries');
-  assert.deepEqual([...binaries.matchAll(/- target: (.+)/g)].map(match => match[1]), ['darwin-arm64', 'darwin-x64']);
+  const matrix = binaries.match(/include: \$\{\{ fromJSON\(inputs\.portable_linux_only && '([^']+)' \|\| '([^']+)'\) \}\}/);
+  assert.ok(matrix, 'Use the same producer with explicit portable-only target selection');
+  assert.deepEqual(JSON.parse(matrix[1]), [{ target: 'linux-x64', runner: 'ubuntu-latest' }]);
+  assert.deepEqual(JSON.parse(matrix[2]), [{ target: 'darwin-arm64', runner: 'macos-15' }, { target: 'darwin-x64', runner: 'macos-15-intel' }, { target: 'linux-x64', runner: 'ubuntu-latest' }]);
   assert.match(binaries, /cargo build --release.*--locked/);
+  assert.match(binaries, /rustup target add x86_64-unknown-linux-musl/);
+  assert.match(binaries, /musl-tools cmake/);
+  assert.match(binaries, /CC_x86_64_unknown_linux_musl=musl-gcc/);
+  assert.match(binaries, /RUSTFLAGS='-C target-feature=\+crt-static'/);
+  assert.match(binaries, /--target x86_64-unknown-linux-musl/);
+  assert.match(binaries, /target\/x86_64-unknown-linux-musl\/release\/paperclip-runnerd/);
   assert.match(binaries, /record-binary/);
   const pack = job(workflow, 'runner_release_pack');
   assert.doesNotMatch(pack, /docker pull|IMAGE_DIGEST/);
@@ -61,6 +100,8 @@ test('release producer mode validates immutable data inputs and adds only the mi
   assert.match(pack, /docker cp "\$owner:\$daemon_path"/);
   assert.match(pack, /timeout 30s docker start --attach "\$owner"/);
   assert.match(pack, /record-image-binary/);
+  assert.match(pack, /"\$RUNNER_TEMP\/runner-release-input\/image-linux-x64"/);
+  assert.doesNotMatch(pack, /"\$RUNNER_TEMP\/runner-release\/linux-x64"/, 'Image GNU daemon is diagnostics, never the npm Linux payload');
   assert.match(pack, /trap 'docker rm -f "\$owner"/);
   const helper = readFileSync(path.join(repoRoot, 'scripts/release-runner-artifacts.mjs'), 'utf8');
   assert.match(helper, /stage-release-runner-binaries\.mjs/);
@@ -87,6 +128,14 @@ test('channel assembly routing preserves skipped promotions and blocks incomplet
   assert.equal(condition(pin, stable, { event_name: 'workflow_dispatch' }), false);
   assert.match(pin, /git show "\$source_sha:scripts\/release\.sh" \| grep -F 'PAPERCLIP_RELEASE_RUNNER_ASSETS'/);
   assert.match(pin, /git cat-file -e "\$source_sha:scripts\/release-runner-artifacts\.mjs"/);
+  const assets = job(workflow, 'release_runner_assets');
+  const pinned = { ...base(), pin_runner_release_source: { result: 'success', outputs: { required: 'true' } } };
+  assert.equal(condition(assets, pinned), true, 'A verified pin must produce assets despite unrelated skipped lanes');
+  assert.equal(condition(assets, pinned, {}, {}, true), false);
+  for (const result of ['failure', 'cancelled', 'skipped']) {
+    assert.equal(condition(assets, { ...pinned, pin_runner_release_source: { result, outputs: { required: 'true' } } }), false, result);
+  }
+  assert.equal(condition(assets, { ...pinned, pin_runner_release_source: { result: 'success', outputs: { required: 'false' } } }), false);
 
   const ready = { verify_canary: { result: 'success' },
     select_nightly: { result: 'success', outputs: { proceed: 'true' } }, smoke_nightly: { result: 'success' },

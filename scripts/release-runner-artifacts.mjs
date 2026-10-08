@@ -12,6 +12,7 @@ import { verifyReleaseProviderPack } from '../packages/paperclip-runner/scripts/
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export const RELEASE_RUNNER_TARGETS = ['darwin-arm64', 'darwin-x64', 'linux-x64'];
+const portableLinuxBuildTarget = 'x86_64-unknown-linux-musl';
 const dataPaths = [...RELEASE_RUNNER_TARGETS.map(target => `bin/${target}/paperclip-runnerd`),
   'bin/release-manifest.json', 'remote-provider-packs/linux-x64/provider-pack.json'];
 const archivePaths = [...dataPaths, 'assembly-receipt.json'];
@@ -94,6 +95,35 @@ export function verifyReleaseDaemonMetadata(metadata) {
   }
   return metadata;
 }
+// npm hosts need not use the Docker image's libc. Validate the executable's
+// actual load contract, rather than trusting a producer's static-link claim.
+export function verifyPortableLinuxDaemon(bytes) {
+  assert.ok(bytes.length >= 64 && bytes.length <= maxBinary && runnerBinaryTarget(bytes) === 'linux-x64'
+    && bytes[4] === 2 && bytes[5] === 1 && bytes[6] === 1 && [2, 3].includes(bytes.readUInt16LE(16))
+    && bytes.readUInt16LE(52) === 64, 'Portable Linux daemon requires a complete x64 ELF header');
+  const offset = Number(bytes.readBigUInt64LE(32)), size = bytes.readUInt16LE(54), count = bytes.readUInt16LE(56);
+  assert.ok(Number.isSafeInteger(offset) && offset >= 64 && size === 56 && count > 0 && count <= 256
+    && offset + size * count <= bytes.length, 'Portable Linux daemon has an invalid program table');
+  let executableLoad = false;
+  for (let index = 0; index < count; index++) {
+    const header = offset + index * size, type = bytes.readUInt32LE(header);
+    assert.notEqual(type, 3, 'Portable Linux daemon cannot require a libc interpreter');
+    if (type === 1 && bytes.readUInt32LE(header + 4) & 1) executableLoad = true;
+    if (type !== 2) continue;
+    const start = Number(bytes.readBigUInt64LE(header + 8)), length = Number(bytes.readBigUInt64LE(header + 32));
+    assert.ok(Number.isSafeInteger(start) && Number.isSafeInteger(length) && length > 0 && length <= 1024 * 1024
+      && length % 16 === 0 && start >= 64 && start + length <= bytes.length, 'Portable Linux daemon has an invalid dynamic table');
+    let terminated = false;
+    for (let entry = start; entry < start + length; entry += 16) {
+      const tag = bytes.readBigUInt64LE(entry);
+      assert.notEqual(tag, 1n, 'Portable Linux daemon cannot require a shared library');
+      if (tag === 0n) { terminated = true; break; }
+    }
+    assert.ok(terminated, 'Portable Linux daemon has an unterminated dynamic table');
+  }
+  assert.ok(executableLoad, 'Portable Linux daemon requires an executable load segment');
+  return { buildTarget: portableLinuxBuildTarget, linkage: 'static' };
+}
 export function verifyRunnerReleaseData(files, sourceRevision, pins = sourcePins()) {
   revision(sourceRevision);
   assert.deepEqual([...files.keys()].sort(), [...archivePaths].sort(), 'Release archive must contain exactly the known data files');
@@ -128,7 +158,8 @@ export function verifyRunnerReleaseData(files, sourceRevision, pins = sourcePins
     assert.match(receipt.providerImage.requestedImage, /^ghcr\.io\/paperclipai\/paperclip@sha256:[a-f0-9]{64}$/);
     assert.ok(receipt.providerImage.repoDigests?.includes(receipt.providerImage.requestedImage), 'Provider image digest mismatch');
   }
-  assert.deepEqual(receipt.linuxDaemonImage, receipt.providerImage, 'Linux daemon and provider pack must come from the same verified image');
+  assert.deepEqual(receipt.linuxDaemon, { sourceRevision, ...verifyPortableLinuxDaemon(files.get('bin/linux-x64/paperclip-runnerd')) },
+    'Linux npm daemon must bind the portable exact-source build');
   return receipt;
 }
 
@@ -198,10 +229,12 @@ async function main() {
     assert.ok(RELEASE_RUNNER_TARGETS.includes(target) && !extra.length);
     const bytes = file(binary); assert.equal(runnerBinaryTarget(bytes), target);
     assert.equal(`${process.platform}-${process.arch}`, target, 'Execute metadata only on the daemon native target');
+    const portable = target === 'linux-x64' ? verifyPortableLinuxDaemon(bytes) : undefined;
     const metadata = JSON.parse(execFileSync(binary, ['--build-metadata'], { timeout: 15_000, maxBuffer: 128 * 1024 }));
     verifyReleaseDaemonMetadata(metadata);
     newDirectory(output); writeFileSync(join(output, 'paperclip-runnerd'), bytes, { mode: 0o755 });
-    writeJson(join(output, 'receipt.json'), { sourceRevision, target, sha256: digest(bytes), metadata });
+    writeJson(join(output, 'receipt.json'), { sourceRevision, target, sha256: digest(bytes), metadata,
+      ...(portable ? { linuxDaemon: { sourceRevision, ...portable } } : {}) });
   } else if (mode === 'record-image-binary') {
     const [binary, metadataPath, imageMetadata, output, requestedImage = '', ...extra] = args;
     assert.equal(extra.length, 0);
@@ -221,21 +254,23 @@ async function main() {
   } else if (mode === 'assemble') {
     const [artifacts, output, ...extra] = args; assert.equal(extra.length, 0);
     const platforms = {}, daemonMetadata = {};
-    let linuxDaemonImage;
+    let linuxDaemon;
     assert.deepEqual((await import('node:fs')).readdirSync(artifacts).sort(), [...RELEASE_RUNNER_TARGETS, 'provider-pack'].sort());
     for (const target of RELEASE_RUNNER_TARGETS) {
       const path = join(artifacts, target, 'paperclip-runnerd'), bytes = inside(artifacts, `${target}/paperclip-runnerd`);
       const receipt = JSON.parse(inside(artifacts, `${target}/receipt.json`, 128 * 1024));
       assert.equal(receipt.sourceRevision, sourceRevision); assert.equal(receipt.target, target);
       daemonMetadata[target] = verifyReleaseDaemonMetadata(receipt.metadata);
-      if (target === 'linux-x64') linuxDaemonImage = receipt.providerImage;
+      if (target === 'linux-x64') {
+        linuxDaemon = { sourceRevision, ...verifyPortableLinuxDaemon(bytes) };
+        assert.deepEqual(receipt.linuxDaemon, linuxDaemon, 'Linux producer must bind the portable exact-source build');
+      }
       assert.equal(receipt.sha256, digest(bytes)); assert.equal(runnerBinaryTarget(bytes), target);
       platforms[target] = { path: resolve(path), sha256: receipt.sha256 };
     }
     const packPath = join(artifacts, 'provider-pack/provider-pack.json'), bytes = inside(artifacts, 'provider-pack/provider-pack.json', 512 * 1024);
     const packReceipt = JSON.parse(inside(artifacts, 'provider-pack/receipt.json', 128 * 1024));
     assert.equal(packReceipt.sourceRevision, sourceRevision); assert.equal(packReceipt.sha256, digest(bytes));
-    assert.deepEqual(linuxDaemonImage, packReceipt.providerImage, 'Linux daemon and provider pack must come from the same verified image');
     verifyReleaseProviderPack(JSON.parse(bytes), sourceRevision);
     newDirectory(output);
     const manifestPath = join(output, 'assembler-input.json');
@@ -247,7 +282,7 @@ async function main() {
     const pins = sourcePins();
     const receipt = { schema: 'paperclip.runner.release-assembly.v1', sourceRevision,
       sourcePins: { profiles: digest(pins.profiles), distributions: digest(pins.distributions) }, daemonMetadata,
-      providerImage: packReceipt.providerImage, linuxDaemonImage, files: Object.fromEntries([...files].map(([path, bytes]) => [path, digest(bytes)])) };
+      providerImage: packReceipt.providerImage, linuxDaemon, files: Object.fromEntries([...files].map(([path, bytes]) => [path, digest(bytes)])) };
     files.set('assembly-receipt.json', Buffer.from(JSON.stringify(receipt, null, 2) + '\n'));
     const archive = makeRunnerReleaseArchive(files, sourceRevision);
     writeFileSync(join(output, 'runner-release-assets.tar.gz'), archive);

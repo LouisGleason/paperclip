@@ -1,6 +1,20 @@
 name: Release Verify
 
 on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Full immutable source SHA for the provider-free portable Linux daemon check
+        required: true
+        type: string
+      runner_assets_only:
+        description: Use the existing release producers instead of full source verification
+        type: boolean
+        default: true
+      portable_linux_only:
+        description: Build and probe only the portable Linux daemon, without images, macOS or assembly
+        type: boolean
+        default: true
   workflow_call:
     inputs:
       ref:
@@ -9,6 +23,10 @@ on:
         type: string
       runner_assets_only:
         description: Build only the release daemon/provider-pack data after the caller's source gate
+        type: boolean
+        default: false
+      portable_linux_only:
+        description: Restrict the existing release producer to its portable Linux daemon
         type: boolean
         default: false
     outputs:
@@ -21,14 +39,14 @@ on:
 # The organization group also restricts these workflow files to master.
 jobs:
   runner_chaos_evals:
-    if: ${{ !inputs.runner_assets_only }}
+    if: ${{ !inputs.runner_assets_only && !inputs.portable_linux_only }}
     name: Pre-release Runner chaos evals
     uses: ./.github/workflows/runner-chaos-evals.yml
     with:
       ref: ${{ inputs.ref }}
 
   typecheck:
-    if: ${{ !inputs.runner_assets_only }}
+    if: ${{ !inputs.runner_assets_only && !inputs.portable_linux_only }}
     name: Typecheck
     runs-on: ${{ vars.AWS_POST_MERGE_CI_ENABLED == 'true' && github.repository == 'paperclipai/paperclip' && github.repository_id == '1170821064' && github.ref == 'refs/heads/master' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.sha != '' && inputs.ref == github.sha && 'runs-on/fleet=paperclip-post-merge-x64/env=public-ci' || 'ubuntu-latest' }}
     timeout-minutes: 20
@@ -107,7 +125,7 @@ jobs:
         run: pnpm -r typecheck
 
   general_tests:
-    if: ${{ !inputs.runner_assets_only }}
+    if: ${{ !inputs.runner_assets_only && !inputs.portable_linux_only }}
     name: General tests (${{ matrix.group_label }})
     runs-on: ${{ vars.AWS_POST_MERGE_CI_ENABLED == 'true' && github.repository == 'paperclipai/paperclip' && github.repository_id == '1170821064' && github.ref == 'refs/heads/master' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.sha != '' && inputs.ref == github.sha && 'runs-on/fleet=paperclip-post-merge-x64/env=public-ci' || 'ubuntu-latest' }}
     timeout-minutes: 20
@@ -215,7 +233,7 @@ jobs:
           fi
 
   serialized_tests:
-    if: ${{ !inputs.runner_assets_only }}
+    if: ${{ !inputs.runner_assets_only && !inputs.portable_linux_only }}
     name: Serialized tests (${{ matrix.shard_label }})
     runs-on: ${{ vars.AWS_POST_MERGE_CI_ENABLED == 'true' && github.repository == 'paperclipai/paperclip' && github.repository_id == '1170821064' && github.ref == 'refs/heads/master' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.sha != '' && inputs.ref == github.sha && 'runs-on/fleet=paperclip-post-merge-x64/env=public-ci' || 'ubuntu-latest' }}
     timeout-minutes: 20
@@ -265,7 +283,7 @@ jobs:
         run: pnpm test:run:serialized -- --shard-index ${{ matrix.shard_index }} --shard-count ${{ matrix.shard_count }}
 
   runner_workflow_evals:
-    if: ${{ !inputs.runner_assets_only }}
+    if: ${{ !inputs.runner_assets_only && !inputs.portable_linux_only }}
     name: Runner workflow eval scorer contract
     runs-on: ${{ vars.AWS_POST_MERGE_CI_ENABLED == 'true' && github.repository == 'paperclipai/paperclip' && github.repository_id == '1170821064' && github.ref == 'refs/heads/master' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.sha != '' && inputs.ref == github.sha && 'runs-on/fleet=paperclip-post-merge-x64/env=public-ci' || 'ubuntu-latest' }}
     timeout-minutes: 10
@@ -296,7 +314,7 @@ jobs:
         run: pnpm test:runner-workflow-evals
 
   verify_paperclip_runner:
-    if: ${{ !inputs.runner_assets_only }}
+    if: ${{ !inputs.runner_assets_only && !inputs.portable_linux_only }}
     name: Verify Paperclip Runner (${{ matrix.lane }})
     runs-on: ${{ vars.AWS_POST_MERGE_CI_ENABLED == 'true' && github.repository == 'paperclipai/paperclip' && github.repository_id == '1170821064' && github.ref == 'refs/heads/master' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.sha != '' && inputs.ref == github.sha && 'runs-on/fleet=paperclip-post-merge-x64/env=public-ci' || 'ubuntu-latest' }}
     timeout-minutes: 20
@@ -410,7 +428,7 @@ jobs:
         run: pnpm --filter @paperclipai/paperclip-runner build:rust
 
   build:
-    if: ${{ !inputs.runner_assets_only }}
+    if: ${{ !inputs.runner_assets_only && !inputs.portable_linux_only }}
     name: Build
     runs-on: ${{ vars.AWS_POST_MERGE_CI_ENABLED == 'true' && github.repository == 'paperclipai/paperclip' && github.repository_id == '1170821064' && github.ref == 'refs/heads/master' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.sha != '' && inputs.ref == github.sha && 'runs-on/fleet=paperclip-post-merge-x64/env=public-ci' || 'ubuntu-latest' }}
     timeout-minutes: 20
@@ -444,18 +462,15 @@ jobs:
   # caller; these unprivileged jobs neither publish nor receive provider secrets.
   runner_release_binaries:
     needs: runner_release_request
-    if: inputs.runner_assets_only
+    if: >-
+      !cancelled() && inputs.runner_assets_only && needs.runner_release_request.result == 'success'
     name: Release daemon (${{ matrix.target }})
     permissions:
       contents: read
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - target: darwin-arm64
-            runner: macos-15
-          - target: darwin-x64
-            runner: macos-15-intel
+        include: ${{ fromJSON(inputs.portable_linux_only && '[{"target":"linux-x64","runner":"ubuntu-latest"}]' || '[{"target":"darwin-arm64","runner":"macos-15"},{"target":"darwin-x64","runner":"macos-15-intel"},{"target":"linux-x64","runner":"ubuntu-latest"}]') }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     steps:
@@ -470,19 +485,37 @@ jobs:
         working-directory: packages/paperclip-runner
         env:
           SOURCE_SHA: ${{ inputs.ref }}
+          TARGET: ${{ matrix.target }}
         run: |
           set -euo pipefail
           [[ "$SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]]
           test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
           rustup show
-          cargo build --release --manifest-path runner/Cargo.toml --locked -p paperclip-runner-core --bin paperclip-runnerd
+          if [[ "$TARGET" == linux-x64 ]]; then
+            # npm hosts follow Node's Linux floor, not this image's glibc.
+            # Build a static daemon; recording independently rejects dynamic ELF.
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends musl-tools cmake
+            rustup target add x86_64-unknown-linux-musl
+            CC_x86_64_unknown_linux_musl=musl-gcc \
+              CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc \
+              RUSTFLAGS='-C target-feature=+crt-static' \
+              cargo build --release --manifest-path runner/Cargo.toml --locked \
+                --target x86_64-unknown-linux-musl -p paperclip-runner-core --bin paperclip-runnerd
+          else
+            cargo build --release --manifest-path runner/Cargo.toml --locked -p paperclip-runner-core --bin paperclip-runnerd
+          fi
       - name: Record native architecture, checksum and executable metadata
         env:
           SOURCE_SHA: ${{ inputs.ref }}
           TARGET: ${{ matrix.target }}
         run: |
+          binary="$GITHUB_WORKSPACE/packages/paperclip-runner/runner/target/release/paperclip-runnerd"
+          if [[ "$TARGET" == linux-x64 ]]; then
+            binary="$GITHUB_WORKSPACE/packages/paperclip-runner/runner/target/x86_64-unknown-linux-musl/release/paperclip-runnerd"
+          fi
           node scripts/release-runner-artifacts.mjs record-binary "$SOURCE_SHA" "$TARGET" \
-            "$GITHUB_WORKSPACE/packages/paperclip-runner/runner/target/release/paperclip-runnerd" \
+            "$binary" \
             "$RUNNER_TEMP/runner-release/$TARGET"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -493,8 +526,9 @@ jobs:
 
   runner_release_pack:
     needs: runner_release_request
-    if: inputs.runner_assets_only
-    name: Actual release image Linux daemon and provider-pack identity
+    if: >-
+      !cancelled() && inputs.runner_assets_only && !inputs.portable_linux_only && needs.runner_release_request.result == 'success'
+    name: Actual release image provider-pack identity and Docker daemon readiness
     permissions:
       contents: read
     runs-on: ubuntu-latest
@@ -545,7 +579,7 @@ jobs:
           test "$(docker inspect --format '{{.State.ExitCode}}' "$owner")" = 0
           node scripts/release-runner-artifacts.mjs record-image-binary "$SOURCE_SHA" \
             "$RUNNER_TEMP/runner-release-input/paperclip-runnerd" "$RUNNER_TEMP/runner-release-input/daemon-metadata.json" \
-            "$RUNNER_TEMP/runner-release-input/image.json" "$RUNNER_TEMP/runner-release/linux-x64"
+            "$RUNNER_TEMP/runner-release-input/image.json" "$RUNNER_TEMP/runner-release-input/image-linux-x64"
           node scripts/release-runner-artifacts.mjs record-pack "$SOURCE_SHA" \
             "$RUNNER_TEMP/runner-release-input/provider-pack.json" "$RUNNER_TEMP/runner-release-input/image.json" \
             "$RUNNER_TEMP/runner-release/provider-pack"
@@ -557,7 +591,9 @@ jobs:
           retention-days: 7
 
   runner_release_assemble:
-    if: inputs.runner_assets_only
+    if: >-
+      !cancelled() && inputs.runner_assets_only && !inputs.portable_linux_only &&
+      needs.runner_release_binaries.result == 'success' && needs.runner_release_pack.result == 'success'
     name: Assemble verified release runner data
     needs: [runner_release_binaries, runner_release_pack]
     permissions:
@@ -602,7 +638,8 @@ jobs:
           retention-days: 7
 
   runner_release_request:
-    if: inputs.runner_assets_only
+    if: >-
+      !cancelled() && (inputs.runner_assets_only || inputs.portable_linux_only)
     name: Validate immutable runner producer inputs
     permissions: {}
     runs-on: ubuntu-latest
@@ -611,6 +648,11 @@ jobs:
       - name: Reject mutable sources before any producer checkout
         env:
           SOURCE_SHA: ${{ inputs.ref }}
+          RUNNER_ASSETS_ONLY: ${{ inputs.runner_assets_only }}
+          PORTABLE_LINUX_ONLY: ${{ inputs.portable_linux_only }}
         run: |
           set -euo pipefail
           [[ "$SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          if [[ "$PORTABLE_LINUX_ONLY" == true ]]; then
+            test "$RUNNER_ASSETS_ONLY" = true
+          fi

@@ -9,7 +9,7 @@ import test from "node:test";
 import profiles from "../acpx-profiles.json" with { type: "json" };
 import distributions from "../cursor-distributions.json" with { type: "json" };
 import { verifyReleaseProviderPack } from "./release-provider-pack.mjs";
-import { makeRunnerReleaseArchive, readRunnerReleaseArchive, verifyReleaseDaemonMetadata, verifyRunnerReleaseData } from "../../../scripts/release-runner-artifacts.mjs";
+import { makeRunnerReleaseArchive, readRunnerReleaseArchive, verifyPortableLinuxDaemon, verifyReleaseDaemonMetadata, verifyRunnerReleaseData } from "../../../scripts/release-runner-artifacts.mjs";
 import { gzipSync, gunzipSync } from "node:zlib";
 
 const revision = "a".repeat(40);
@@ -46,12 +46,43 @@ test('release daemon compatibility rejects lookalikes, incompatible contracts an
   ]) assert.throws(() => verifyReleaseDaemonMetadata({ ...daemonMetadata(), ...mismatch }));
 });
 
+function linuxElf(types = [1]) {
+  const bytes = Buffer.alloc(64 + types.length * 56 + 32);
+  bytes.set([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1]);
+  bytes.writeUInt16LE(3, 16); bytes.writeUInt16LE(62, 18); bytes.writeUInt32LE(1, 20);
+  bytes.writeBigUInt64LE(64n, 32); bytes.writeUInt16LE(64, 52); bytes.writeUInt16LE(56, 54);
+  bytes.writeUInt16LE(types.length, 56);
+  for (const [index, type] of types.entries()) {
+    const header = 64 + index * 56;
+    bytes.writeUInt32LE(type, header); bytes.writeUInt32LE(5, header + 4);
+    if (type === 2) {
+      bytes.writeBigUInt64LE(BigInt(64 + types.length * 56), header + 8);
+      bytes.writeBigUInt64LE(32n, header + 32);
+    }
+  }
+  return bytes;
+}
+
+test('portable Linux release daemons reject interpreters, shared libraries and malformed static ELF claims', () => {
+  assert.deepEqual(verifyPortableLinuxDaemon(linuxElf()), { buildTarget: 'x86_64-unknown-linux-musl', linkage: 'static' });
+  assert.equal(verifyPortableLinuxDaemon(linuxElf([1, 2])).linkage, 'static', 'Static PIE may retain its own terminated relocation table');
+  assert.throws(() => verifyPortableLinuxDaemon(linuxElf([1, 3])), /libc interpreter/);
+  const dynamic = linuxElf([1, 2]); dynamic.writeBigUInt64LE(1n, 176);
+  assert.throws(() => verifyPortableLinuxDaemon(dynamic), /shared library/);
+  const truncated = linuxElf().subarray(0, 64);
+  assert.throws(() => verifyPortableLinuxDaemon(truncated), /invalid program table/);
+  const overflow = linuxElf(); overflow.writeBigUInt64LE(2n ** 63n, 32);
+  assert.throws(() => verifyPortableLinuxDaemon(overflow), /invalid program table/);
+  assert.throws(() => verifyPortableLinuxDaemon(linuxElf([2])), /executable load/);
+  const unterminated = linuxElf([1, 2]); unterminated.writeBigUInt64LE(7n, 176); unterminated.writeBigUInt64LE(7n, 192);
+  assert.throws(() => verifyPortableLinuxDaemon(unterminated), /unterminated dynamic table/);
+});
+
 function releaseData() {
   const files = new Map(), platforms = {};
   for (const target of ["darwin-arm64", "darwin-x64", "linux-x64"]) {
-    const bytes = Buffer.alloc(64);
-    if (target === "linux-x64") { bytes.set([0x7f, 0x45, 0x4c, 0x46, 2, 1]); bytes.writeUInt16LE(62, 18); }
-    else { bytes.writeUInt32LE(0xfeedfacf, 0); bytes.writeUInt32LE(target === "darwin-arm64" ? 0x0100000c : 0x01000007, 4); }
+    const bytes = target === 'linux-x64' ? linuxElf() : Buffer.alloc(64);
+    if (target !== 'linux-x64') { bytes.writeUInt32LE(0xfeedfacf, 0); bytes.writeUInt32LE(target === "darwin-arm64" ? 0x0100000c : 0x01000007, 4); }
     files.set(`bin/${target}/paperclip-runnerd`, bytes);
     platforms[target] = { path: `${target}/paperclip-runnerd`, sha256: `sha256:${createHash("sha256").update(bytes).digest("hex")}` };
   }
@@ -63,7 +94,7 @@ function releaseData() {
     sourcePins: { profiles: `sha256:${createHash("sha256").update(readFileSync(new URL('../acpx-profiles.json', import.meta.url))).digest('hex')}`,
       distributions: `sha256:${createHash("sha256").update(readFileSync(new URL('../cursor-distributions.json', import.meta.url))).digest('hex')}` },
     providerImage: { sourceRevision: revision, platform: "linux/amd64", imageId: digest },
-    linuxDaemonImage: { sourceRevision: revision, platform: "linux/amd64", imageId: digest },
+    linuxDaemon: { sourceRevision: revision, buildTarget: 'x86_64-unknown-linux-musl', linkage: 'static' },
     daemonMetadata: Object.fromEntries(Object.keys(platforms).map(target => [target, daemonMetadata()])),
     files: Object.fromEntries([...files].map(([path, bytes]) => [path, `sha256:${createHash("sha256").update(bytes).digest("hex")}`])) })));
   return files;
@@ -163,9 +194,20 @@ test("release data rejects rehashed wrong targets and provider-image provenance"
   incompatible.set('assembly-receipt.json', Buffer.from(JSON.stringify(incompatibleReceipt)));
   assert.throws(() => verifyRunnerReleaseData(incompatible, revision), /Incompatible daemon nativeExecutionVersion/);
   const mixed = releaseData(), mixedReceipt = JSON.parse(mixed.get('assembly-receipt.json'));
-  mixedReceipt.linuxDaemonImage.imageId = `sha256:${'c'.repeat(64)}`;
+  mixedReceipt.linuxDaemon.sourceRevision = 'c'.repeat(40);
   mixed.set('assembly-receipt.json', Buffer.from(JSON.stringify(mixedReceipt)));
-  assert.throws(() => verifyRunnerReleaseData(mixed, revision), /same verified image/);
+  assert.throws(() => verifyRunnerReleaseData(mixed, revision), /portable exact-source/);
+  const unportable = releaseData(), executable = linuxElf([1, 3]);
+  unportable.set('bin/linux-x64/paperclip-runnerd', executable);
+  const manifest = JSON.parse(unportable.get('bin/release-manifest.json'));
+  const unportableReceipt = JSON.parse(unportable.get('assembly-receipt.json'));
+  const hash = `sha256:${createHash('sha256').update(executable).digest('hex')}`;
+  manifest.platforms['linux-x64'].sha256 = hash;
+  unportableReceipt.files['bin/linux-x64/paperclip-runnerd'] = hash;
+  unportable.set('bin/release-manifest.json', Buffer.from(JSON.stringify(manifest)));
+  unportableReceipt.files['bin/release-manifest.json'] = `sha256:${createHash('sha256').update(unportable.get('bin/release-manifest.json')).digest('hex')}`;
+  unportable.set('assembly-receipt.json', Buffer.from(JSON.stringify(unportableReceipt)));
+  assert.throws(() => verifyRunnerReleaseData(unportable, revision), /libc interpreter/, 'Rehashed GNU binary must not inherit a static claim');
 });
 
 test("release transfer binds qualification JSON snapshots to the selected source", () => {
