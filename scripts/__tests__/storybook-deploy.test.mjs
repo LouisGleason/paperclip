@@ -166,6 +166,32 @@ test("visual manual filter passes one literal argument and empty input retains t
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test("only the exact manual behavior qualification omits the comparison baseline prerequisite", () => {
+  const workflow = readFileSync(new URL("../../.github/workflows/storybook-visual.yml", import.meta.url), "utf8");
+  const cases = [
+    ["workflow_dispatch", "runner UI qualification:", false, false],
+    ["workflow_dispatch", "", false, true],
+    ["workflow_dispatch", "runner UI qualification:.*", false, true],
+    ["workflow_dispatch", "runner UI qualification:", true, true],
+    ["pull_request", "runner UI qualification:", false, true],
+    ["push", "runner UI qualification:", false, true],
+  ];
+  for (const name of ["Cache Storybook visual baseline archive", "Download Storybook visual baseline", "Verify Storybook visual baseline"]) {
+    const step = workflow.split(`      - name: ${name}\n`)[1].split("      - name:")[0];
+    const condition = step.match(/if: \$\{\{ (.+?) \}\}/)?.[1];
+    const enabled = condition ? Function("github", "inputs", `return (${condition});`) : () => true;
+    for (const [event_name, test_grep, update_snapshots, expected] of cases) {
+      assert.equal(enabled({ event_name }, { test_grep, update_snapshots }), expected,
+        `${name}: ${event_name}, filter=${test_grep}, update=${update_snapshots}`);
+    }
+  }
+  const suite = readFileSync(new URL("../../tests/storybook-visual/storybook-visual.spec.ts", import.meta.url), "utf8");
+  const qualification = suite.slice(suite.indexOf('test(`runner UI qualification:'));
+  assert.ok(qualification.length > 0);
+  assert.doesNotMatch(qualification, /toHaveScreenshot|toMatchSnapshot/);
+  assert.match(qualification, /testInfo\.outputPath\("configuration\.png"\)/);
+});
+
 import { storybookDestination, branchIndex } from '../../.github/scripts/storybook-destination.cjs';
 const input = { branch: 'feature/foo', sha: 'a'.repeat(40), runId: 123, runAttempt: 1,
   bucket: 'storybook-test', baseUrl: 'https://example.cloudfront.net' };

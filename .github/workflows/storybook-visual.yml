@@ -76,15 +76,20 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Cache Storybook visual baseline archive
+        # These exact manual qualification cases assert behavior and capture
+        # evidence; every screenshot comparison still requires its baseline.
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.test_grep != 'runner UI qualification:' || inputs.update_snapshots }}
         uses: actions/cache@v6.1.0
         with:
           path: tests/storybook-visual/.cache
           key: storybook-visual-baseline-${{ runner.os }}-${{ hashFiles('tests/storybook-visual/baseline-manifest.json') }}
 
       - name: Download Storybook visual baseline
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.test_grep != 'runner UI qualification:' || inputs.update_snapshots }}
         run: pnpm storybook-visual:baseline download
 
       - name: Verify Storybook visual baseline
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.test_grep != 'runner UI qualification:' || inputs.update_snapshots }}
         run: pnpm storybook-visual:baseline verify
 
       - name: Build Storybook

@@ -12,11 +12,11 @@ One owner carries implementation, verification and relevant review fixes through
 - Branch: `codex/default-agent-runner`
 - Base: `dd777f4b7343305c4e6f44c422f44a1d78e12e4f` (observed master, integrated 2026-10-07); existing-agent staging baseline remains `b31558064093564fb937cf046596d1d497f5be27`.
 - PR: https://github.com/paperclipai/paperclip/pull/15422
-- Preview: http://127.0.0.1:3114/RUN/agents (owned checkout process; final compiled serving revision remains unqualified).
+- Preview: http://127.0.0.1:3114/RUN/agents (owned test-drive is offline; restore from verified compiled packages before acceptance).
 - Evidence task: http://127.0.0.1:3114/RUN/issues/RUN-2
 - Test-drive: keep user instance3104 unchanged. The owned3114 checkout health follows mutable HEAD and cannot establish compiled runtime identity. Final local acceptance uses the hosted assembled package graph outside Git, with source and byte verification; staging uses the exact immutable image/migrator and qualified managed image.
-- Supporting tested runtime: `2dbe43a43021add337de07b7fb68c99388874d39`. Its green CI and public image/migrator pair remain evidence for that source. Current master changes the runner protocol, daemon and migration; the integrated candidate requires fresh artifacts and checks.
-- Next action: finish the import-edit preservation and narrow macOS loader sandbox repairs, freeze the candidate, and qualify fresh hosted artifacts. Then complete the final live matrix. The isolated3114 API is currently down; restore it only from the verified assembled package graph. Merge, production deployment and default promotion require separate authorization.
+- Frozen product source: `90cec3065cde7ba9cc3ea6a4b6a8d05f4874b683`, integrating the base above and the reviewed installation, protocol, import and macOS repairs. Earlier revisions and their artifacts remain supporting evidence only.
+- Next action: complete its hosted CI/review and immutable pair, then qualify the three-platform package graph. Restore owned3114 from that graph and resolve the managed Codex setup failure before expanding live acceptance. Merge, production deployment and default promotion require separate authorization.
 
 ## Implemented
 
@@ -26,7 +26,7 @@ Live testing and regression review fixed historical-adapter SQL projection, buil
 
 ## Historical verification state (2026-10-07)
 
-The active state is the [master integration checkpoint](#master-integration-checkpoint-2026-10-07-2010-cdt). Historical results below remain supporting evidence; they do not close its failed or blocked gates.
+The active state is the [frozen qualification checkpoint](#frozen-qualification-checkpoint-2026-10-07). Historical results below remain supporting evidence; they do not close its failed or blocked gates.
 
 - Workspace typecheck, production build, Storybook build and token gates passed after the functional review fixes. Server typecheck passed after the credential-routing guard fix.
 - Focused review regressions: 422 passed, then 66 passed after correcting the AgentCore test's step label. Credential inheritance, connection pools and permission suites: 183 passed after the security fix. Session/revision tests: 9 passed. Pinned Grok setup probes: 6 passed.
@@ -417,3 +417,15 @@ The coverage inventory confirms frozen approval/restart, import/export choices, 
 The existing Storybook workflow/helper suite passes27 cases; an unquoted-argument negative control fails while two unrelated controls pass. YAML and Bash syntax pass. No permissions, deployment or baseline-update changes are added. All merge conflicts are resolved and staged.
 
 Next: commit the reconciled master, publish one immutable candidate pair, and overlap its normal CI/review, release-smoke and existing visual cases. No provider expansion, qualified-image bake, production action, merge or default promotion is authorized by this checkpoint. Owned3114 remains offline until exact-source installed readiness.
+
+### Frozen qualification checkpoint (2026-10-07)
+
+Product source `90cec3065cde7ba9cc3ea6a4b6a8d05f4874b683` is committed and pushed to the canonical branch and PR. Its integrated master is `dd777f4b7343305c4e6f44c422f44a1d78e12e4f`. Do not chase later master changes unless a conflict or relevant behavior prevents qualification. The [ordinary CI run](https://github.com/paperclipai/paperclip/actions/runs/37711788474) and fresh review are in progress; Build and policy pass at this observation, with no final aggregate claim. Required human CODEOWNER approval remains missing.
+
+The single [immutable preview run](https://github.com/paperclipai/paperclip/actions/runs/37712089067) executes the byte-equal trusted release workflow on integrated master, with exact product source above and request UUID `e3a08add-cd32-45e1-b4e6-1d8ad513a0da`. Verify its image and same-source migrator before the existing provider-free release-smoke dispatch. Use its new assembled18-package readiness receipt for one low-priority local consumer; old artifacts cannot satisfy the source guard. All Docker/native/full packaging builds stay hosted.
+
+The [selected Storybook run](https://github.com/paperclipai/paperclip/actions/runs/37712094183) fails before build or any of its12 cases. The existing external baseline manifest has null source, zero snapshots and no archive. The selected runner UI cases use keyboard/structural assertions and evidence screenshots, without snapshot comparison. Correct only this exact manual qualification selector's unnecessary baseline prerequisite; preserve normal full-suite, custom selector and snapshot-update requirements. Workflow-definition provenance remains distinct from frozen product source; this failure is not a product or visual pass.
+
+Managed Codex onboarding remains failed at its earlier recorded source, with successful lease cleanup and zero agents or heartbeat runs. A one-request diagnostic plan is prepared using normal setup testing and redacted combined-output diagnostics, with zero retries or tasks. Execution is held for the new image/migrator/bake/target, exact model qualification and budget review. The proposed$0.50 reservation is not a provider-enforced cap; no new provider call, target or bake has occurred. The earlier automatic approval rejection of Claude expansion remains respected.
+
+Consumed-plus-reserved allowances remain$248.179254104 under the unchanged$250 ceiling; this is not invoice-certified spend. Owned3114 is offline and user3104 is untouched. Next: complete hosted artifact and installation proof, restore the immutable test-drive and publish the updated passed/failed/blocked checklist in RUN-2. Fresh onboarding, attended account adoption, task/follow-up continuity, actual private composition and rollback compatibility remain required. No merge, production deployment or provisioning-default promotion has occurred.
