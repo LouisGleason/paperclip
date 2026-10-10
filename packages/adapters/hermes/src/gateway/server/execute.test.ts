@@ -172,6 +172,7 @@ describe("execute", () => {
     });
     const body = JSON.parse(String(init.body));
     expect(body.input).toContain("Do the thing");
+    expect(body.input).toContain("make exactly one curl request per tool call");
     expect(body.session_id).toBe("paperclip:company:company-1:agent:agent-1:issue:issue-1");
   });
 

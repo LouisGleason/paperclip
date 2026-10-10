@@ -314,6 +314,7 @@ function buildInput(ctx: AdapterExecutionContext, paperclipApiUrl: string | null
           "- Do not stop at a plan unless the issue asks for planning only.",
           "- Leave durable progress and update the issue to a clear final disposition.",
           "- Use X-Paperclip-Run-Id on mutating Paperclip API requests when a Paperclip API key is available.",
+          "- For a Paperclip API call made through terminal, make exactly one curl request per tool call; do not wrap it in shell functions, process substitution, pipelines, or compound commands. Write any JSON body to a scratch file first, then pass it with --data-binary @file.",
           "",
         ]),
     wakePrompt,
