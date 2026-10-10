@@ -314,7 +314,7 @@ function buildInput(ctx: AdapterExecutionContext, paperclipApiUrl: string | null
           "- Do not stop at a plan unless the issue asks for planning only.",
           "- Leave durable progress and update the issue to a clear final disposition.",
           "- Use X-Paperclip-Run-Id on mutating Paperclip API requests when a Paperclip API key is available.",
-          "- For a Paperclip API call made through terminal, make exactly one curl request per tool call; do not wrap it in shell functions, process substitution, pipelines, or compound commands. Write any JSON body to a scratch file first, then pass it with --data-binary @file.",
+          "- For a Paperclip API call made through terminal, make exactly one curl request per tool call. Use only this shape: curl -fsS -H \"Authorization: Bearer $PAPERCLIP_API_KEY\" \"$PAPERCLIP_API_URL/<allowed-path>\". For mutations add -X POST, -H \"X-Paperclip-Run-Id: $PAPERCLIP_RUN_ID\", and --data-binary @/root/.hermes/cache/scratch/<file>. Do not use -w, process substitution, command substitution, shell functions, pipelines, semicolons, or compound commands.",
           "",
         ]),
     wakePrompt,
