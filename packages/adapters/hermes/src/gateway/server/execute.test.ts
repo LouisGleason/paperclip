@@ -203,6 +203,7 @@ describe("execute", () => {
     const body = JSON.parse(String(call?.[1]?.body));
     expect(headers["X-Hermes-Session-Key"]).toBe("paperclip:run:pc-run-1");
     expect(body.session_id).toBe("paperclip:run:pc-run-1");
+    expect(body.input).toContain("make exactly one curl request per tool call");
   });
 
   it.each([false, true])("preserves chat handoff policy on gateway turns (resumed=%s)", async (resumed) => {

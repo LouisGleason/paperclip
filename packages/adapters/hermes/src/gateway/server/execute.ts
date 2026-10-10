@@ -306,7 +306,7 @@ function buildInput(ctx: AdapterExecutionContext, paperclipApiUrl: string | null
     ...(paperclipApiUrl ? [`- Paperclip API URL: ${paperclipApiUrl}`] : []),
     ...(issueWorkMode ? [`- Issue work mode: ${issueWorkMode}`] : []),
     "",
-    ...(ctx.context.conversationMode === true || isPaperclipRecoveryWakePayload(ctx.context.paperclipWake)
+    ...(ctx.context.conversationMode === true
       ? []
       : [
           "Execution contract:",
