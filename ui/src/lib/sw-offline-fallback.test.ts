@@ -60,7 +60,7 @@ async function respondTo(
 }
 
 describe("sw.js offline fallback", () => {
-  it("serves an uncached retry page for a failed navigation with an empty cache", async () => {
+  it("redirects a failed deep-link navigation to the app root", async () => {
     const listener = loadServiceWorkerFetchListener({
       fetch: () => Promise.reject(new TypeError("network down")),
       cachesMatch: async () => undefined,
@@ -69,6 +69,23 @@ describe("sw.js offline fallback", () => {
     const response = await respondTo(listener, {
       method: "GET",
       url: "https://app.example.com/settings/instance",
+      mode: "navigate",
+    });
+
+    expect(response).toBeInstanceOf(Response);
+    expect(response!.status).toBe(302);
+    expect(response!.headers.get("location")).toBe("https://app.example.com/");
+  });
+
+  it("serves the uncached retry page when the root navigation itself fails", async () => {
+    const listener = loadServiceWorkerFetchListener({
+      fetch: () => Promise.reject(new TypeError("network down")),
+      cachesMatch: async () => undefined,
+    });
+
+    const response = await respondTo(listener, {
+      method: "GET",
+      url: "https://app.example.com/",
       mode: "navigate",
     });
 
@@ -84,7 +101,7 @@ describe("sw.js offline fallback", () => {
     expect(body).not.toContain("<html>app shell</html>");
   });
 
-  it("does not replay a legacy cached shell for a failed navigation", async () => {
+  it("does not replay a legacy cached shell for a failed deep navigation", async () => {
     const shell = new Response("<html>app shell</html>", { status: 200 });
     const listener = loadServiceWorkerFetchListener({
       fetch: () => Promise.reject(new TypeError("network down")),
@@ -97,13 +114,8 @@ describe("sw.js offline fallback", () => {
       mode: "navigate",
     });
 
-    expect(response!.status).toBe(503);
-    expect(response!.headers.get("content-type")).toBe("text/html; charset=utf-8");
-    expect(response!.headers.get("cache-control")).toBe("no-store");
-    const body = await response!.text();
-    expect(body).toContain("Paperclip is offline");
-    expect(body).toContain("Reload page");
-    expect(body).not.toContain("<html>app shell</html>");
+    expect(response!.status).toBe(302);
+    expect(response!.headers.get("location")).toBe("https://app.example.com/");
   });
 
   it("returns a network-error Response for a failed asset with no cache entry", async () => {

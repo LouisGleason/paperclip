@@ -100,7 +100,16 @@ self.addEventListener("fetch", (event) => {
       })
       .catch(async () => {
         if (privateRequests.has(request.url)) return Response.error();
-        if (!publicAsset) return request.mode === "navigate" ? offlineNavigationResponse() : Response.error();
+        if (!publicAsset) {
+          // A deep-link failure can be transient (for example a stale SPA tab
+          // after a deploy). Retry through the app root instead of pinning the
+          // user to a synthetic offline document. The root guard avoids a
+          // redirect loop when the origin is genuinely unreachable.
+          if (request.mode === "navigate" && url.pathname !== "/") {
+            return Response.redirect(new URL("/", url), 302);
+          }
+          return request.mode === "navigate" ? offlineNavigationResponse() : Response.error();
+        }
         // Restrict lookup to this policy's cache; old arbitrary-response caches
         // must not become fallback candidates if activation cleanup fails.
         try {
