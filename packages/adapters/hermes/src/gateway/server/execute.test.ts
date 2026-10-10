@@ -175,6 +175,35 @@ describe("execute", () => {
     expect(body.session_id).toBe("paperclip:company:company-1:agent:agent-1:issue:issue-1");
   });
 
+  it("rotates to a run-scoped session for a recovery wake", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).endsWith("/v1/runs")) {
+        return new Response(JSON.stringify({ run_id: "run-hermes-1", status: "started" }), { status: 200 });
+      }
+      if (String(input).endsWith("/events")) {
+        return new Response(sseStream(["event: run.completed", "data: {\"status\":\"completed\",\"output\":\"done\"}", ""].join("\n")), {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        });
+      }
+      return new Response(JSON.stringify({ status: "completed", output: "done" }), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const ctx = makeCtx({ apiBaseUrl: "http://127.0.0.1:8642", apiKey: "secret-key", timeoutSec: 5 });
+    ctx.runtime.sessionId = "stale-issue-session";
+    ctx.context.wakeReason = "issue_disposition_repair";
+    ctx.context.paperclipWake = { reason: "issue_disposition_repair", issue: { id: "issue-1", identifier: "PAP-1" } };
+
+    await execute(ctx);
+
+    const calls = fetchMock.mock.calls as Array<[RequestInfo | URL, RequestInit?]>;
+    const call = calls.find(([input]) => String(input).endsWith("/v1/runs"));
+    const headers = call?.[1]?.headers as Record<string, string>;
+    const body = JSON.parse(String(call?.[1]?.body));
+    expect(headers["X-Hermes-Session-Key"]).toBe("paperclip:run:pc-run-1");
+    expect(body.session_id).toBe("paperclip:run:pc-run-1");
+  });
+
   it.each([false, true])("preserves chat handoff policy on gateway turns (resumed=%s)", async (resumed) => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => new Response(JSON.stringify(
       String(input).endsWith("/v1/runs")

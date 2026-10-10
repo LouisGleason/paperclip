@@ -118,6 +118,17 @@ function normalizeSessionKeyStrategy(value: unknown): SessionKeyStrategy {
   return "issue";
 }
 
+function effectiveSessionKeyStrategy(ctx: AdapterExecutionContext): SessionKeyStrategy {
+  // A disposition-repair wake must re-evaluate the live issue state. Reusing
+  // its issue conversation can retain the exact stale conclusion that created
+  // the repair action, making the bounded retry complete without acting.
+  if (
+    ctx.context.wakeReason === "issue_disposition_repair" ||
+    isPaperclipRecoveryWakePayload(ctx.context.paperclipWake)
+  ) return "run";
+  return normalizeSessionKeyStrategy(ctx.config.sessionKeyStrategy);
+}
+
 function normalizeBaseUrl(value: string): URL | null {
   try {
     const url = new URL(value);
@@ -268,7 +279,7 @@ function buildInput(ctx: AdapterExecutionContext, paperclipApiUrl: string | null
   // conversation across runs; a stored session id from a prior run means that
   // conversation already received the task brief, so pick the compact
   // task-context variant under the shared resume rules.
-  const sessionKeyStrategy = normalizeSessionKeyStrategy(ctx.config.sessionKeyStrategy);
+  const sessionKeyStrategy = effectiveSessionKeyStrategy(ctx);
   const resumedSession =
     (sessionKeyStrategy === "issue" || sessionKeyStrategy === "agent") &&
     Boolean(nonEmpty(ctx.runtime?.sessionId));
@@ -839,7 +850,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   const timeoutMs = timeoutSec > 0 ? Math.ceil(timeoutSec * 1000) : 0;
   const reconnectMs = Math.floor(clamp(parseNonNegativeNumber(ctx.config.eventReconnectMs, DEFAULT_EVENT_RECONNECT_MS), 250, 30_000));
   const pollIntervalMs = Math.floor(clamp(parseNonNegativeNumber(ctx.config.pollIntervalMs, DEFAULT_POLL_INTERVAL_MS), 250, 10_000));
-  const strategy = normalizeSessionKeyStrategy(ctx.config.sessionKeyStrategy);
+  const strategy = effectiveSessionKeyStrategy(ctx);
   const sessionKey = resolveSessionKey({
     strategy,
     companyId: ctx.agent.companyId,
