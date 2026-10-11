@@ -313,6 +313,7 @@ function buildInput(ctx: AdapterExecutionContext, paperclipApiUrl: string | null
           "- Take concrete action in this run when the task is actionable.",
           "- Do not stop at a plan unless the issue asks for planning only.",
           "- Leave durable progress and update the issue to a clear final disposition.",
+          "- For an issue_disposition_repair or recovery wake, do not return a prose-only success. Read the live issue execution/recovery state first. If the wake has an active recovery action and a supported resolution path, submit its durable resolution, then read it back and verify the action is no longer active and the original assignee has a distinct normal successor run. A restored todo status by itself is not a hand-back.",
           "- Use X-Paperclip-Run-Id on mutating Paperclip API requests when a Paperclip API key is available.",
           "- For a Paperclip API call made through terminal, make exactly one curl request per tool call. Use only this shape: curl -fsS -H \"Authorization: Bearer $PAPERCLIP_API_KEY\" \"$PAPERCLIP_API_URL/<allowed-path>\". For mutations add -X POST, -H \"X-Paperclip-Run-Id: $PAPERCLIP_RUN_ID\", and --data-binary @/root/.hermes/cache/scratch/<file>. Do not use -w, process substitution, command substitution, shell functions, pipelines, semicolons, or compound commands.",
           "",
