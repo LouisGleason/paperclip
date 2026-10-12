@@ -98,6 +98,19 @@ describe("setup-token reaper", () => {
     expect(store.rows.has("live-1")).toBe(true);
   });
 
+  it("removes a terminal record with no provider lease without attempting an invalid release", async () => {
+    const store = createMemoryStore();
+    store.seed({ sessionId: "orphan-no-lease", leaseId: "", state: "failed" });
+    const leases = createFakeLeases();
+    const reaper = createSetupTokenReaper({ store, leases, now: () => NOW });
+
+    const result = await reaper.sweep();
+
+    expect(result).toEqual({ released: 1, failed: 0 });
+    expect(leases.releaseByIdCalls).toEqual([]);
+    expect(store.rows.size).toBe(0);
+  });
+
   it("keeps the record when the release fails, then clears it on the next sweep", async () => {
     const store = createMemoryStore();
     store.seed({ sessionId: "orphan-2", leaseId: "lease-orphan-2", state: "failed" });

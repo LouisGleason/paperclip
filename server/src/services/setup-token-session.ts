@@ -335,7 +335,11 @@ export async function reapSetupTokenLeases(
   let failed = 0;
   for (const record of records) {
     try {
-      await deps.leases.releaseById(record.leaseId);
+      // Older/corrupt durable records can lack a provider lease. There is no
+      // upstream resource to release, and passing an empty ID to PostgreSQL
+      // causes a UUID cast error forever. Remove the terminal cleanup record
+      // instead of retrying a release that can never succeed.
+      if (record.leaseId.trim()) await deps.leases.releaseById(record.leaseId);
       await deps.store.remove({
         sessionId: record.sessionId,
         companyId: record.companyId,
